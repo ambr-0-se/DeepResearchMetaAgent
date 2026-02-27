@@ -1,3 +1,6 @@
+import asyncio
+import logging
+import random
 from typing import Any
 from collections.abc import Generator
 
@@ -9,6 +12,32 @@ from src.models.base import (ApiModel,
                              ChatMessageStreamDelta,
                              ChatMessageToolCallStreamDelta)
 from src.models.message_manager import MessageManager
+
+logger = logging.getLogger(__name__)
+
+_RETRY_MAX_ATTEMPTS = 5
+_RETRY_BASE_DELAY = 1.0   # seconds
+_RETRY_MAX_DELAY = 60.0   # seconds
+
+
+def _backoff(attempt: int) -> float:
+    """Exponential backoff with full jitter: uniform(0, min(cap, base * 2^attempt))."""
+    ceiling = min(_RETRY_MAX_DELAY, _RETRY_BASE_DELAY * (2 ** attempt))
+    return random.uniform(0, ceiling)
+
+
+def _parse_retry_after(exc: Exception) -> float | None:
+    """Extract Retry-After value (seconds) from an API error response, if present."""
+    try:
+        headers = getattr(exc, "response", None) and exc.response.headers  # type: ignore[union-attr]
+        if headers:
+            value = headers.get("retry-after") or headers.get("Retry-After")
+            if value:
+                return float(value)
+    except Exception:
+        pass
+    return None
+
 
 class OpenAIServerModel(ApiModel):
     """This model connects to an OpenAI-compatible API server.
@@ -209,6 +238,8 @@ class OpenAIServerModel(ApiModel):
             tools_to_call_from: list[Any] | None = None,
             **kwargs,
     ) -> ChatMessage:
+        import openai
+
         completion_kwargs = self._prepare_completion_kwargs(
             messages=messages,
             stop_sequences=stop_sequences,
@@ -220,18 +251,54 @@ class OpenAIServerModel(ApiModel):
             **kwargs,
         )
 
-        response = await self.client.chat.completions.create(**completion_kwargs)
+        last_exc: Exception | None = None
+        for attempt in range(_RETRY_MAX_ATTEMPTS + 1):
+            try:
+                response = await self.client.chat.completions.create(**completion_kwargs)
+                self._last_input_token_count = response.usage.prompt_tokens
+                self._last_output_token_count = response.usage.completion_tokens
+                return ChatMessage.from_dict(
+                    response.choices[0].message.model_dump(include={"role", "content", "tool_calls"}),
+                    raw=response,
+                    token_usage=TokenUsage(
+                        input_tokens=response.usage.prompt_tokens,
+                        output_tokens=response.usage.completion_tokens,
+                    ),
+                )
+            except openai.RateLimitError as e:
+                last_exc = e
+                if attempt == _RETRY_MAX_ATTEMPTS:
+                    break
+                # Honour Retry-After header when present, else exponential backoff
+                retry_after = _parse_retry_after(e)
+                delay = retry_after if retry_after else _backoff(attempt)
+                logger.warning(
+                    f"Rate limit hit (429) for model '{self.model_id}', "
+                    f"retrying in {delay:.1f}s (attempt {attempt + 1}/{_RETRY_MAX_ATTEMPTS})"
+                )
+                await asyncio.sleep(delay)
+            except openai.APIStatusError as e:
+                last_exc = e
+                if e.status_code < 500 or attempt == _RETRY_MAX_ATTEMPTS:
+                    raise
+                delay = _backoff(attempt)
+                logger.warning(
+                    f"Server error {e.status_code} for model '{self.model_id}', "
+                    f"retrying in {delay:.1f}s (attempt {attempt + 1}/{_RETRY_MAX_ATTEMPTS})"
+                )
+                await asyncio.sleep(delay)
+            except openai.APIConnectionError as e:
+                last_exc = e
+                if attempt == _RETRY_MAX_ATTEMPTS:
+                    break
+                delay = _backoff(attempt)
+                logger.warning(
+                    f"Connection error for model '{self.model_id}', "
+                    f"retrying in {delay:.1f}s (attempt {attempt + 1}/{_RETRY_MAX_ATTEMPTS})"
+                )
+                await asyncio.sleep(delay)
 
-        self._last_input_token_count = response.usage.prompt_tokens
-        self._last_output_token_count = response.usage.completion_tokens
-        return ChatMessage.from_dict(
-            response.choices[0].message.model_dump(include={"role", "content", "tool_calls"}),
-            raw=response,
-            token_usage=TokenUsage(
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
-            ),
-        )
+        raise last_exc
 
     async def __call__(self, *args, **kwargs) -> ChatMessage:
         """

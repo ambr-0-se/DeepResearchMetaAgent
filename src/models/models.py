@@ -36,6 +36,7 @@ class ModelManager(metaclass=Singleton):
         self._register_langchain_models(use_local_proxy=use_local_proxy)
         self._register_vllm_models(use_local_proxy=use_local_proxy)
         self._register_deepseek_models(use_local_proxy=use_local_proxy)
+        self._register_openrouter_models()
 
     def _check_local_api_key(self, local_api_key_name: str, remote_api_key_name: str) -> str:
         api_key = os.getenv(local_api_key_name, PLACEHOLDER)
@@ -504,6 +505,14 @@ class ModelManager(metaclass=Singleton):
             )
             self.registed_models[model_name] = model
 
+        # Add langchain wrapper for Qwen (required for browser-use tool)
+        langchain_qwen = ChatOpenAI(
+            model="Qwen",
+            api_key=api_key,
+            base_url=api_base,
+        )
+        self.registed_models["langchain-Qwen"] = langchain_qwen
+
         # Qwen-VL
         api_key_VL = self._check_local_api_key(local_api_key_name="QWEN_VL_API_KEY", 
                                                 remote_api_key_name="QWEN_VL_API_KEY")
@@ -575,3 +584,43 @@ class ModelManager(metaclass=Singleton):
             self.registed_models[model_name] = model
         else:
             logger.warning("DeepSeek models are not supported in remote API mode.")
+
+    def _register_openrouter_models(self):
+        api_key = os.getenv("OPENROUTER_API_KEY", PLACEHOLDER)
+        if api_key == PLACEHOLDER:
+            logger.warning("OPENROUTER_API_KEY is not set, skipping OpenRouter models")
+            return
+
+        api_base = os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1")
+        logger.info("Registering OpenRouter models")
+
+        models = [
+            # Free 117B MoE model with native tool use and configurable reasoning depth
+            {
+                "model_name": "gpt-oss-120b",
+                "model_id": "openai/gpt-oss-120b:free",
+            },
+        ]
+
+        for model in models:
+            model_name = model["model_name"]
+            model_id = model["model_id"]
+
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=api_base,
+            )
+            registered_model = OpenAIServerModel(
+                model_id=model_id,
+                http_client=client,
+                custom_role_conversions=custom_role_conversions,
+            )
+            self.registed_models[model_name] = registered_model
+
+            # LangChain wrapper required by auto_browser_use_tool
+            langchain_model = ChatOpenAI(
+                model=model_id,
+                api_key=api_key,
+                base_url=api_base,
+            )
+            self.registed_models[f"langchain-{model_name}"] = langchain_model

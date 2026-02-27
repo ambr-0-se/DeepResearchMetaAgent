@@ -91,13 +91,13 @@ def get_tasks_to_run(answers_file, dataset) -> List[dict]:
 
 async def answer_single_question(config, example):
 
+    augmented_question = example["question"]
+    start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         agent = await create_agent(config)
         logger.visualize_agent_tree(agent)
 
         logger.info(f"Task Id: {example['task_id']}, Final Answer: {example['true_answer']}")
-
-        augmented_question = example["question"]
 
         if example["file_name"]:
             prompt_use_files = "\n\nTo solve the task above, you will have to use these attached files:\n"
@@ -106,16 +106,15 @@ async def answer_single_question(config, example):
 
             augmented_question += prompt_use_files
 
-        start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         # Run agent 🚀
         final_result = await agent.run(task=augmented_question)
 
         agent_memory = await agent.write_memory_to_messages(summary_mode=True)
 
+        reformulation_model_id = getattr(config.agent_config, 'model_id', 'gpt-4.1')
         final_result = await prepare_response(augmented_question,
                                               agent_memory,
-                                              reformulation_model=model_manager.registed_models["gpt-4.1"])
+                                              reformulation_model=model_manager.registed_models[reformulation_model_id])
 
         output = str(final_result)
         for memory_step in agent.memory.steps:
@@ -185,7 +184,7 @@ async def main():
     logger.info(f"| Config:\n{config.pretty_text}")
 
     # Registed models
-    model_manager.init_models(use_local_proxy=True)
+    model_manager.init_models(use_local_proxy=getattr(config, 'use_local_proxy', True))
     logger.info("| Registed models: %s", ", ".join(model_manager.registed_models.keys()))
     
     # Load dataset

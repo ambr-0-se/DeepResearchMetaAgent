@@ -44,23 +44,27 @@ Returns a diagnosis explaining:
 - What capability was missing
 - Suggested remediation actions"""
 
-    inputs = {
-        "agent_name": {
-            "type": "string",
-            "description": "Name of the sub-agent to diagnose (e.g., 'deep_researcher_agent')"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "agent_name": {
+                "type": "string",
+                "description": "Name of the sub-agent to diagnose (e.g., 'deep_researcher_agent')"
+            },
+            "task_given": {
+                "type": "string",
+                "description": "The task you assigned to the sub-agent"
+            },
+            "expected_outcome": {
+                "type": "string",
+                "description": "What you expected the sub-agent to achieve"
+            },
+            "actual_response": {
+                "type": "string",
+                "description": "The actual response you received from the sub-agent"
+            }
         },
-        "task_given": {
-            "type": "string",
-            "description": "The task you assigned to the sub-agent"
-        },
-        "expected_outcome": {
-            "type": "string",
-            "description": "What you expected the sub-agent to achieve"
-        },
-        "actual_response": {
-            "type": "string",
-            "description": "The actual response you received from the sub-agent"
-        }
+        "required": ["agent_name", "task_given", "expected_outcome", "actual_response"]
     }
     output_type = "string"
     

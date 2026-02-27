@@ -65,13 +65,16 @@ class AutoBrowserUseTool(AsyncTool):
     async def _browser_task(self, task):
         controller = Controller(http_save_path=self.http_save_path)
 
-        assert self.model_id in ['gpt-4.1'], f"Model should be in [gpt-4.1, ], but got {self.model_id}. Please check your config file."
-
         if "langchain" not in self.model_id:
             model_id = f"langchain-{self.model_id}"
         else:
             model_id = self.model_id
 
+        if model_id not in model_manager.registed_models:
+            raise ValueError(
+                f"Model '{model_id}' is not registered. "
+                f"Ensure a LangChain-compatible wrapper is registered under this key."
+            )
         model = model_manager.registed_models[model_id]
 
         browser_agent = Agent(

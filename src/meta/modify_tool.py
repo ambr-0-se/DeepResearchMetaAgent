@@ -48,26 +48,24 @@ Examples:
 - Create calculation specialist: action="add_agent", agent_name="math_agent", specification="A specialized agent for mathematical calculations using python"
 - Add instructions: action="modify_agent_instructions", agent_name="browser_use_agent", specification="Focus on extracting specific data points, not general summaries" """
 
-    inputs = {
-        "action": {
-            "type": "string",
-            "description": "One of: 'add_agent', 'remove_agent', 'add_existing_tool_to_agent', 'add_new_tool_to_agent', 'remove_tool_from_agent', 'modify_agent_instructions', 'set_agent_max_steps'"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "description": "One of: 'add_agent', 'remove_agent', 'add_existing_tool_to_agent', 'add_new_tool_to_agent', 'remove_tool_from_agent', 'modify_agent_instructions', 'set_agent_max_steps'"
+            },
+            "agent_name": {
+                "type": "string",
+                "description": "Name of the sub-agent to modify (or name for new agent)"
+            },
+            "specification": {
+                "type": "string",
+                "description": "Depends on action: add_agent (agent description), add_existing_tool_to_agent (tool name), add_new_tool_to_agent (tool description), modify_agent_instructions (additional instructions), set_agent_max_steps (new max_steps value), remove_* (optional reason)",
+                "nullable": True
+            }
         },
-        "agent_name": {
-            "type": "string",
-            "description": "Name of the sub-agent to modify (or name for new agent)"
-        },
-        "specification": {
-            "type": "string",
-            "description": """Depends on action:
-- add_agent: Description of what the agent should do and its specialization
-- add_existing_tool_to_agent: Name of the registered tool to add
-- add_new_tool_to_agent: Description of what tool to create
-- modify_agent_instructions: The additional instructions to append
-- set_agent_max_steps: The new max_steps value (as string, e.g., "15")
-- remove_*: Can be empty or provide reason""",
-            "nullable": True
-        }
+        "required": ["action", "agent_name"]
     }
     output_type = "string"
     

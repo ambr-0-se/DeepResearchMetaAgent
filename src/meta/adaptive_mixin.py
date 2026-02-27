@@ -360,6 +360,14 @@ Additional Instructions:
             "task": {"type": "string", "description": "Task description for the agent."},
             "additional_args": {"type": "object", "description": "Extra context/data."},
         }
+        agent.parameters = {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Task description for the agent."},
+                "additional_args": {"type": "object", "description": "Extra context/data."},
+            },
+            "required": ["task"],
+        }
         agent.output_type = "string"
         
         # Add to managed agents

@@ -11,7 +11,7 @@ English | [简体中文](README_CN.md) | [🌐 **Website**](https://skyworkai.gi
 > 👉 [https://github.com/DVampire/AgentWorld](https://github.com/DVampire/AgentWorld)  
 > 📄 [https://arxiv.org/abs/2506.12508](https://arxiv.org/abs/2506.12508)
 ## Introduction
-image.png
+
 DeepResearchAgent is a hierarchical multi-agent system designed not only for deep research tasks but also for general-purpose task solving. The framework leverages a top-level planning agent to coordinate multiple specialized lower-level agents, enabling automated task decomposition and efficient execution across diverse and complex domains.
 
 > 🌐 **Check out our interactive website**: [https://skyworkai.github.io/DeepResearchAgent/](https://skyworkai.github.io/DeepResearchAgent/) - Explore the architecture, view experiments, and learn more about our research!
@@ -31,6 +31,11 @@ The system adopts a two-layer structure:
 * Responsible for understanding, decomposing, and planning the overall workflow for a given task.
 * Breaks down tasks into manageable sub-tasks and assigns them to appropriate lower-level agents.
 * Dynamically coordinates the collaboration among agents to ensure smooth task completion.
+
+**Adaptive Planning Agent** — An extended variant that adds runtime self-modification capabilities:
+* Uses a THINK-ACT-OBSERVE-REFLECT loop for iterative problem solving.
+* Can diagnose sub-agent failures at runtime via `diagnose_subagent` and dynamically modify sub-agent tools, instructions, and capabilities via `modify_subagent`.
+* All modifications are task-scoped and reset after each task.
 
 ### 2. Specialized Lower-Level Agents
 
@@ -63,8 +68,12 @@ The system adopts a two-layer structure:
 - Automated information analysis, research, and web interaction capabilities
 - Secure Python code execution environment for tools, featuring configurable import controls, restricted built-ins, attribute access limitations, and resource limits. (See [PythonInterpreterTool Sandboxing](./docs/python_interpreter_sandbox.md) for details).
 - Support for asynchronous operations, enabling efficient handling of multiple tasks and agents
+- Adaptive self-modification: the AdaptivePlanningAgent can diagnose failures and modify sub-agents at runtime
+- Token-budget-aware context pruning to handle long conversations within model context limits
+- OpenAI-native Tier B tool message protocol for parallel tool call tracking
 - Support for local and remote model inference, including OpenAI, Anthropic, Google LLMs, and local Qwen models via vLLM
 - Support for image and video generation tools based on the Imagen and Veo3 models, respectively
+- GAIA evaluation infrastructure with vLLM health watchdog, auto-restart, and transient error retry
 
 Image and Video Examples:
 <p align="center">
@@ -73,6 +82,10 @@ Image and Video Examples:
 </p>
 
 ## Updates
+* **2026.02**: Codebase cleanup — remove obsolete scripts, improve eval reporting (retry tracking, per-tool results, broader error classification), and update documentation.
+* **2026.02**: GAIA evaluation robustness — vLLM health watchdog with auto-restart, transient error retry in eval runner, token-budget-aware context pruning, and planning tool auto-ID generation.
+* **2026.02**: Add OpenAI-native Tier B tool message protocol for parallel tool call tracking.
+* **2026.01**: Add AdaptivePlanningAgent with runtime self-modification (diagnose/modify sub-agents), GAIA evaluation analysis script (`scripts/analyze_results.py`), and Qwen3-VL-4B-Instruct support.
 * **2025.08.04**: Add the support for loading mcp tools from the local json file.
 * **2025.07.08**: Add the video generator tool, which can generate a video based on the input text and/or image. The video generator tool is based on the Veo3 model.
 * **2025.07.08**: Add the image generator tool, which can generate images based on the input text. The image generator tool is based on the Imagen model.
@@ -88,7 +101,7 @@ Image and Video Examples:
 * [x] Asynchronous feature completed
 * [x] Image Generator Tool completed
 * [x] Video Generator Tool completed
-* [x] MCP in progress
+* [x] MCP completed
 * [x] Load local MCP tools from JSON file completed
 * [ ] AI4Research Agent to be developed
 * [ ] Novel Writing Agent to be developed
@@ -142,16 +155,30 @@ A simple example to demonstrate the usage of a single agent, such as a general t
 python examples/run_general.py
 ```
 
-### RUN GAIA Evaluation Example
+### Run GAIA Evaluation
 
 ```bash
 # Download GAIA
 mkdir data && cd data
 git clone https://huggingface.co/datasets/gaia-benchmark/GAIA
 
-# Run
-python examples/run_gaia.py
+# Run baseline evaluation
+python examples/run_gaia.py --config configs/config_gaia.py
+
+# Run adaptive agent evaluation
+python examples/run_gaia.py --config configs/config_gaia_adaptive.py
+
+# Override config options (e.g. model, sample count)
+python examples/run_gaia.py --config configs/config_gaia.py --cfg-options model_id=gpt-4.1 max_samples=10
+
+# Compare baseline vs adaptive results
+python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_adaptive/dra.jsonl
+
+# Analyze results and generate HTML report
+python scripts/analyze_results.py workdir/gaia/dra.jsonl
 ```
+
+For GPU cluster evaluation with vLLM (SLURM), see [INSTRUCTIONS_RUN_EVAL.md](./INSTRUCTIONS_RUN_EVAL.md).
 
 ## Experiments
 
@@ -170,15 +197,16 @@ With the integration of the Computer Use and MCP Manager Agent, which now enable
 
 ### 1. About Qwen Models
 
-Our framework now supports:
+Our framework supports the following Qwen models (via vLLM):
 
 * qwen2.5-7b-instruct
 * qwen2.5-14b-instruct
 * qwen2.5-32b-instruct
+* Qwen3-VL-4B-Instruct (vision-language)
 
-Update your config:
+Update your config (mmengine Python format):
 
-```toml
+```python
 model_id = "qwen2.5-7b-instruct"
 ```
 

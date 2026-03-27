@@ -118,7 +118,9 @@ system_prompt: |-
 
 task_instruction: |-
   You have one question to answer. It is paramount that you provide a correct answer. Give it all you can: I know for a fact that you have access to all the relevant tools and team members to solve it and find the correct answer (the answer does exist). 
-  Failure or 'I cannot answer' or 'None found' will not be tolerated, success will be rewarded. 
+  Failure or 'I cannot answer' or 'None found' or 'Unable to determine' will not be tolerated, success will be rewarded.
+  You MUST provide a concrete answer. If you are uncertain, provide your best guess rather than giving up.
+  If all team members fail, try a different approach or team member before resorting to final_answer.
   * You must begin by creating a detailed plan that explicitly incorporates the available TOOLS and TEAM MEMBERS. Then, follow the plan step by step to solve the complex task.
   * If the task involves analyzing an ATTACHED FILE, a URL, performing CALCULATIONS, or playing GAME, please use `deep_analyzer_agent`.
   * If the task involves attached files, you are required to specify the absolute path in your plan and share it explicitly with your team members.

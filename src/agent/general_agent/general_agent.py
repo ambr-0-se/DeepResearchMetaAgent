@@ -90,6 +90,13 @@ class GeneralAgent(AsyncMultiStepAgent):
             user_prompt=self.user_prompt,
         )
 
+        logger.info(
+            f"[{self.__class__.__name__} GeneralAgent.__init__ done] "
+            f"tools={list(self.tools.keys())}, "
+            f"managed_agents={list(self.managed_agents.keys())} "
+            f"(id={id(self.managed_agents):#x})"
+        )
+
     def initialize_system_prompt(self) -> str:
         """Initialize the system prompt for the agent."""
         system_prompt = populate_template(
@@ -129,6 +136,79 @@ class GeneralAgent(AsyncMultiStepAgent):
         """Returns a combined list of tools and managed agents."""
         return list(self.tools.values()) + list(self.managed_agents.values())
 
+    def _estimate_token_count(self, messages: list) -> int:
+        """Rough token estimate from message character count (chars / 3.5)."""
+        total_chars = 0
+        for msg in messages:
+            content = msg.content if hasattr(msg, 'content') else str(msg)
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and "text" in part:
+                        total_chars += len(part["text"])
+                    else:
+                        total_chars += len(str(part))
+            else:
+                total_chars += len(str(content))
+        return int(total_chars / 3.5)
+
+    def _prune_messages_if_needed(self, messages: list) -> list:
+        """Prune conversation history if approaching the model's context limit.
+
+        Keeps the system prompt (first message) and the most recent messages,
+        truncating middle messages to tool-call summaries.
+        """
+        max_model_len = getattr(self.config, 'max_model_len', 32768)
+        threshold = int(max_model_len * 0.85)
+
+        estimated_tokens = self._estimate_token_count(messages)
+        if estimated_tokens <= threshold:
+            return messages
+
+        logger.warning(
+            f"[Context Pruning] Estimated {estimated_tokens} tokens exceeds "
+            f"threshold {threshold} (max_model_len={max_model_len}). Pruning..."
+        )
+
+        if len(messages) <= 4:
+            return messages
+
+        keep_tail = min(4, len(messages) - 1)
+        head = messages[:1]
+        tail = messages[-keep_tail:]
+        middle = messages[1:-keep_tail]
+
+        pruned_middle = []
+        for msg in middle:
+            content = msg.content if hasattr(msg, 'content') else str(msg)
+            if isinstance(content, list):
+                text_parts = [p.get("text", "") if isinstance(p, dict) else str(p) for p in content]
+                full_text = " ".join(text_parts)
+            else:
+                full_text = str(content)
+
+            if len(full_text) > 500:
+                truncated = full_text[:250] + " ... [truncated] ... " + full_text[-200:]
+                init_kwargs = {"role": msg.role, "content": [{"type": "text", "text": truncated}]}
+                for attr in ("tool_calls", "tool_call_id", "name", "raw"):
+                    val = getattr(msg, attr, None)
+                    if val is not None:
+                        init_kwargs[attr] = val
+                try:
+                    pruned_msg = ChatMessage(**init_kwargs)
+                except TypeError:
+                    pruned_msg = ChatMessage(role=msg.role, content=[{"type": "text", "text": truncated}])
+                pruned_middle.append(pruned_msg)
+            else:
+                pruned_middle.append(msg)
+
+        result = head + pruned_middle + tail
+        new_est = self._estimate_token_count(result)
+        logger.warning(
+            f"[Context Pruning] Pruned {len(messages)} messages -> {len(result)} messages, "
+            f"estimated tokens: {estimated_tokens} -> {new_est}"
+        )
+        return result
+
     async def _step_stream(self, memory_step: ActionStep) -> AsyncGenerator[ChatMessageStreamDelta | ToolOutput]:
         """
         Perform one step in the ReAct framework: the agent thinks, acts, and observes the result.
@@ -136,6 +216,7 @@ class GeneralAgent(AsyncMultiStepAgent):
         At the end, yields either None if the step is not final, or the final answer.
         """
         memory_messages = await self.write_memory_to_messages()
+        memory_messages = self._prune_messages_if_needed(memory_messages)
 
         input_messages = memory_messages.copy()
 
@@ -204,9 +285,11 @@ class GeneralAgent(AsyncMultiStepAgent):
         model_outputs = []
         tool_calls = []
         observations = []
+        tool_results: list[dict[str, str]] = []
 
         final_answer_call = None
         parallel_calls = []
+        parallel_tool_calls_meta = []
         assert chat_message.tool_calls is not None
         for tool_call in chat_message.tool_calls:
             yield tool_call
@@ -220,6 +303,7 @@ class GeneralAgent(AsyncMultiStepAgent):
                 break  # Stop: final answer reached, no further tool calls
             else:
                 parallel_calls.append((tool_name, tool_arguments))
+                parallel_tool_calls_meta.append(tool_call)
 
         # Helper function to process a single tool call
         async def process_single_tool_call(call_info):
@@ -248,18 +332,19 @@ class GeneralAgent(AsyncMultiStepAgent):
             )
             return observation
 
-        # Process tool calls in parallel
+        # Process tool calls in parallel (Tier B: preserve tool_call order for tool_results)
         if parallel_calls:
             if len(parallel_calls) == 1:
-                # Only one parallel call, process it directly
                 observation = await process_single_tool_call(parallel_calls[0])
                 observations.append(observation)
+                tool_results.append({"id": parallel_tool_calls_meta[0].id, "content": observation})
                 yield ToolOutput(output=None, is_final_answer=False)
             else:
-                # Multiple parallel calls, use asyncio.gather for concurrent execution
                 tasks = [process_single_tool_call(call_info) for call_info in parallel_calls]
                 results = await asyncio.gather(*tasks)
                 observations.extend(results)
+                for tc, obs in zip(parallel_tool_calls_meta, results):
+                    tool_results.append({"id": tc.id, "content": obs})
                 for _ in results:
                     yield ToolOutput(output=None, is_final_answer=False)
 
@@ -298,7 +383,10 @@ class GeneralAgent(AsyncMultiStepAgent):
             memory_step.model_output = "\n".join(model_outputs)
         if tool_calls:
             memory_step.tool_calls = tool_calls
-        if observations:
+        if tool_results:
+            memory_step.tool_results = tool_results
+            memory_step.observations = "\n\n".join(tr["content"] for tr in tool_results)
+        elif observations:
             memory_step.observations = "\n".join(observations)
 
     async def execute_tool_call(self, tool_name: str, arguments: dict[str, str] | str) -> Any:

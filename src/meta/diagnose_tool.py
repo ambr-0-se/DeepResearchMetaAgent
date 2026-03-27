@@ -78,6 +78,26 @@ Returns a diagnosis explaining:
         super().__init__()
         self.parent_agent = parent_agent
     
+    def _find_agent(self, agent_name: str):
+        """Look up agent in managed_agents first, then tools as fallback."""
+        if agent_name in self.parent_agent.managed_agents:
+            return self.parent_agent.managed_agents[agent_name]
+        if hasattr(self.parent_agent, 'tools') and agent_name in self.parent_agent.tools:
+            obj = self.parent_agent.tools[agent_name]
+            if hasattr(obj, 'memory') or hasattr(obj, 'managed_agents'):
+                return obj
+        return None
+
+    def _get_available_agent_names(self) -> list[str]:
+        """List all agent names from both managed_agents and tools."""
+        names = list(self.parent_agent.managed_agents.keys())
+        if hasattr(self.parent_agent, 'tools'):
+            for name, obj in self.parent_agent.tools.items():
+                if hasattr(obj, 'memory') or hasattr(obj, 'managed_agents'):
+                    if name not in names:
+                        names.append(name)
+        return names
+
     async def forward(
         self,
         agent_name: str,
@@ -97,12 +117,10 @@ Returns a diagnosis explaining:
         Returns:
             Diagnosis string with analysis and recommendations
         """
-        # Check if agent exists
-        if agent_name not in self.parent_agent.managed_agents:
-            available = list(self.parent_agent.managed_agents.keys())
+        agent = self._find_agent(agent_name)
+        if agent is None:
+            available = self._get_available_agent_names()
             return f"Error: Agent '{agent_name}' not found. Available agents: {available}"
-        
-        agent = self.parent_agent.managed_agents[agent_name]
         
         # Get agent's memory/execution history
         execution_history = self._format_execution_history(agent)

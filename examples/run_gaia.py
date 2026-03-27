@@ -25,6 +25,23 @@ from src.registry import DATASET
 
 append_answer_lock = threading.Lock()
 
+
+def _serialize_steps(steps) -> list:
+    """Serialize memory steps to JSON-safe dicts, stripping large binary fields."""
+    serialized = []
+    for step in steps:
+        try:
+            d = step.dict()
+            d.pop("model_input_messages", None)
+            d.pop("observations_images", None)
+            if "model_output_message" in d and isinstance(d["model_output_message"], dict):
+                d["model_output_message"].pop("raw", None)
+            d["_step_type"] = type(step).__name__
+            serialized.append(d)
+        except Exception:
+            serialized.append({"_step_type": type(step).__name__, "_raw": str(step)[:2000]})
+    return serialized
+
 def append_answer(entry: dict, jsonl_file: str) -> None:
     jsonl_file = Path(jsonl_file)
     jsonl_file.parent.mkdir(parents=True, exist_ok=True)
@@ -89,59 +106,99 @@ def get_tasks_to_run(answers_file, dataset) -> List[dict]:
         done_questions = []
     return [line for line in data.to_dict(orient="records") if line["task_id"] not in done_questions]
 
+TRANSIENT_ERROR_KEYWORDS = [
+    "Connection refused", "Connection reset", "ConnectionError",
+    "Internal Server Error", "503", "502", "RemoteDisconnected",
+    "ConnectionAbortedError",
+]
+MAX_RETRIES = 3
+RETRY_WAIT_SECS = 60
+
+def _is_transient_error(error: Exception) -> bool:
+    err_str = str(error)
+    return any(kw in err_str for kw in TRANSIENT_ERROR_KEYWORDS)
+
 async def answer_single_question(config, example):
 
     augmented_question = example["question"]
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        agent = await create_agent(config)
-        logger.visualize_agent_tree(agent)
+    per_question_timeout = getattr(config, "per_question_timeout_secs", 1200)
 
-        logger.info(f"Task Id: {example['task_id']}, Final Answer: {example['true_answer']}")
+    if example["file_name"]:
+        prompt_use_files = "\n\nTo solve the task above, you will have to use these attached files:\n"
+        file_description = f" - Attached file: {example['file_name']}"
+        prompt_use_files += file_description
+        augmented_question += prompt_use_files
 
-        if example["file_name"]:
-            prompt_use_files = "\n\nTo solve the task above, you will have to use these attached files:\n"
-            file_description = f" - Attached file: {example['file_name']}"
-            prompt_use_files += file_description
+    output = None
+    intermediate_steps = []
+    parsing_error = False
+    iteration_limit_exceeded = False
+    raised_exception = False
+    exception = None
 
-            augmented_question += prompt_use_files
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            agent = await create_agent(config)
+            if attempt == 0:
+                logger.visualize_agent_tree(agent)
+            logger.info(f"Task Id: {example['task_id']}, Final Answer: {example['true_answer']}")
 
-        # Run agent 🚀
-        final_result = await agent.run(task=augmented_question)
+            final_result = await asyncio.wait_for(
+                agent.run(task=augmented_question),
+                timeout=per_question_timeout,
+            )
 
-        agent_memory = await agent.write_memory_to_messages(summary_mode=True)
+            agent_memory = await agent.write_memory_to_messages(summary_mode=True)
+            reformulation_model_id = getattr(config.agent_config, 'model_id', 'gpt-4.1')
+            final_result = await prepare_response(
+                augmented_question,
+                agent_memory,
+                reformulation_model=model_manager.registed_models[reformulation_model_id],
+            )
 
-        reformulation_model_id = getattr(config.agent_config, 'model_id', 'gpt-4.1')
-        final_result = await prepare_response(augmented_question,
-                                              agent_memory,
-                                              reformulation_model=model_manager.registed_models[reformulation_model_id])
+            output = str(final_result)
+            for memory_step in agent.memory.steps:
+                memory_step.model_input_messages = None
+            intermediate_steps = _serialize_steps(agent.memory.steps)
+            intermediate_steps_str = [str(step) for step in agent.memory.steps]
 
-        output = str(final_result)
-        for memory_step in agent.memory.steps:
-            memory_step.model_input_messages = None
-        intermediate_steps = [str(step) for step in agent.memory.steps]
+            parsing_error = any("AgentParsingError" in step for step in intermediate_steps_str)
+            iteration_limit_exceeded = "Agent stopped due to iteration limit or time limit." in output
+            raised_exception = False
+            break
 
-        # Check for parsing errors which indicate the LLM failed to follow the required format
-        parsing_error = True if any(["AgentParsingError" in step for step in intermediate_steps]) else False
+        except asyncio.TimeoutError:
+            logger.warning(f"Question timed out after {per_question_timeout}s: {augmented_question[:80]}")
+            output = None
+            intermediate_steps = []
+            iteration_limit_exceeded = True
+            exception = asyncio.TimeoutError(f"Per-question timeout ({per_question_timeout}s) exceeded")
+            raised_exception = True
+            break
 
-        # check if iteration limit exceeded
-        iteration_limit_exceeded = True if "Agent stopped due to iteration limit or time limit." in output else False
-        raised_exception = False
+        except Exception as e:
+            if _is_transient_error(e) and attempt < MAX_RETRIES:
+                logger.warning(
+                    f"Transient error on attempt {attempt + 1}/{MAX_RETRIES + 1}, "
+                    f"retrying in {RETRY_WAIT_SECS}s: {str(e)[:200]}"
+                )
+                await asyncio.sleep(RETRY_WAIT_SECS)
+                continue
 
-    except Exception as e:
-        logger.info("Error on ", augmented_question, e)
-        output = None
-        intermediate_steps = []
-        parsing_error = False
-        iteration_limit_exceeded = False
-        exception = e
-        raised_exception = True
+            logger.info("Error on ", augmented_question, e)
+            output = None
+            intermediate_steps = []
+            exception = e
+            raised_exception = True
+            break
     end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     annotated_example = {
         "agent_name": config.agent_config.name,
         "question": example["question"],
         "augmented_question": augmented_question,
         "prediction": output,
+        "output": output,
         "intermediate_steps": intermediate_steps,
         "parsing_error": parsing_error,
         "iteration_limit_exceeded": iteration_limit_exceeded,
@@ -193,7 +250,7 @@ async def main():
 
     # Load answers
     tasks_to_run = get_tasks_to_run(config.save_path, dataset)
-    tasks_to_run = [task for task in tasks_to_run[:1]]
+    tasks_to_run = [task for task in tasks_to_run]
     logger.info(f"| Loaded {len(tasks_to_run)} tasks to run.")
 
     # Run tasks

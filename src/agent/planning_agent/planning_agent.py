@@ -10,6 +10,7 @@ from src.memory import AgentMemory
 from src.models import Model
 from src.registry import AGENT
 from src.utils import assemble_project_path
+from src.logger import logger
 
 @AGENT.register_module(name="planning_agent", force=True)
 class PlanningAgent(GeneralAgent):
@@ -54,4 +55,11 @@ class PlanningAgent(GeneralAgent):
         self.memory = AgentMemory(
             system_prompt=self.system_prompt,
             user_prompt=self.user_prompt,
+        )
+
+        logger.info(
+            f"[{self.__class__.__name__} PlanningAgent.__init__ done] "
+            f"tools={list(self.tools.keys())}, "
+            f"managed_agents={list(self.managed_agents.keys())} "
+            f"(id={id(self.managed_agents):#x})"
         )

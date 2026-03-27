@@ -277,6 +277,13 @@ class AsyncMultiStepAgent(ABC):
         self.step_callbacks.append(self.monitor.update_metrics)
         self.stream_outputs = False
 
+        logger.info(
+            f"[{self.__class__.__name__} AsyncMultiStepAgent.__init__ done] "
+            f"tools={list(self.tools.keys())}, "
+            f"managed_agents={list(self.managed_agents.keys())} "
+            f"(id={id(self.managed_agents):#x})"
+        )
+
     def _validate_name(self, name: str | None) -> str | None:
         if name is not None and not is_valid_name(name):
             raise ValueError(f"Agent name '{name}' must be a valid Python identifier and not a reserved keyword.")
@@ -297,9 +304,20 @@ class AsyncMultiStepAgent(ABC):
                     "additional_args": {
                         "type": "object",
                         "description": "Dictionary of extra inputs to pass to the managed agent, e.g. images, dataframes, or any other contextual data it may need.",
+                        "nullable": True,
                     },
                 }
                 agent.output_type = "string"
+                agent.parameters = {
+                    "type": "object",
+                    "properties": agent.inputs,
+                    "required": ["task"],
+                }
+            logger.info(
+                f"[{self.__class__.__name__}._setup_managed_agents] "
+                f"Populated {len(self.managed_agents)} managed agents: "
+                f"{list(self.managed_agents.keys())} (id={id(self.managed_agents):#x})"
+            )
 
     def _setup_tools(self, tools, add_base_tools):
         assert all(isinstance(tool, AsyncTool) for tool in tools), "All elements must be instance of AsyncTool (or a subclass)"

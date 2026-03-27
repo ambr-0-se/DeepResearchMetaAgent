@@ -25,6 +25,16 @@ class AdaptiveMixin:
     All modifications are task-scoped and reset after task completion.
     """
     
+    def _find_managed_agent(self: "AsyncMultiStepAgent", agent_name: str):
+        """Find a managed agent by name, checking both managed_agents and tools."""
+        if agent_name in self.managed_agents:
+            return self.managed_agents[agent_name]
+        if hasattr(self, 'tools') and agent_name in self.tools:
+            obj = self.tools[agent_name]
+            if hasattr(obj, 'memory') or hasattr(obj, 'managed_agents'):
+                return obj
+        return None
+
     # ========== STATE MANAGEMENT ==========
     
     def _store_original_state(self: "AsyncMultiStepAgent") -> None:
@@ -33,13 +43,20 @@ class AdaptiveMixin:
         Called at the start of run() to enable reset after task.
         """
         self._original_state = {
-            "tools": dict(self.tools),  # Shallow copy of tools dict
-            "managed_agents": dict(self.managed_agents),  # Shallow copy of managed agents dict
-            "agent_states": {},  # Deep state for each managed agent
+            "tools": dict(self.tools),
+            "managed_agents": dict(self.managed_agents),
+            "agent_states": {},
         }
         
-        # Store each managed agent's modifiable state
-        for agent_name, agent in self.managed_agents.items():
+        # Collect all agents from both managed_agents and tools (fallback)
+        all_agents = dict(self.managed_agents)
+        if hasattr(self, 'tools'):
+            for name, obj in self.tools.items():
+                if hasattr(obj, 'memory') or hasattr(obj, 'managed_agents'):
+                    if name not in all_agents:
+                        all_agents[name] = obj
+        
+        for agent_name, agent in all_agents.items():
             self._original_state["agent_states"][agent_name] = {
                 "tools": dict(agent.tools) if hasattr(agent, 'tools') else {},
                 "task_instruction_template": copy.deepcopy(
@@ -50,7 +67,8 @@ class AdaptiveMixin:
         
         logger.log(
             f"[AdaptiveMixin] Stored original state: {len(self.tools)} tools, "
-            f"{len(self.managed_agents)} managed agents",
+            f"{len(self.managed_agents)} managed agents, "
+            f"{len(all_agents)} total agents (incl. fallback)",
             level=LogLevel.DEBUG
         )
     
@@ -70,27 +88,18 @@ class AdaptiveMixin:
         self.tools = self._original_state["tools"]
         self.managed_agents = self._original_state["managed_agents"]
         
-        # Restore each managed agent's internal state
+        # Restore each managed agent's internal state (check both dicts)
         for agent_name, original in self._original_state["agent_states"].items():
-            if agent_name in self.managed_agents:
-                agent = self.managed_agents[agent_name]
-                
-                # Restore tools
+            agent = self._find_managed_agent(agent_name)
+            if agent is not None:
                 if hasattr(agent, 'tools'):
                     agent.tools = original["tools"]
-                
-                # Restore task_instruction template
                 if hasattr(agent, 'prompt_templates') and original["task_instruction_template"]:
                     agent.prompt_templates["task_instruction"] = original["task_instruction_template"]
-                
-                # Restore max_steps
                 if original["max_steps"] is not None and hasattr(agent, 'max_steps'):
                     agent.max_steps = original["max_steps"]
         
-        # Refresh system prompt to reflect restored state
         self._refresh_system_prompt()
-        
-        # Clean up
         del self._original_state
         
         logger.log(
@@ -120,14 +129,13 @@ class AdaptiveMixin:
         Returns:
             True if successful, False otherwise
         """
-        if agent_name not in self.managed_agents:
+        agent = self._find_managed_agent(agent_name)
+        if agent is None:
             logger.log(
-                f"[AdaptiveMixin] Agent '{agent_name}' not found in managed agents",
+                f"[AdaptiveMixin] Agent '{agent_name}' not found",
                 level=LogLevel.WARNING
             )
             return False
-        
-        agent = self.managed_agents[agent_name]
         
         if not hasattr(agent, 'tools'):
             logger.log(
@@ -136,10 +144,8 @@ class AdaptiveMixin:
             )
             return False
         
-        # Add the tool
         agent.tools[tool.name] = tool
         
-        # Refresh agent's system prompt if possible
         if hasattr(agent, 'initialize_system_prompt') and hasattr(agent, 'memory'):
             agent.system_prompt = agent.initialize_system_prompt()
             agent.memory.system_prompt = SystemPromptStep(system_prompt=agent.system_prompt)
@@ -165,7 +171,7 @@ class AdaptiveMixin:
         Returns:
             True if successful, False otherwise
         """
-        if agent_name not in self.managed_agents:
+        if self._find_managed_agent(agent_name) is None:
             logger.log(
                 f"[AdaptiveMixin] Agent '{agent_name}' not found",
                 level=LogLevel.WARNING
@@ -204,14 +210,13 @@ class AdaptiveMixin:
         Returns:
             True if successful, False otherwise
         """
-        if agent_name not in self.managed_agents:
+        agent = self._find_managed_agent(agent_name)
+        if agent is None:
             logger.log(
                 f"[AdaptiveMixin] Agent '{agent_name}' not found",
                 level=LogLevel.WARNING
             )
             return False
-        
-        agent = self.managed_agents[agent_name]
         
         if not hasattr(agent, 'tools') or tool_name not in agent.tools:
             logger.log(
@@ -258,14 +263,13 @@ class AdaptiveMixin:
         Returns:
             True if successful, False otherwise
         """
-        if agent_name not in self.managed_agents:
+        agent = self._find_managed_agent(agent_name)
+        if agent is None:
             logger.log(
                 f"[AdaptiveMixin] Agent '{agent_name}' not found",
                 level=LogLevel.WARNING
             )
             return False
-        
-        agent = self.managed_agents[agent_name]
         
         if not hasattr(agent, 'prompt_templates'):
             logger.log(
@@ -307,17 +311,15 @@ Additional Instructions:
             - Values too low (< 1): agent cannot make progress
             - Values too high (> 50): excessive API costs and latency
         """
-        if agent_name not in self.managed_agents:
+        agent = self._find_managed_agent(agent_name)
+        if agent is None:
             logger.log(
                 f"[AdaptiveMixin] Agent '{agent_name}' not found",
                 level=LogLevel.WARNING
             )
             return False
         
-        # Bound the value (see docstring for rationale)
         max_steps = max(1, min(50, max_steps))
-        
-        agent = self.managed_agents[agent_name]
         agent.max_steps = max_steps
         
         logger.log(
@@ -348,7 +350,7 @@ Additional Instructions:
             )
             return False
         
-        if agent.name in self.managed_agents:
+        if self._find_managed_agent(agent.name) is not None:
             logger.log(
                 f"[AdaptiveMixin] Agent '{agent.name}' already exists",
                 level=LogLevel.WARNING
@@ -469,10 +471,9 @@ Additional Instructions:
         Returns:
             Agent's memory object or None if not found
         """
-        if agent_name not in self.managed_agents:
+        agent = self._find_managed_agent(agent_name)
+        if agent is None:
             return None
-        
-        agent = self.managed_agents[agent_name]
         return getattr(agent, 'memory', None)
     
     def get_managed_agent_tools(
@@ -488,8 +489,7 @@ Additional Instructions:
         Returns:
             Dict of tool name to tool instance
         """
-        if agent_name not in self.managed_agents:
+        agent = self._find_managed_agent(agent_name)
+        if agent is None:
             return {}
-        
-        agent = self.managed_agents[agent_name]
         return getattr(agent, 'tools', {})

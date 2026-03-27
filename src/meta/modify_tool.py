@@ -92,6 +92,26 @@ Examples:
         self._tool_generator = None
         self._agent_generator = None
     
+    def _find_agent(self, agent_name: str):
+        """Look up agent in managed_agents first, then tools as fallback."""
+        if agent_name in self.parent_agent.managed_agents:
+            return self.parent_agent.managed_agents[agent_name]
+        if hasattr(self.parent_agent, 'tools') and agent_name in self.parent_agent.tools:
+            obj = self.parent_agent.tools[agent_name]
+            if hasattr(obj, 'memory') or hasattr(obj, 'managed_agents'):
+                return obj
+        return None
+
+    def _get_available_agent_names(self) -> list[str]:
+        """List all agent names from both managed_agents and tools."""
+        names = list(self.parent_agent.managed_agents.keys())
+        if hasattr(self.parent_agent, 'tools'):
+            for name, obj in self.parent_agent.tools.items():
+                if hasattr(obj, 'memory') or hasattr(obj, 'managed_agents'):
+                    if name not in names:
+                        names.append(name)
+        return names
+
     @property
     def tool_generator(self):
         """Lazy load ToolGenerator."""
@@ -163,13 +183,11 @@ Examples:
     
     async def _add_agent(self, agent_name: str, specification: str) -> str:
         """Create and add a new specialized agent."""
-        # Validate agent name (must be valid Python identifier)
         import re
         if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', agent_name):
             return f"Error: Invalid agent name '{agent_name}'. Must be a valid Python identifier (letters, numbers, underscores; cannot start with number)."
         
-        # Check if agent already exists
-        if agent_name in self.parent_agent.managed_agents:
+        if self._find_agent(agent_name) is not None:
             return f"Error: Agent '{agent_name}' already exists"
         
         try:
@@ -200,26 +218,36 @@ Examples:
     async def _remove_agent(self, agent_name: str, specification: Optional[str]) -> str:
         """Remove an existing agent."""
         success = self.parent_agent.remove_managed_agent(agent_name)
+        if not success and hasattr(self.parent_agent, 'tools') and agent_name in self.parent_agent.tools:
+            obj = self.parent_agent.tools[agent_name]
+            if hasattr(obj, 'memory') or hasattr(obj, 'managed_agents'):
+                del self.parent_agent.tools[agent_name]
+                success = True
         
         if success:
             return f"Successfully removed agent '{agent_name}'"
         else:
-            available = list(self.parent_agent.managed_agents.keys())
+            available = self._get_available_agent_names()
             return f"Error: Agent '{agent_name}' not found. Available: {available}"
     
     async def _add_existing_tool(self, agent_name: str, tool_name: str) -> str:
         """Add an existing registered tool to an agent."""
-        # Check if tool exists in registry
         if tool_name not in TOOL.module_dict:
-            available_tools = list(TOOL.module_dict.keys())[:20]  # First 20
+            available_tools = list(TOOL.module_dict.keys())[:20]
             return f"Error: Tool '{tool_name}' not found in registry. Some available: {available_tools}"
         
+        agent = self._find_agent(agent_name)
+        if agent is None:
+            available = self._get_available_agent_names()
+            return f"Error: Agent '{agent_name}' not found. Available: {available}"
+        
         try:
-            # Build the tool
             tool = TOOL.build({"type": tool_name})
             
-            # Add to agent
             success = self.parent_agent.add_tool_to_agent(agent_name, tool)
+            if not success and hasattr(agent, 'tools'):
+                agent.tools[tool.name] = tool
+                success = True
             
             if success:
                 return f"Successfully added tool '{tool_name}' to agent '{agent_name}'"
@@ -231,17 +259,19 @@ Examples:
     
     async def _add_new_tool(self, agent_name: str, specification: str) -> str:
         """Generate a new tool and add it to an agent."""
-        # Generate tool name from specification
+        agent = self._find_agent(agent_name)
+        if agent is None:
+            available = self._get_available_agent_names()
+            return f"Error: Agent '{agent_name}' not found. Available: {available}"
+        
         tool_name = self._generate_tool_name(specification)
         
         try:
-            # Generate tool code
             tool_code = await self.tool_generator.generate_tool_code(
                 requirement=specification,
                 tool_name=tool_name
             )
             
-            # Add to agent
             success = self.parent_agent.add_new_tool_to_agent(agent_name, tool_code)
             
             if success:
@@ -254,11 +284,19 @@ Examples:
     
     async def _remove_tool(self, agent_name: str, tool_name: str) -> str:
         """Remove a tool from an agent."""
-        # If specification provided, it's the tool name; otherwise extract from agent_name
         if not tool_name:
             return "Error: Must specify tool name to remove"
         
+        agent = self._find_agent(agent_name)
+        if agent is None:
+            available = self._get_available_agent_names()
+            return f"Error: Agent '{agent_name}' not found. Available: {available}"
+        
         success = self.parent_agent.remove_tool_from_agent(agent_name, tool_name)
+        if not success and hasattr(agent, 'tools') and tool_name in agent.tools:
+            if tool_name not in ["final_answer_tool", "final_answer"]:
+                del agent.tools[tool_name]
+                success = True
         
         if success:
             return f"Successfully removed tool '{tool_name}' from agent '{agent_name}'"
@@ -268,11 +306,20 @@ Examples:
     async def _modify_instructions(self, agent_name: str, instructions: str) -> str:
         """Modify an agent's instructions."""
         success = self.parent_agent.modify_agent_instructions(agent_name, instructions)
+        if not success:
+            agent = self._find_agent(agent_name)
+            if agent is not None and hasattr(agent, 'prompt_templates'):
+                current = agent.prompt_templates.get("task_instruction", "")
+                agent.prompt_templates["task_instruction"] = (
+                    f"{current}\n\nAdditional Instructions:\n{instructions}"
+                )
+                success = True
         
         if success:
             return f"Successfully updated instructions for agent '{agent_name}'"
         else:
-            return f"Error: Failed to modify instructions. Check that agent exists."
+            available = self._get_available_agent_names()
+            return f"Error: Agent '{agent_name}' not found. Available: {available}"
     
     async def _set_max_steps(self, agent_name: str, max_steps_str: str) -> str:
         """Set an agent's max_steps."""
@@ -282,11 +329,18 @@ Examples:
             return f"Error: max_steps must be a number, got '{max_steps_str}'"
         
         success = self.parent_agent.set_agent_max_steps(agent_name, max_steps)
+        if not success:
+            agent = self._find_agent(agent_name)
+            if agent is not None and hasattr(agent, 'max_steps'):
+                max_steps = max(1, min(50, max_steps))
+                agent.max_steps = max_steps
+                success = True
         
         if success:
             return f"Successfully set max_steps={max_steps} for agent '{agent_name}'"
         else:
-            return f"Error: Failed to set max_steps. Check that agent exists."
+            available = self._get_available_agent_names()
+            return f"Error: Agent '{agent_name}' not found. Available: {available}"
     
     def _infer_tools_from_spec(self, specification: str) -> list:
         """

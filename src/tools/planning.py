@@ -9,7 +9,7 @@ _PLANNING_TOOL_DESCRIPTION = """A planning tool that allows the agent to create 
 NOTE:
 - You must base your plan on the available tools and team members, and explicitly use them in your steps.
 - You must solve the complex task in ≤ 5 steps.
-- `create`: Create a new plan must include a unique plan_id.
+- `create`: Create a new plan. If plan_id is omitted, one will be auto-generated.
 """
 
 @TOOL.register_module(name="planning_tool", force=True)
@@ -93,12 +93,11 @@ class PlanningTool(AsyncTool):
     ):
         """Create a new plan with the given ID, title, and steps."""
         if not plan_id:
-            res = "Parameter `plan_id` is required for action: create"
-            logger.error(res)
-            return ToolResult(
-                output=None,
-                error=res,
-            )
+            counter = len(self.plans) + 1
+            plan_id = f"plan_{counter}"
+            while plan_id in self.plans:
+                counter += 1
+                plan_id = f"plan_{counter}"
 
         if plan_id in self.plans:
             res = f"A plan with ID '{plan_id}' already exists. Use 'update' to modify existing plans."

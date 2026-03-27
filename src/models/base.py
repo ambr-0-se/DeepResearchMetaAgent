@@ -97,6 +97,7 @@ class ChatMessage:
     role: str
     content: str | list[dict[str, Any]] | None = None
     tool_calls: list[ChatMessageToolCall] | None = None
+    tool_call_id: str | None = None  # OpenAI: links a tool result message to assistant tool_calls[].id
     raw: Any | None = None  # Stores the raw output from the API
     token_usage: TokenUsage | None = None
 
@@ -117,6 +118,7 @@ class ChatMessage:
             role=data["role"],
             content=data.get("content"),
             tool_calls=data.get("tool_calls"),
+            tool_call_id=data.get("tool_call_id"),
             raw=raw,
             token_usage=token_usage,
         )
@@ -169,6 +171,8 @@ class MessageRole(str, Enum):
     SYSTEM = "system"
     TOOL_CALL = "tool-call"
     TOOL_RESPONSE = "tool-response"
+    # OpenAI Chat Completions native tool result role (per tool_call_id)
+    TOOL = "tool"
 
     @classmethod
     def roles(cls):

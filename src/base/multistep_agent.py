@@ -336,9 +336,15 @@ class MultiStepAgent(ABC):
                     "additional_args": {
                         "type": "object",
                         "description": "Dictionary of extra inputs to pass to the managed agent, e.g. images, dataframes, or any other contextual data it may need.",
+                        "nullable": True,
                     },
                 }
                 agent.output_type = "string"
+                agent.parameters = {
+                    "type": "object",
+                    "properties": agent.inputs,
+                    "required": ["task"],
+                }
 
     def _setup_tools(self, tools, add_base_tools):
         assert all(isinstance(tool, Tool) for tool in tools), "All elements must be instance of Tool (or a subclass)"

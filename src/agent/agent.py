@@ -2,7 +2,6 @@ from typing import List, Dict, Any
 
 from src.registry import AGENT, TOOL
 from src.models import model_manager
-from src.tools import make_tool_instance
 from src.mcp.mcpadapt import MCPAdapt, AsyncToolAdapter
 from src.logger import logger
 
@@ -29,7 +28,7 @@ async def build_agent(config,
     """
     tools = []
     mcp_tools = []
-    managed_agent_tools = []
+    filtered_managed_agents = []
 
     # Build Tools
     if default_tools is None:
@@ -63,7 +62,7 @@ async def build_agent(config,
                 mcp_tools.append(mcp_tool)
         logger.info(f"| MCP Tools initialized: {', '.join([tool.name for tool in mcp_tools])}")
 
-    # Load Managed Agents
+    # Load Managed Agents (passed as real agent objects, not tool wrappers)
     if default_managed_agents is None:
         logger.info("| No managed agents provided. Skipping managed agent initialization.")
     else:
@@ -72,16 +71,15 @@ async def build_agent(config,
             if managed_agent.name not in used_managed_agents:
                 logger.warning(f"Managed agent '{managed_agent.name}' is not registered. Skipping.")
             else:
-                managed_agent_tool = make_tool_instance(managed_agent)
-                managed_agent_tools.append(managed_agent_tool)
-        logger.info(f"| Managed agents initialized: {', '.join([agent.name for agent in managed_agent_tools])}")
+                filtered_managed_agents.append(managed_agent)
+        logger.info(f"| Managed agents initialized: {', '.join([agent.name for agent in filtered_managed_agents])}")
 
     # Load Model
     model = model_manager.registed_models[agent_config["model_id"]]
 
     # Build Agent
-    combined_tools = tools + mcp_tools + managed_agent_tools
-    agent_config = dict(
+    combined_tools = tools + mcp_tools
+    build_config = dict(
         type=agent_config.type,
         config=agent_config,
         model=model,
@@ -91,7 +89,9 @@ async def build_agent(config,
         description=agent_config.description,
         provide_run_summary=agent_config.provide_run_summary
     )
-    agent = AGENT.build(agent_config)
+    if filtered_managed_agents:
+        build_config["managed_agents"] = filtered_managed_agents
+    agent = AGENT.build(build_config)
 
     return agent
 

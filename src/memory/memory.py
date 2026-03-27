@@ -48,6 +48,8 @@ class ActionStep(MemoryStep):
     model_output_message: ChatMessage | None = None
     model_output: str | None = None
     observations: str | None = None
+    """Per tool_call_id results for OpenAI Chat Completions (Tier B). Order matches parallel tool execution."""
+    tool_results: list[dict[str, str]] | None = None
     observations_images: list["PIL.Image.Image"] | None = None
     action_output: Any = None
     token_usage: TokenUsage | None = None
@@ -64,6 +66,7 @@ class ActionStep(MemoryStep):
             "model_output_message": self.model_output_message.dict() if self.model_output_message else None,
             "model_output": self.model_output,
             "observations": self.observations,
+            "tool_results": self.tool_results,
             "observations_images": [image.tobytes() for image in self.observations_images]
             if self.observations_images
             else None,
@@ -74,6 +77,55 @@ class ActionStep(MemoryStep):
 
     def to_messages(self, summary_mode: bool = False) -> list[ChatMessage]:
         messages = []
+        # Tier B: OpenAI-native assistant + tool_calls, then one role=tool message per tool_call_id
+        if (
+            self.tool_results
+            and self.model_output_message
+            and self.model_output_message.tool_calls
+            and not summary_mode
+        ):
+            mos = self.model_output_message
+            messages.append(
+                ChatMessage(
+                    role=mos.role,
+                    content=mos.content,
+                    tool_calls=mos.tool_calls,
+                )
+            )
+            for tr in self.tool_results:
+                messages.append(
+                    ChatMessage(
+                        role=MessageRole.TOOL,
+                        tool_call_id=tr["id"],
+                        content=tr["content"],
+                    )
+                )
+            if self.observations_images:
+                messages.append(
+                    ChatMessage(
+                        role=MessageRole.USER,
+                        content=[
+                            {
+                                "type": "image",
+                                "image": image,
+                            }
+                            for image in self.observations_images
+                        ],
+                    )
+                )
+            if self.error is not None:
+                error_message = (
+                    "Error:\n"
+                    + str(self.error)
+                    + "\nNow let's retry: take care not to repeat previous errors! If you have retried several times, try a completely different approach.\n"
+                )
+                message_content = f"Call id: {self.tool_calls[0].id}\n" if self.tool_calls else ""
+                message_content += error_message
+                messages.append(
+                    ChatMessage(role=MessageRole.TOOL_RESPONSE, content=[{"type": "text", "text": message_content}])
+                )
+            return messages
+
         if self.model_output is not None and not summary_mode:
             messages.append(
                 ChatMessage(role=MessageRole.ASSISTANT, content=[{"type": "text", "text": self.model_output.strip()}])

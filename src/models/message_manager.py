@@ -1,8 +1,44 @@
+import json
 from typing import Dict, List, Optional, Any
 from copy import deepcopy
 
-from src.models.base import MessageRole, ChatMessage
+from src.models.base import MessageRole, ChatMessage, ChatMessageToolCall
 from src.utils import encode_image_base64, make_image_url
+
+
+def _tool_calls_to_openai_api_format(tool_calls: list) -> list[dict[str, Any]]:
+    """Serialize tool_calls for OpenAI Chat Completions (arguments must be a JSON string)."""
+    out: list[dict[str, Any]] = []
+    for tc in tool_calls:
+        assert isinstance(tc, ChatMessageToolCall)
+        args = tc.function.arguments
+        if isinstance(args, (dict, list)):
+            args_str = json.dumps(args)
+        elif args is None:
+            args_str = "{}"
+        else:
+            args_str = str(args)
+        out.append(
+            {
+                "id": tc.id,
+                "type": tc.type or "function",
+                "function": {"name": tc.function.name, "arguments": args_str},
+            }
+        )
+    return out
+
+
+def _tool_message_content_to_str(message: ChatMessage) -> str:
+    c = message.content
+    if c is None:
+        return ""
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list) and c:
+        el = c[0]
+        if isinstance(el, dict) and el.get("type") == "text":
+            return el.get("text", "")
+    return str(c)
 
 DEFAULT_ANTHROPIC_MODELS = [
     'claude37-sonnet',
@@ -58,6 +94,7 @@ class MessageManager():
     ) -> list[dict[str, Any]]:
         """
         Creates a list of messages in chat completions format.
+        Supports OpenAI-native tool turns: assistant + tool_calls, then role=tool with tool_call_id per result.
         """
         output_message_list: list[dict[str, Any]] = []
         message_list = deepcopy(message_list)  # Avoid modifying the original list
@@ -68,6 +105,31 @@ class MessageManager():
 
             if role in role_conversions:
                 message.role = role_conversions[role]  # type: ignore
+
+            # Native tool result (Tier B): one message per tool_call_id — never merge with adjacent messages
+            if message.role == MessageRole.TOOL:
+                if not message.tool_call_id:
+                    raise ValueError("ChatMessage with role 'tool' requires tool_call_id for Chat Completions API.")
+                output_message_list.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": message.tool_call_id,
+                        "content": _tool_message_content_to_str(message),
+                    }
+                )
+                continue
+
+            # Assistant message that issued tool_calls (must include tool_calls in the API payload)
+            if message.role == MessageRole.ASSISTANT and message.tool_calls:
+                output_message_list.append(
+                    {
+                        "role": "assistant",
+                        "content": message.content,
+                        "tool_calls": _tool_calls_to_openai_api_format(message.tool_calls),
+                    }
+                )
+                continue
+
             # encode images if needed
             if isinstance(message.content, list):
                 for element in message.content:
@@ -84,7 +146,12 @@ class MessageManager():
                         else:
                             element["image"] = encode_image_base64(element["image"])
 
-            if len(output_message_list) > 0 and message.role == output_message_list[-1]["role"]:
+            can_merge = (
+                len(output_message_list) > 0
+                and message.role == output_message_list[-1]["role"]
+                and message.role != MessageRole.TOOL
+            )
+            if can_merge:
                 assert isinstance(message.content, list), "Error: wrong content:" + str(message.content)
                 if flatten_messages_as_text:
                     output_message_list[-1]["content"] += "\n" + message.content[0]["text"]
@@ -97,7 +164,10 @@ class MessageManager():
                             output_message_list[-1]["content"].append(el)
             else:
                 if flatten_messages_as_text:
-                    content = message.content[0]["text"]
+                    if isinstance(message.content, list) and message.content:
+                        content = message.content[0]["text"]
+                    else:
+                        content = message.content or ""
                 else:
                     content = message.content
                 output_message_list.append(

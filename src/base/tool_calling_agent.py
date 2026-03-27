@@ -196,9 +196,11 @@ class ToolCallingAgent(MultiStepAgent):
         model_outputs = []
         tool_calls = []
         observations = []
+        tool_results: list[dict[str, str]] = []
 
         final_answer_call = None
         parallel_calls = []
+        parallel_tool_calls_meta: list = []  # ChatMessageToolCall, order preserved for Tier B tool_results
         assert chat_message.tool_calls is not None
         for tool_call in chat_message.tool_calls:
             yield tool_call
@@ -212,6 +214,7 @@ class ToolCallingAgent(MultiStepAgent):
                 break  # Stop: final answer reached, no further tool calls
             else:
                 parallel_calls.append((tool_name, tool_arguments))
+                parallel_tool_calls_meta.append(tool_call)
 
         # Helper function to process a single tool call
         def process_single_tool_call(call_info):
@@ -240,19 +243,28 @@ class ToolCallingAgent(MultiStepAgent):
             )
             return observation
 
-        # Process tool calls in parallel
+        # Process tool calls in parallel (Tier B: map results back to tool_call_id in assistant order)
         if parallel_calls:
             if len(parallel_calls) == 1:
-                # If there's only one call, process it directly
-                observations.append(process_single_tool_call(parallel_calls[0]))
+                obs = process_single_tool_call(parallel_calls[0])
+                observations.append(obs)
+                tool_results.append({"id": parallel_tool_calls_meta[0].id, "content": obs})
                 yield ToolOutput(output=None, is_final_answer=False)
             else:
-                # If multiple tool calls, process them in parallel
                 with ThreadPoolExecutor(self.max_tool_threads) as executor:
-                    futures = [executor.submit(process_single_tool_call, call_info) for call_info in parallel_calls]
-                    for future in as_completed(futures):
-                        observations.append(future.result())
+                    future_to_tc = {
+                        executor.submit(process_single_tool_call, call_info): tc
+                        for call_info, tc in zip(parallel_calls, parallel_tool_calls_meta)
+                    }
+                    id_to_obs: dict[str, str] = {}
+                    for future in as_completed(future_to_tc):
+                        tc = future_to_tc[future]
+                        id_to_obs[tc.id] = future.result()
                         yield ToolOutput(output=None, is_final_answer=False)
+                    for tc in parallel_tool_calls_meta:
+                        obs = id_to_obs[tc.id]
+                        observations.append(obs)
+                        tool_results.append({"id": tc.id, "content": obs})
 
         # Process final_answer call if present
         if final_answer_call:
@@ -289,7 +301,10 @@ class ToolCallingAgent(MultiStepAgent):
             memory_step.model_output = "\n".join(model_outputs)
         if tool_calls:
             memory_step.tool_calls = tool_calls
-        if observations:
+        if tool_results:
+            memory_step.tool_results = tool_results
+            memory_step.observations = "\n\n".join(tr["content"] for tr in tool_results)
+        elif observations:
             memory_step.observations = "\n".join(observations)
 
     def _substitute_state_variables(self, arguments: dict[str, str] | str) -> dict[str, Any] | str:

@@ -25,6 +25,23 @@ from src.utils import assemble_project_path
 
 append_answer_lock = threading.Lock()
 
+
+def _serialize_steps(steps) -> list:
+    """Serialize memory steps to JSON-safe dicts, stripping large binary fields."""
+    serialized = []
+    for step in steps:
+        try:
+            d = step.dict()
+            d.pop("model_input_messages", None)
+            d.pop("observations_images", None)
+            if "model_output_message" in d and isinstance(d["model_output_message"], dict):
+                d["model_output_message"].pop("raw", None)
+            d["_step_type"] = type(step).__name__
+            serialized.append(d)
+        except Exception:
+            serialized.append({"_step_type": type(step).__name__, "_raw": str(step)[:2000]})
+    return serialized
+
 def append_answer(entry: dict, jsonl_file: str) -> None:
     jsonl_file = Path(jsonl_file)
     jsonl_file.parent.mkdir(parents=True, exist_ok=True)
@@ -81,13 +98,11 @@ async def answer_single_question(config, example):
         output = str(final_result)
         for memory_step in agent.memory.steps:
             memory_step.model_input_messages = None
-        intermediate_steps = [str(step) for step in agent.memory.steps]
+        intermediate_steps = _serialize_steps(agent.memory.steps)
+        intermediate_steps_str = [str(step) for step in agent.memory.steps]
 
-        # Check for parsing errors which indicate the LLM failed to follow the required format
-        parsing_error = True if any(["AgentParsingError" in step for step in intermediate_steps]) else False
-
-        # check if iteration limit exceeded
-        iteration_limit_exceeded = True if "Agent stopped due to iteration limit or time limit." in output else False
+        parsing_error = any("AgentParsingError" in step for step in intermediate_steps_str)
+        iteration_limit_exceeded = "Agent stopped due to iteration limit or time limit." in output
         raised_exception = False
 
     except Exception as e:

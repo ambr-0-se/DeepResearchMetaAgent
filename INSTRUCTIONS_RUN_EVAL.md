@@ -1,48 +1,95 @@
-# How to Run Evaluation on GPU Node
+# Running GAIA Evaluation on GPU Node
 
-## The Problem
-Direct SSH to compute nodes is blocked. You must use SLURM commands.
+## Quick Start
 
-## Solution 1: Interactive Shell (Recommended for Testing)
+### Single-question test (sanity check)
+```bash
+sbatch run_combined_test.sh
+```
+Runs 1 question with a 30-minute SLURM wall-clock. Results in `workdir/gaia_test_<JOBID>_<timestamp>/dra.jsonl`.
+
+### Full evaluation (165 questions)
+```bash
+sbatch run_combined_eval.sh
+```
+Runs all questions with 72-hour wall-clock. Results in `workdir/gaia_eval_<JOBID>_<timestamp>/dra.jsonl`.
+
+## What the Scripts Do
+
+Both scripts handle the full lifecycle:
+1. **Launch vLLM** server (Qwen3-VL-4B-Instruct, tensor-parallel on 2x RTX 4080)
+2. **Wait for readiness** (polls `/v1/models` endpoint)
+3. **Start health watchdog** — monitors vLLM every 30s, auto-restarts after 90s of failures (up to 5 restarts)
+4. **Run evaluation** with per-question timeout (20 min default) and transient-error retry (3 attempts, 60s backoff)
+5. **Print score summary** at the end
+6. **Cleanup** — kills vLLM and watchdog on exit/signal
+
+## Analyzing Results
 
 ```bash
-# Get a shell on the node where your vLLM server is running
-srun --jobid=125979 --overlap --pty bash
+# Terminal summary
+python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl
 
-# Once you're on the node, run:
-bash /userhome/cs2/ambr0se/DeepResearchMetaAgent/run_eval_manual.sh
+# Interactive HTML report
+python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl --html
 
-# Or run commands directly:
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate dra
-cd /userhome/cs2/ambr0se/DeepResearchMetaAgent
+# Per-question detail in terminal
+python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl --detail
 
-# Check if vLLM is ready
-curl http://localhost:8000/v1/models
-
-# When ready, run evaluation
-python examples/run_gaia.py \
-    --config configs/config_gaia_adaptive_qwen.py \
-    --cfg-options tag=gaia_test_single dataset_config.max_samples=1
+# With explicit config for richer metadata
+python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl --html --config configs/config_gaia_adaptive_qwen.py
 ```
 
-## Solution 2: Run Command Directly (No Interactive Shell)
+## Monitoring a Running Job
 
 ```bash
-# Run the evaluation script directly on the node
-srun --jobid=125979 --overlap bash /userhome/cs2/ambr0se/DeepResearchMetaAgent/run_eval_manual.sh
+# Check SLURM job status
+squeue -u $USER
+
+# Watch live output
+tail -f logs/combined_eval_<JOBID>.out
+
+# Watch vLLM errors
+tail -f logs/combined_eval_<JOBID>.err
+
+# Check how many questions are done
+wc -l workdir/gaia_eval_<JOBID>_*/dra.jsonl
 ```
 
-## Solution 3: Modified SLURM Script (For Future Runs)
+## Configuration
 
-For future runs, you can combine both vLLM server and evaluation in a single job.
-See `run_combined_eval.sh` (will be created).
+The eval config is `configs/config_gaia_adaptive_qwen.py`. Key settings:
 
-## Check Server Status Before Running
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `model_id` | `"Qwen"` | vLLM-served Qwen3-VL-4B-Instruct |
+| `split` | `"validation"` | GAIA split with ground-truth answers |
+| `per_question_timeout_secs` | `1200` | 20-minute wall-clock per question |
+| `max_steps` (planning agent) | `25` | Max reasoning steps |
+| `max_steps` (sub-agents) | `3-5` | Per sub-agent step limit |
+
+### Overriding Config at Runtime
+```bash
+# Limit to N questions (useful for quick tests)
+python examples/run_gaia.py --config configs/config_gaia_adaptive_qwen.py \
+    --cfg-options max_samples=5
+
+# Change tag (affects output directory)
+python examples/run_gaia.py --config configs/config_gaia_adaptive_qwen.py \
+    --cfg-options tag=my_experiment
+```
+
+## Comparing Results
 
 ```bash
-# Monitor vLLM server logs
-tail -f logs/vllm_server_125979.out
-
-# Look for "Uvicorn running" message - that means server is ready
+python scripts/compare_results.py workdir/run_a/dra.jsonl workdir/run_b/dra.jsonl
 ```
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "vLLM server not ready after N minutes" | Model download or GPU issue | Check `.err` log for CUDA/OOM errors |
+| Many "Connection refused" errors | vLLM crashed mid-run | Watchdog should auto-restart; check if max restarts (5) was hit |
+| "Per-question timeout exceeded" | Agent stuck in loop | Normal for hard questions; timeout prevents stalling |
+| Results file is empty | All questions errored | Check `.err` log and `agent_error` field in JSONL |

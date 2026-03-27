@@ -40,11 +40,22 @@ python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_adaptive/d
 python main.py --config configs/config_main.py --cfg-options model_id=gpt-4.1
 ```
 
+### Analyzing Evaluation Results
+```bash
+# Terminal summary
+python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl
+
+# Interactive HTML report
+python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl --html
+```
+
 ### Running Tests
 ```bash
 # Tests are in tests/ directory
 python tests/test_models.py
 python tests/test_analyzer.py
+python tests/test_eval_fixes.py
+python tests/test_tier_b_tool_messages.py  # requires pytest
 ```
 
 ## Architecture
@@ -104,7 +115,7 @@ Models are managed through `model_manager` (`src/models/`). Supported:
 - OpenAI (gpt-4.1, o3)
 - Anthropic (claude-3.7-sonnet-thinking, claude-4-sonnet)
 - Google (gemini-2.5-pro, imagen, veo3)
-- Local models via vLLM (qwen2.5-7b/14b/32b-instruct)
+- Local models via vLLM (qwen2.5-7b/14b/32b-instruct, qwen3-vl-4b-instruct)
 
 ### MCP (Model Context Protocol)
 MCP tools are integrated via `src/mcp/`:
@@ -120,17 +131,38 @@ Copy `.env.template` to `.env` and configure API keys:
 
 ## Key Files
 - `main.py`: Entry point for hierarchical agent
-- `src/agent/agent.py`: Agent creation and building logic
+- `src/agent/agent.py`: Agent creation and building logic (passes managed agents as real objects, not tool wrappers)
 - `src/tools/default_tools.py`: Default tool mappings
-- `src/memory/memory.py`: Agent memory management
+- `src/memory/memory.py`: Agent memory management (supports Tier B tool_results)
 - `src/logger/logger.py`: Logging and visualization
 
+### Tier B Tool Message Protocol
+OpenAI-native tool message support throughout the stack:
+- `src/models/base.py`: `ChatMessage.tool_call_id` field, `MessageRole.TOOL` role
+- `src/models/message_manager.py`: Serializes assistant+tool_calls and role=tool messages per tool_call_id
+- `src/memory/memory.py`: `ActionStep.tool_results` stores per-tool_call_id results
+- `src/base/tool_calling_agent.py` / `src/agent/general_agent/general_agent.py`: Tracks tool_call_id through parallel execution
+
+### Context Pruning
+`src/agent/general_agent/general_agent.py` has `_prune_messages_if_needed()`:
+- Triggers at 85% of `max_model_len` (default 32768)
+- Keeps system prompt + last 4 messages, truncates middle messages >500 chars
+- Preserves `tool_call_id` and other ChatMessage fields
+
 ### Adaptive Agent Files
-- `src/meta/adaptive_mixin.py`: Runtime modification mixin
+- `src/meta/adaptive_mixin.py`: Runtime modification mixin (uses `_find_managed_agent` fallback to check both `managed_agents` and `tools`)
 - `src/meta/diagnose_tool.py`: Sub-agent diagnostic tool
 - `src/meta/modify_tool.py`: Sub-agent modification tool
 - `src/meta/tool_generator.py`: Dynamic tool generation
 - `src/meta/agent_generator.py`: Dynamic agent creation
 - `src/agent/adaptive_planning_agent/`: Adaptive planning agent implementation
 - `configs/config_gaia_adaptive.py`: GAIA evaluation config for adaptive agent
+- `configs/config_gaia_adaptive_qwen.py`: Qwen/vLLM evaluation config
 - `scripts/compare_results.py`: Compare baseline vs adaptive results
+- `scripts/analyze_results.py`: Generate terminal/HTML evaluation reports
+
+### Evaluation Infrastructure
+- `run_combined_eval.sh`: Full GAIA evaluation SLURM job with vLLM watchdog
+- `run_combined_test.sh`: Single-question test SLURM job
+- `examples/run_gaia.py`: Evaluation runner with per-question timeout and transient-error retry
+- `INSTRUCTIONS_RUN_EVAL.md`: GPU farm evaluation instructions

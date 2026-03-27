@@ -136,8 +136,10 @@ async def answer_single_question(config, example):
     iteration_limit_exceeded = False
     raised_exception = False
     exception = None
+    attempts_made = 0
 
     for attempt in range(MAX_RETRIES + 1):
+        attempts_made = attempt + 1
         try:
             agent = await create_agent(config)
             if attempt == 0:
@@ -186,7 +188,7 @@ async def answer_single_question(config, example):
                 await asyncio.sleep(RETRY_WAIT_SECS)
                 continue
 
-            logger.info("Error on ", augmented_question, e)
+            logger.info(f"Error on {augmented_question[:80]}: {e}")
             output = None
             intermediate_steps = []
             exception = e
@@ -208,6 +210,7 @@ async def answer_single_question(config, example):
         "task": example["task"],
         "task_id": example["task_id"],
         "true_answer": example["true_answer"],
+        "attempts": attempts_made,
     }
     append_answer(annotated_example, config.save_path)
 
@@ -250,8 +253,12 @@ async def main():
 
     # Load answers
     tasks_to_run = get_tasks_to_run(config.save_path, dataset)
-    tasks_to_run = [task for task in tasks_to_run]
-    logger.info(f"| Loaded {len(tasks_to_run)} tasks to run.")
+    max_samples = getattr(config, "max_samples", None)
+    if max_samples is not None:
+        tasks_to_run = tasks_to_run[:int(max_samples)]
+        logger.info(f"| Limited to {len(tasks_to_run)} tasks (max_samples={max_samples}).")
+    else:
+        logger.info(f"| Loaded {len(tasks_to_run)} tasks to run.")
 
     # Run tasks
     batch_size = getattr(config, "concurrency", 4)

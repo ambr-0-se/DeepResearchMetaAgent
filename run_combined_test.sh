@@ -156,7 +156,7 @@ echo "Starting GAIA evaluation (1 question, timeout: ${EVAL_TIMEOUT_SECS}s)..."
 echo "========================================"
 timeout $EVAL_TIMEOUT_SECS python examples/run_gaia.py \
     --config configs/config_gaia_adaptive_qwen.py \
-    --cfg-options tag=$RUN_TAG dataset_config.max_samples=1
+    --cfg-options tag=$RUN_TAG max_samples=1
 
 EVAL_EXIT_CODE=$?
 
@@ -174,24 +174,32 @@ echo "Finished: $(date)"
 echo ""
 echo "Results: $RESULT_FILE"
 if [ -f "$RESULT_FILE" ]; then
-    python3 << PYEOF
-import json
+    python3 << 'PYEOF'
+import json, sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath("$RESULT_FILE")) + "/..")
+sys.path.insert(0, ".")
+try:
+    from src.metric import question_scorer
+except ImportError:
+    def question_scorer(pred, truth):
+        return str(pred).strip().lower() == str(truth).strip().lower()
 with open("$RESULT_FILE") as f:
     results = [json.loads(l) for l in f]
 total    = len(results)
-scorable = sum(1 for r in results if r.get('true_answer','') != '?')
-correct  = sum(1 for r in results
-               if scorable > 0
-               and str(r.get('prediction') or '').strip().lower()
-               == str(r.get('true_answer','')).strip().lower()
-               and r.get('true_answer','') != '?')
+scorable = [r for r in results if r.get('true_answer','') != '?']
+correct  = sum(1 for r in scorable
+               if r.get('prediction') is not None
+               and question_scorer(str(r['prediction']), str(r['true_answer'])))
 errors   = sum(1 for r in results if r.get('agent_error'))
+retried  = sum(1 for r in results if (r.get('attempts') or 1) > 1)
 print(f"  Total:    {total} question(s)")
 if scorable:
-    print(f"  Correct:  {correct} / {scorable}  ({100*correct/scorable:.1f}%)")
+    print(f"  Correct:  {correct} / {len(scorable)}  ({100*correct/len(scorable):.1f}%)")
 else:
     print(f"  Correct:  N/A  (test split has no ground-truth answers)")
 print(f"  Errors:   {errors}")
+if retried:
+    print(f"  Retried:  {retried} questions had transient-error retries")
 if results:
     print(f"  From:     {results[0].get('start_time', 'N/A')}")
     print(f"  To:       {results[-1].get('end_time',   'N/A')}")

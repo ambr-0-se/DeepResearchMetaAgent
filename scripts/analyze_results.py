@@ -234,6 +234,7 @@ def _parse_dict_step(d: Dict) -> Dict[str, Any]:
     parsed["tool_calls"] = tool_calls
 
     parsed["observations"] = d.get("observations")
+    parsed["tool_results"] = d.get("tool_results")
     parsed["model_output"] = d.get("model_output")
 
     msg = d.get("model_output_message")
@@ -329,11 +330,13 @@ def _parse_string_step(step_str: str) -> Dict[str, Any]:
 def classify_result(r: Dict) -> str:
     if r.get("agent_error"):
         err = str(r["agent_error"])
-        if "Connection error" in err:
+        err_lower = err.lower()
+        if any(kw in err_lower for kw in ("connection refused", "connection reset",
+                "connectionerror", "connection error", "remotedisconnected")):
             return "error_connection"
-        if "maximum context length" in err or "32768 tok" in err:
+        if "maximum context length" in err or "32768 tok" in err or "context length" in err_lower:
             return "error_context_length"
-        if "timeout" in err.lower() or "TimeoutError" in err:
+        if "timeout" in err_lower or "timeouterror" in err_lower:
             return "error_timeout"
         return "error_other"
     pred = str(r.get("prediction", "") or "")
@@ -512,6 +515,9 @@ def terminal_report(results: List[Dict], meta: Dict[str, Any]) -> str:
             lines.append(f"    - {label}: {counts[k]}")
     if n_unscored:
         lines.append(f"  Unscored (no truth):  {n_unscored}")
+    n_retried = sum(1 for r in results if (r.get("attempts") or 1) > 1)
+    if n_retried:
+        lines.append(f"  Retried questions:    {n_retried}")
     lines.append("")
 
     lines.append(f"  BY {cat_label.upper()}")
@@ -662,6 +668,7 @@ def generate_html(results: List[Dict], meta: Dict[str, Any], filepath: str) -> s
     n_wrong = counts.get("wrong", 0)
     n_no_answer = counts.get("no_answer", 0)
     n_errors = sum(v for k, v in counts.items() if k.startswith("error"))
+    n_retried = sum(1 for r in results if (r.get("attempts") or 1) > 1)
     scorable = n_correct + n_wrong + n_no_answer
     pct = f"{100*n_correct/scorable:.1f}" if scorable else "0"
 
@@ -738,16 +745,14 @@ def generate_html(results: List[Dict], meta: Dict[str, Any], filepath: str) -> s
     # --- Error breakdown ---
     err_cats = Counter()
     for r, c in zip(results, classified):
-        if c.startswith("error"):
-            err = str(r.get("agent_error", ""))
-            if "Connection error" in err:
-                err_cats["Connection error (vLLM down)"] += 1
-            elif "maximum context length" in err:
-                err_cats["Context length exceeded"] += 1
-            elif "timeout" in err.lower():
-                err_cats["Timeout"] += 1
-            else:
-                err_cats[err[:80]] += 1
+        if c == "error_connection":
+            err_cats["Connection error (vLLM down)"] += 1
+        elif c == "error_context_length":
+            err_cats["Context length exceeded"] += 1
+        elif c == "error_timeout":
+            err_cats["Timeout"] += 1
+        elif c == "error_other":
+            err_cats[str(r.get("agent_error", ""))[:80]] += 1
     error_items = "".join(f"<li><b>x{cnt}</b>: {e(msg)}</li>" for msg, cnt in err_cats.most_common())
     error_html = f'<ul>{error_items}</ul>' if error_items else "<p>No errors.</p>"
 
@@ -900,15 +905,32 @@ def generate_html(results: List[Dict], meta: Dict[str, Any], filepath: str) -> s
                 tc_section_html = '<div class="step-section tool-calls-section">' + ''.join(tc_items) + '</div>'
 
             # -- Observation / Result --
-            obs = parsed.get("observations") or ""
             obs_html = ""
-            if obs:
-                n_tools = len(tool_calls)
-                obs_label = "Result" if n_tools <= 1 else "Combined Result"
-                obs_html = (
-                    f'<div class="step-section observation-section">'
-                    f'<div class="section-label">{obs_label}</div>'
-                    + _expandable(e, obs) + '</div>')
+            tool_results_list = parsed.get("tool_results") or []
+            if tool_results_list and len(tool_results_list) > 1:
+                obs_parts = []
+                for tr in tool_results_list:
+                    tr_id = tr.get("id", "")
+                    tr_name = ""
+                    for tc in tool_calls:
+                        if tc.get("id") == tr_id:
+                            tr_name = tc.get("name", "")
+                            break
+                    tr_label = f"Result ({tr_name})" if tr_name else f"Result ({tr_id[:12]})"
+                    obs_parts.append(
+                        f'<div class="step-section observation-section">'
+                        f'<div class="section-label">{e(tr_label)}</div>'
+                        + _expandable(e, tr.get("content", "")) + '</div>')
+                obs_html = "\n".join(obs_parts)
+            else:
+                obs = parsed.get("observations") or ""
+                if obs:
+                    n_tools = len(tool_calls)
+                    obs_label = "Result" if n_tools <= 1 else "Combined Result"
+                    obs_html = (
+                        f'<div class="step-section observation-section">'
+                        f'<div class="section-label">{obs_label}</div>'
+                        + _expandable(e, obs) + '</div>')
 
             # -- Error --
             err_html = ""
@@ -1102,6 +1124,7 @@ th {{ background: #f9fafb; font-weight: 600; }}
         <div class="stat-card amber"><div class="num">{n_no_answer}</div><div class="label">No Answer</div></div>
         <div class="stat-card"><div class="num">{n_errors}</div><div class="label">Errors</div></div>
         <div class="stat-card green"><div class="num">{pct}%</div><div class="label">Accuracy</div></div>
+        {"" if not n_retried else f'<div class="stat-card"><div class="num">{n_retried}</div><div class="label">Retried</div></div>'}
     </div>
 
     <h2>Error Breakdown</h2>

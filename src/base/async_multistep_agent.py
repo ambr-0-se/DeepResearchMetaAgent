@@ -277,7 +277,7 @@ class AsyncMultiStepAgent(ABC):
         self.step_callbacks.append(self.monitor.update_metrics)
         self.stream_outputs = False
 
-        logger.info(
+        self.logger.info(
             f"[{self.__class__.__name__} AsyncMultiStepAgent.__init__ done] "
             f"tools={list(self.tools.keys())}, "
             f"managed_agents={list(self.managed_agents.keys())} "

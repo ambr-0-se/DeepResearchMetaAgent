@@ -34,10 +34,15 @@ root = str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, root)
 
 try:
-    from src.metric import question_scorer
+    from src.metric import question_scorer, arc_question_scorer, get_scorer
 except ImportError:
     def question_scorer(pred, truth):
         return str(pred).strip().lower() == str(truth).strip().lower()
+    arc_question_scorer = question_scorer
+    def get_scorer(dataset_type="gaia"):
+        if dataset_type == "arc":
+            return arc_question_scorer
+        return question_scorer
 
 ADAPTIVE_TOOLS = {"diagnose_subagent", "modify_subagent"}
 AGENT_TOOLS = {"deep_researcher_agent", "deep_analyzer_agent", "browser_use_agent"}
@@ -327,7 +332,9 @@ def _parse_string_step(step_str: str) -> Dict[str, Any]:
 # Classification
 # ---------------------------------------------------------------------------
 
-def classify_result(r: Dict) -> str:
+def classify_result(r: Dict, scorer=None) -> str:
+    if scorer is None:
+        scorer = question_scorer
     if r.get("agent_error"):
         err = str(r["agent_error"])
         err_lower = err.lower()
@@ -345,7 +352,7 @@ def classify_result(r: Dict) -> str:
     truth = str(r.get("true_answer", ""))
     if truth == "?":
         return "unscored"
-    if question_scorer(pred, truth):
+    if scorer(pred, truth):
         return "correct"
     return "wrong"
 
@@ -436,6 +443,18 @@ def detect_dataset_info(results: List[Dict], meta: Dict) -> Dict[str, str]:
         info["category_label"] = "Level"
     elif any("hle" in str(meta.get(k, "")).lower() for k in ("dataset_type", "dataset_name", "config_file")):
         info["dataset"] = "HLE"
+    elif any("arc" in str(meta.get(k, "")).lower() for k in ("dataset_type", "dataset_name", "config_file")):
+        info["dataset"] = "ARC-AGI"
+        info["category_label"] = "Split"
+
+    # Data-level fallback: detect ARC from grid-shaped true_answer
+    if info["dataset"] in ("unknown", None):
+        for r in results[:5]:
+            truth = str(r.get("true_answer", "")).strip()
+            if truth.startswith("[[") and truth.endswith("]]"):
+                info["dataset"] = "ARC-AGI"
+                info["category_label"] = "Split"
+                break
 
     return info
 
@@ -444,8 +463,8 @@ def detect_dataset_info(results: List[Dict], meta: Dict) -> Dict[str, str]:
 # Terminal report
 # ---------------------------------------------------------------------------
 
-def terminal_report(results: List[Dict], meta: Dict[str, Any]) -> str:
-    classified = [classify_result(r) for r in results]
+def terminal_report(results: List[Dict], meta: Dict[str, Any], scorer=None) -> str:
+    classified = [classify_result(r, scorer=scorer) for r in results]
     counts = Counter(classified)
     total = len(results)
     ds_info = detect_dataset_info(results, meta)
@@ -557,10 +576,10 @@ def terminal_report(results: List[Dict], meta: Dict[str, Any]) -> str:
 # Per-question terminal detail
 # ---------------------------------------------------------------------------
 
-def per_question_text(results: List[Dict]) -> str:
+def per_question_text(results: List[Dict], scorer=None) -> str:
     lines = []
     for i, r in enumerate(results):
-        cat = classify_result(r)
+        cat = classify_result(r, scorer=scorer)
         tag = {"correct": "CORRECT", "wrong": "WRONG", "no_answer": "NO ANSWER",
                "unscored": "UNSCORED"}.get(cat, "ERROR")
 
@@ -656,9 +675,9 @@ def _expandable(e_fn, content: str, default_collapsed: bool = True) -> str:
     return f'<div class="expandable-wrapper"><pre class="{cls}">{e_fn(content)}</pre></div>'
 
 
-def generate_html(results: List[Dict], meta: Dict[str, Any], filepath: str) -> str:
+def generate_html(results: List[Dict], meta: Dict[str, Any], filepath: str, scorer=None) -> str:
     total = len(results)
-    classified = [classify_result(r) for r in results]
+    classified = [classify_result(r, scorer=scorer) for r in results]
     counts = Counter(classified)
     ds_info = detect_dataset_info(results, meta)
     cat_label = ds_info["category_label"]
@@ -1259,7 +1278,7 @@ def main():
                 for line_idx, line in enumerate(f):
                     if line_idx > 200:
                         break
-                    if "config_gaia" in line and ".py" in line:
+                    if any(kw in line for kw in ("config_gaia", "config_arc", "config_hle")) and ".py" in line:
                         m = re.search(r"(configs/\S+\.py)", line)
                         if m:
                             config_path = m.group(1)
@@ -1267,14 +1286,17 @@ def main():
 
     meta = load_config_metadata(config_path, workdir)
 
-    print(terminal_report(results, meta))
+    ds_info = detect_dataset_info(results, meta)
+    scorer = get_scorer("arc" if ds_info["dataset"] == "ARC-AGI" else "gaia")
+
+    print(terminal_report(results, meta, scorer=scorer))
 
     if args.detail:
-        print(per_question_text(results))
+        print(per_question_text(results, scorer=scorer))
 
     if args.html:
         out_path = args.output or os.path.join(workdir, "report.html")
-        html = generate_html(results, meta, args.results_file)
+        html = generate_html(results, meta, args.results_file, scorer=scorer)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(html)
         print(f"\nHTML report saved to: {out_path}")

@@ -1,5 +1,10 @@
 from .path_utils import assemble_project_path
-from .token_utils import get_token_count
+from .token_utils import (
+    get_token_count,
+    estimate_messages_tokens,
+    group_messages_for_pruning,
+    prune_messages_to_budget,
+)
 from .image_utils import download_image
 from .utils import (escape_code_brackets,
                              _is_package_available,
@@ -31,6 +36,9 @@ from .url_utils import fetch_url
 __all__ = [
     "assemble_project_path",
     "get_token_count",
+    "estimate_messages_tokens",
+    "group_messages_for_pruning",
+    "prune_messages_to_budget",
     "download_image",
     "escape_code_brackets",
     "_is_package_available",

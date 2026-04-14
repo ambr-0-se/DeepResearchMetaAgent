@@ -10,7 +10,13 @@ from unittest.mock import MagicMock, AsyncMock, patch
 root = str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, root)
 
-from src.models.base import ChatMessage, MessageRole, TokenUsage
+from src.models.base import (
+    ChatMessage,
+    ChatMessageToolCall,
+    ChatMessageToolCallFunction,
+    MessageRole,
+    TokenUsage,
+)
 
 
 # ============================================================================
@@ -314,6 +320,11 @@ class TestContextPruning:
         class FakeConfig:
             max_model_len = 32768
             template_path = "src/agent/general_agent/prompts/general_agent.yaml"
+            token_estimation_mode = "heuristic"
+            context_prune_reserve_tokens = 0
+            context_prune_threshold_ratio = 0.85
+            context_prune_tail_segments = 4
+            context_image_token_estimate = 1024
 
         config = FakeConfig()
         config.max_model_len = max_model_len
@@ -322,6 +333,8 @@ class TestContextPruning:
         # so test the methods directly on a mock
         agent = MagicMock(spec=GeneralAgent)
         agent.config = config
+        agent.model = MagicMock()
+        agent.model.model_id = "gpt-4o"
         agent._estimate_token_count = GeneralAgent._estimate_token_count.__get__(agent)
         agent._prune_messages_if_needed = GeneralAgent._prune_messages_if_needed.__get__(agent)
         return agent
@@ -370,7 +383,7 @@ class TestContextPruning:
             ChatMessage(role="user", content="last"),
         ]
         result = agent._prune_messages_if_needed(msgs)
-        # The tool message in the middle should be pruned but keep tool_call_id
+        # Any surviving tool message must keep tool_call_id (Tier B safe)
         tool_msgs = [m for m in result if m.role == "tool"]
         if tool_msgs:
             assert tool_msgs[0].tool_call_id == "call_123"
@@ -386,6 +399,66 @@ class TestContextPruning:
         msgs = [ChatMessage(role="user", content=[{"type": "text", "text": "a" * 700}])]
         est = agent._estimate_token_count(msgs)
         assert est == 200  # 700 / 3.5 = 200
+
+    def test_group_messages_assistant_and_tools_one_segment(self):
+        from src.utils.token_utils import group_messages_for_pruning
+
+        tc1 = ChatMessageToolCall(
+            function=ChatMessageToolCallFunction(arguments="{}", name="a", description=None),
+            id="id1",
+            type="function",
+        )
+        tc2 = ChatMessageToolCall(
+            function=ChatMessageToolCallFunction(arguments="{}", name="b", description=None),
+            id="id2",
+            type="function",
+        )
+        assistant = ChatMessage(
+            role="assistant",
+            content="call tools",
+            tool_calls=[tc1, tc2],
+        )
+        t1 = ChatMessage(role="tool", content="out1", tool_call_id="id1")
+        t2 = ChatMessage(role="tool", content="out2", tool_call_id="id2")
+        user = ChatMessage(role="user", content="next")
+        segs = group_messages_for_pruning([assistant, t1, t2, user])
+        assert len(segs) == 2
+        assert len(segs[0]) == 3
+        assert segs[0][0].tool_calls is not None
+        assert segs[1] == [user]
+
+    def test_prune_no_orphan_tool_before_assistant(self):
+        from src.utils.token_utils import prune_messages_to_budget
+
+        tc = ChatMessageToolCall(
+            function=ChatMessageToolCallFunction(arguments="{}", name="x", description=None),
+            id="c1",
+            type="function",
+        )
+        assistant = ChatMessage(role="assistant", content="hi", tool_calls=[tc])
+        tool_m = ChatMessage(role="tool", content="obs", tool_call_id="c1")
+        # Long filler to force pruning
+        filler = ChatMessage(role="user", content="Z" * 8000)
+        system = ChatMessage(role="system", content="S")
+        msgs = [system, filler, assistant, tool_m, ChatMessage(role="user", content="tail")]
+        out = prune_messages_to_budget(
+            msgs,
+            "gpt-4o",
+            max_model_len=2048,
+            context_prune_threshold_ratio=0.85,
+            context_prune_reserve_tokens=0,
+            context_prune_tail_segments=2,
+            token_estimation_mode="heuristic",
+            context_image_token_estimate=1024,
+        )
+        for i, m in enumerate(out):
+            role = m.role if isinstance(m.role, str) else m.role.value
+            if role == "tool":
+                assert i > 0
+                prev = out[i - 1]
+                prev_role = prev.role if isinstance(prev.role, str) else prev.role.value
+                assert prev_role == "assistant"
+                assert prev.tool_calls is not None
 
 
 # ============================================================================
@@ -413,6 +486,10 @@ class TestTransientErrorDetection:
     def test_connection_reset(self):
         from run_gaia import _is_transient_error
         assert _is_transient_error(Exception("Connection reset by peer"))
+
+    def test_connection_error_plain(self):
+        from run_gaia import _is_transient_error
+        assert _is_transient_error(Exception("Error while generating output:\nConnection error."))
 
     def test_internal_server_error(self):
         from run_gaia import _is_transient_error

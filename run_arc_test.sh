@@ -1,19 +1,18 @@
 #!/bin/bash
-#SBATCH --job-name=gaia-test
+#SBATCH --job-name=arc-test
 #SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:rtx_4080:2
 #SBATCH --mem=64G
-#SBATCH --nodelist=gpu-4080-410
 #SBATCH --time=6:00:00
-#SBATCH --output=logs/combined_test_%j.out
-#SBATCH --error=logs/combined_test_%j.err
+#SBATCH --output=logs/arc_test_%j.out
+#SBATCH --error=logs/arc_test_%j.err
 
-# Each run gets a unique tag: gaia_test_JOBID_YYYYMMDD_HHMMSS
-# Results saved to: workdir/gaia_test_<JOBID>_<timestamp>/dra.jsonl
-RUN_TAG="gaia_verify10_${SLURM_JOB_ID}_$(date +%Y%m%d_%H%M%S)"
+# Smoke test: 10 ARC test cases with Qwen on vLLM (same lifecycle as run_combined_test.sh).
+# Results: workdir/arc_test_<JOBID>_<timestamp>/dra.jsonl
+RUN_TAG="arc_test_${SLURM_JOB_ID}_$(date +%Y%m%d_%H%M%S)"
 RESULT_FILE="workdir/${RUN_TAG}/dra.jsonl"
 
 echo "========================================"
@@ -35,8 +34,7 @@ export CUDA_VISIBLE_DEVICES=0,1
 
 cd /userhome/cs2/ambr0se/DeepResearchMetaAgent
 
-# Ensure vLLM server and watchdog are always killed, even on crash/signal
-VLLM_PID_FILE=$(mktemp /tmp/vllm_pid.XXXXXX)
+VLLM_PID_FILE=$(mktemp /tmp/vllm_arc_pid.XXXXXX)
 MONITOR_PID=""
 MAX_VLLM_RESTARTS=5
 
@@ -130,7 +128,6 @@ monitor_vllm() {
     done
 }
 
-# Start vLLM server
 echo "Starting vLLM server on port 8000..."
 launch_vllm
 echo "vLLM server started with PID: $(cat "$VLLM_PID_FILE")"
@@ -142,20 +139,18 @@ if ! wait_for_vllm 600; then
     exit 1
 fi
 
-# Start the health watchdog in background
 monitor_vllm &
 MONITOR_PID=$!
 
-# 10 questions × 20 min each + buffer for vLLM startup/restarts
+# 10 cases × 20 min max each + buffer
 EVAL_TIMEOUT_SECS=14400
 
-# Run evaluation (10 questions)
 echo ""
 echo "========================================"
-echo "Starting GAIA evaluation (10 questions, timeout: ${EVAL_TIMEOUT_SECS}s)..."
+echo "Starting ARC-AGI evaluation (10 test cases, timeout: ${EVAL_TIMEOUT_SECS}s)..."
 echo "========================================"
-timeout $EVAL_TIMEOUT_SECS python examples/run_gaia.py \
-    --config configs/config_gaia_adaptive_qwen.py \
+timeout $EVAL_TIMEOUT_SECS python examples/run_arc.py \
+    --config configs/config_arc_qwen.py \
     --cfg-options tag=$RUN_TAG max_samples=10
 
 EVAL_EXIT_CODE=$?
@@ -164,45 +159,45 @@ if [ $EVAL_EXIT_CODE -eq 124 ]; then
     echo "WARNING: Evaluation timed out after ${EVAL_TIMEOUT_SECS}s!"
 fi
 
-# Cleanup is handled by trap; just print exit code
 echo ""
 echo "========================================"
 echo "Evaluation finished with exit code: $EVAL_EXIT_CODE"
 echo "Finished: $(date)"
 
-# Print score summary
 echo ""
 echo "Results: $RESULT_FILE"
 if [ -f "$RESULT_FILE" ]; then
+    echo ""
+    echo "=== Final Score (ARC grid match) ==="
+    export ARC_RESULT_FILE="$RESULT_FILE"
     python3 << 'PYEOF'
-import json, sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath("$RESULT_FILE")) + "/..")
-sys.path.insert(0, ".")
-try:
-    from src.metric import question_scorer
-except ImportError:
-    def question_scorer(pred, truth):
-        return str(pred).strip().lower() == str(truth).strip().lower()
-with open("$RESULT_FILE") as f:
+import json, os, sys
+sys.path.insert(0, os.getcwd())
+from src.metric import arc_question_scorer
+path = os.environ["ARC_RESULT_FILE"]
+with open(path) as f:
     results = [json.loads(l) for l in f]
-total    = len(results)
-scorable = [r for r in results if r.get('true_answer','') != '?']
-correct  = sum(1 for r in scorable
-               if r.get('prediction') is not None
-               and question_scorer(str(r['prediction']), str(r['true_answer'])))
-errors   = sum(1 for r in results if r.get('agent_error'))
-retried  = sum(1 for r in results if (r.get('attempts') or 1) > 1)
-print(f"  Total:    {total} question(s)")
+total = len(results)
+scorable = [r for r in results if str(r.get("true_answer", "")).strip() not in ("", "?")]
+correct = sum(
+    1
+    for r in scorable
+    if r.get("prediction") is not None
+    and arc_question_scorer(str(r["prediction"]), str(r["true_answer"]))
+)
+errors = sum(1 for r in results if r.get("agent_error"))
+retried = sum(1 for r in results if (r.get("attempts") or 1) > 1)
+print(f"  Total:    {total} test case(s)")
 if scorable:
     print(f"  Correct:  {correct} / {len(scorable)}  ({100*correct/len(scorable):.1f}%)")
 else:
-    print(f"  Correct:  N/A  (test split has no ground-truth answers)")
+    print("  Correct:  N/A")
 print(f"  Errors:   {errors}")
 if retried:
-    print(f"  Retried:  {retried} questions had transient-error retries")
+    print(f"  Retried:  {retried} case(s) had transient-error retries")
 if results:
     print(f"  From:     {results[0].get('start_time', 'N/A')}")
-    print(f"  To:       {results[-1].get('end_time',   'N/A')}")
+    print(f"  To:       {results[-1].get('end_time', 'N/A')}")
 PYEOF
 fi
 echo "========================================"

@@ -33,6 +33,13 @@ python examples/run_gaia.py --config configs/config_gaia.py
 # GAIA evaluation (adaptive agent)
 python examples/run_gaia.py --config configs/config_gaia_adaptive.py
 
+# ARC-AGI evaluation (API models)
+python examples/run_arc.py --config configs/config_arc.py
+
+# ARC-AGI on HKU CS GPU farm (Qwen + vLLM; see INSTRUCTIONS_RUN_EVAL.md)
+# sbatch run_arc_test.sh
+# sbatch run_arc_eval.sh
+
 # Compare baseline vs adaptive results
 python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_adaptive/dra.jsonl
 
@@ -164,5 +171,15 @@ OpenAI-native tool message support throughout the stack:
 ### Evaluation Infrastructure
 - `run_combined_eval.sh`: Full GAIA evaluation SLURM job with vLLM watchdog
 - `run_combined_test.sh`: Single-question test SLURM job
-- `examples/run_gaia.py`: Evaluation runner with per-question timeout and transient-error retry
+- `examples/run_gaia.py`: GAIA evaluation runner with per-question timeout and transient-error retry
+- `examples/run_arc.py`: ARC-AGI evaluation runner with grid-based scoring
 - `INSTRUCTIONS_RUN_EVAL.md`: GPU farm evaluation instructions
+
+### ARC-AGI Evaluation
+- `src/dataset/arc.py`: `ARCDataset` — loads ARC-AGI JSON task files, flattens test cases, formats grid questions
+- `src/metric/arc_scorer.py`: `arc_question_scorer` — exact 2D grid match with robust grid extraction from text
+- `src/agent/arc_reformulator.py`: `prepare_arc_response` — extracts grid answers from agent conversation
+- `configs/config_arc.py`: ARC evaluation config (API models; deep_analyzer + general_agent)
+- `configs/config_arc_qwen.py`: ARC on local vLLM (Qwen), for SLURM scripts
+- `run_arc_test.sh` / `run_arc_eval.sh`: GPU farm jobs (same lifecycle as `run_combined_*.sh`)
+- ARC data expected at `data/arc-agi/` with `training/` and `evaluation/` subdirectories of JSON files

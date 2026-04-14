@@ -1,27 +1,44 @@
 #!/bin/bash
-#SBATCH --job-name=gaia-test
+#SBATCH --job-name=gaia-test-eval
 #SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:rtx_4080:2
-#SBATCH --mem=64G
-#SBATCH --nodelist=gpu-4080-410
-#SBATCH --time=6:00:00
-#SBATCH --output=logs/combined_test_%j.out
-#SBATCH --error=logs/combined_test_%j.err
+# Use at least 128G: 64G caused cgroup OOM kills mid-run (slurmstepd: oom_kill events) on job 127877
+# — Python eval + vLLM + tokenizer/MCP subprocesses exceed 64G RSS over multi-hour runs.
+#SBATCH --mem=128G
+#SBATCH --time=72:00:00
+#SBATCH --output=logs/gaia_test_eval_%j.out
+#SBATCH --error=logs/gaia_test_eval_%j.err
 
-# Each run gets a unique tag: gaia_test_JOBID_YYYYMMDD_HHMMSS
-# Results saved to: workdir/gaia_test_<JOBID>_<timestamp>/dra.jsonl
-RUN_TAG="gaia_verify10_${SLURM_JOB_ID}_$(date +%Y%m%d_%H%M%S)"
-RESULT_FILE="workdir/${RUN_TAG}/dra.jsonl"
+# Full GAIA test-split evaluation (301 questions) with Qwen3-VL-4B-Instruct.
+# After evaluation, exports a submission JSONL for the GAIA leaderboard.
+#
+# Usage:
+#   sbatch run_gaia_test_eval.sh
+#
+# Results:
+#   workdir/gaia_test_<JOBID>_<timestamp>/dra.jsonl          — full agent output
+#   workdir/gaia_test_<JOBID>_<timestamp>/submission.jsonl   — leaderboard submission
+#
+# Submit to leaderboard:
+#   https://huggingface.co/spaces/gaia-benchmark/leaderboard
+
+RUN_TAG="gaia_test_${SLURM_JOB_ID}_$(date +%Y%m%d_%H%M%S)"
+RESULT_DIR="workdir/${RUN_TAG}"
+RESULT_FILE="${RESULT_DIR}/dra.jsonl"
+SUBMISSION_FILE="${RESULT_DIR}/submission.jsonl"
 
 echo "========================================"
-echo "Job ID:   $SLURM_JOB_ID"
-echo "Node:     $SLURM_NODELIST"
-echo "Run tag:  $RUN_TAG"
-echo "Results:  $RESULT_FILE"
-echo "Started:  $(date)"
+echo "GAIA Test-Split Full Evaluation"
+echo "========================================"
+echo "Job ID:      $SLURM_JOB_ID"
+echo "Node:        $SLURM_NODELIST"
+echo "Run tag:     $RUN_TAG"
+echo "Results:     $RESULT_FILE"
+echo "Submission:  $SUBMISSION_FILE"
+echo "Started:     $(date)"
 echo "========================================"
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -35,7 +52,9 @@ export CUDA_VISIBLE_DEVICES=0,1
 
 cd /userhome/cs2/ambr0se/DeepResearchMetaAgent
 
-# Ensure vLLM server and watchdog are always killed, even on crash/signal
+# ---------------------------------------------------------------------------
+# vLLM lifecycle management
+# ---------------------------------------------------------------------------
 VLLM_PID_FILE=$(mktemp /tmp/vllm_pid.XXXXXX)
 MONITOR_PID=""
 MAX_VLLM_RESTARTS=5
@@ -77,7 +96,7 @@ launch_vllm() {
 }
 
 wait_for_vllm() {
-    local max_wait=${1:-300}
+    local max_wait=${1:-600}
     local waited=0
     while [ $waited -lt $max_wait ]; do
         if curl -s --max-time 5 http://localhost:8000/v1/models > /dev/null 2>&1; then
@@ -118,7 +137,7 @@ monitor_vllm() {
                 local new_pid
                 new_pid=$(cat "$VLLM_PID_FILE" 2>/dev/null)
                 echo "[watchdog] Launched new vLLM (PID: $new_pid). Waiting for readiness..."
-                if ! wait_for_vllm 300; then
+                if ! wait_for_vllm 600; then
                     echo "[watchdog] vLLM failed to start after restart."
                     continue
                 fi
@@ -130,7 +149,9 @@ monitor_vllm() {
     done
 }
 
-# Start vLLM server
+# ---------------------------------------------------------------------------
+# Start vLLM
+# ---------------------------------------------------------------------------
 echo "Starting vLLM server on port 8000..."
 launch_vllm
 echo "vLLM server started with PID: $(cat "$VLLM_PID_FILE")"
@@ -142,21 +163,23 @@ if ! wait_for_vllm 600; then
     exit 1
 fi
 
-# Start the health watchdog in background
 monitor_vllm &
 MONITOR_PID=$!
 
-# 10 questions × 20 min each + buffer for vLLM startup/restarts
-EVAL_TIMEOUT_SECS=14400
+# ---------------------------------------------------------------------------
+# Run evaluation — 301 test questions
+# ---------------------------------------------------------------------------
+# Worst case: 301 questions × 20 min = ~100 h (sequential).
+# Realistic: ~4 min avg = ~20 h. 72h SBATCH wall-clock provides headroom.
+EVAL_TIMEOUT_SECS=259200  # 72h, matches SBATCH --time
 
-# Run evaluation (10 questions)
 echo ""
 echo "========================================"
-echo "Starting GAIA evaluation (10 questions, timeout: ${EVAL_TIMEOUT_SECS}s)..."
+echo "Starting GAIA test evaluation (301 questions, timeout: ${EVAL_TIMEOUT_SECS}s)..."
 echo "========================================"
 timeout $EVAL_TIMEOUT_SECS python examples/run_gaia.py \
-    --config configs/config_gaia_adaptive_qwen.py \
-    --cfg-options tag=$RUN_TAG max_samples=10
+    --config configs/config_gaia_test_qwen.py \
+    --cfg-options tag=$RUN_TAG
 
 EVAL_EXIT_CODE=$?
 
@@ -164,47 +187,48 @@ if [ $EVAL_EXIT_CODE -eq 124 ]; then
     echo "WARNING: Evaluation timed out after ${EVAL_TIMEOUT_SECS}s!"
 fi
 
-# Cleanup is handled by trap; just print exit code
+# ---------------------------------------------------------------------------
+# Export submission file
+# ---------------------------------------------------------------------------
+echo ""
+echo "========================================"
+echo "Exporting leaderboard submission..."
+echo "========================================"
+if [ -f "$RESULT_FILE" ]; then
+    python scripts/export_gaia_submission.py "$RESULT_FILE" -o "$SUBMISSION_FILE"
+else
+    echo "WARNING: Result file not found at $RESULT_FILE"
+fi
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
 echo ""
 echo "========================================"
 echo "Evaluation finished with exit code: $EVAL_EXIT_CODE"
 echo "Finished: $(date)"
-
-# Print score summary
 echo ""
-echo "Results: $RESULT_FILE"
+echo "Results:    $RESULT_FILE"
+echo "Submission: $SUBMISSION_FILE"
 if [ -f "$RESULT_FILE" ]; then
-    python3 << 'PYEOF'
-import json, sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath("$RESULT_FILE")) + "/..")
-sys.path.insert(0, ".")
-try:
-    from src.metric import question_scorer
-except ImportError:
-    def question_scorer(pred, truth):
-        return str(pred).strip().lower() == str(truth).strip().lower()
-with open("$RESULT_FILE") as f:
+    TOTAL=$(wc -l < "$RESULT_FILE")
+    ERRORS=$(python3 -c "
+import json
+with open('$RESULT_FILE') as f:
     results = [json.loads(l) for l in f]
-total    = len(results)
-scorable = [r for r in results if r.get('true_answer','') != '?']
-correct  = sum(1 for r in scorable
-               if r.get('prediction') is not None
-               and question_scorer(str(r['prediction']), str(r['true_answer'])))
-errors   = sum(1 for r in results if r.get('agent_error'))
-retried  = sum(1 for r in results if (r.get('attempts') or 1) > 1)
-print(f"  Total:    {total} question(s)")
-if scorable:
-    print(f"  Correct:  {correct} / {len(scorable)}  ({100*correct/len(scorable):.1f}%)")
-else:
-    print(f"  Correct:  N/A  (test split has no ground-truth answers)")
-print(f"  Errors:   {errors}")
-if retried:
-    print(f"  Retried:  {retried} questions had transient-error retries")
-if results:
-    print(f"  From:     {results[0].get('start_time', 'N/A')}")
-    print(f"  To:       {results[-1].get('end_time',   'N/A')}")
-PYEOF
+errors = sum(1 for r in results if r.get('agent_error'))
+no_answer = sum(1 for r in results if not r.get('prediction'))
+print(f'  Total:      {len(results)} / 301 questions')
+print(f'  Errors:     {errors}')
+print(f'  No answer:  {no_answer}')
+")
+    echo "$ERRORS"
 fi
+echo ""
+echo "To submit to the GAIA leaderboard:"
+echo "  1. Go to https://huggingface.co/spaces/gaia-benchmark/leaderboard"
+echo "  2. Log in with your HuggingFace account"
+echo "  3. Upload: $SUBMISSION_FILE"
 echo "========================================"
 
 exit $EVAL_EXIT_CODE

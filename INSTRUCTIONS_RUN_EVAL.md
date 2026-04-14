@@ -14,6 +14,65 @@ sbatch run_combined_eval.sh
 ```
 Runs all questions with 72-hour wall-clock. Results in `workdir/gaia_eval_<JOBID>_<timestamp>/dra.jsonl`.
 
+### Full GAIA **test** split (301 questions, leaderboard submission)
+
+```bash
+sbatch run_gaia_test_eval.sh
+```
+
+Outputs `workdir/gaia_test_<JOBID>_<timestamp>/dra.jsonl` and `submission.jsonl` (upload to the [GAIA leaderboard](https://huggingface.co/spaces/gaia-benchmark/leaderboard)). Config: `configs/config_gaia_test_qwen.py` (`split="test"`).
+
+**Resume after a crash (GPU farm):** pass the existing run directory name as `TAG` (the folder under `workdir/`, e.g. `gaia_test_127877_20260327_230408`):
+
+```bash
+sbatch --export=ALL,TAG=gaia_test_<JOBID>_<timestamp> run_gaia_test_resume.sh
+```
+
+This launches vLLM + watchdog like the full test job, then continues `run_gaia.py` with the same `tag` so results append to the same `dra.jsonl`. It re-exports `submission.jsonl` at the end.
+
+If `batch` + 2×RTX 4080 does not schedule on your cluster, use **`q-3090`** (2×RTX 3090). That partition often has a **18-hour** max wall time — match the inner timeout and re-submit until the run finishes:
+
+```bash
+sbatch --partition=q-3090 --gres=gpu:rtx_3090:2 --mem=128G --cpus-per-task=8 --time=18:00:00 \
+  --export=ALL,TAG=gaia_test_<JOBID>_<timestamp>,EVAL_TIMEOUT_SECS=64800 \
+  run_gaia_test_resume.sh
+```
+
+**Auto-chain (no manual resubmit after each OOM / 18h wall):** the same script can submit the next `sbatch` when `dra.jsonl` still has fewer than 301 lines (capped by `MAX_CHAIN_DEPTH`, default 20):
+
+```bash
+sbatch --partition=q-3090 --gres=gpu:rtx_3090:2 --mem=128G --cpus-per-task=8 --time=18:00:00 \
+  --export=ALL,TAG=gaia_test_<JOBID>_<timestamp>,EVAL_TIMEOUT_SECS=64800,AUTO_RESUBMIT=1 \
+  run_gaia_test_resume.sh
+```
+
+The compute node must allow `sbatch` from the job (same cluster policy as your login node). Tune `RESUBMIT_PARTITION`, `RESUBMIT_MEM`, etc. if needed. This does **not** fix OOM inside a single allocation; it only starts a **new** job so RAM resets.
+
+**Local resume** (vLLM already running on port 8000):
+
+```bash
+python examples/run_gaia.py --config configs/config_gaia_test_qwen.py \
+  --cfg-options tag=gaia_test_<JOBID>_<timestamp>
+```
+
+(`run_gaia.py` skips `task_id`s already present after `filter_answers`; failed rows with no prediction are dropped from the file on load so those questions are retried.)
+
+### ARC-AGI (GPU farm, Qwen on vLLM)
+
+Requires `data/arc-agi/evaluation/` (and optionally `training/`) with standard ARC JSON task files.
+
+```bash
+# Smoke test: 10 test cases, 6 h wall-clock
+sbatch run_arc_test.sh
+
+# Full evaluation split (one JSONL row per test case), 72 h wall-clock
+sbatch run_arc_eval.sh
+```
+
+Results: `workdir/arc_test_<JOBID>_<timestamp>/dra.jsonl` or `workdir/arc_eval_<JOBID>_<timestamp>/dra.jsonl`. Config: `configs/config_arc_qwen.py` (same vLLM + watchdog pattern as GAIA). Scoring in the job log uses exact grid match (`arc_question_scorer`).
+
+For API models (no GPU job), run locally: `python examples/run_arc.py --config configs/config_arc.py`.
+
 ## What the Scripts Do
 
 Both scripts handle the full lifecycle:
@@ -93,3 +152,6 @@ python scripts/compare_results.py workdir/run_a/dra.jsonl workdir/run_b/dra.json
 | Many "Connection refused" errors | vLLM crashed mid-run | Watchdog should auto-restart; check if max restarts (5) was hit |
 | "Per-question timeout exceeded" | Agent stuck in loop | Normal for hard questions; timeout prevents stalling |
 | Results file is empty | All questions errored | Check `.err` log and `agent_error` field in JSONL |
+| Job exits **137**, `.err` shows `oom_kill` / `Killed` | SLURM cgroup RAM exceeded (common with **64G** + vLLM + agent) | Use **`--mem=128G`** (see `run_gaia_test_eval.sh`); avoid running heavy extra processes on the same allocation |
+| `Connection error` mid-run then failures | vLLM unreachable or client HTTP error | Watchdog restarts vLLM; `run_gaia.py` also retries transient errors including `"Connection error"` |
+| `BrowserType.launch: Executable doesn't exist` under `~/.cache/ms-playwright/.../chrome` | Chromium was never downloaded for Playwright | On the **same conda env** as the job (`dra`), run once: `playwright install chromium` (or `playwright install chromium --with-deps` on Linux if libraries are missing). See [README.md](README.md) “playwright install if needed”. |

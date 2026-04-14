@@ -44,6 +44,14 @@ from src.utils.agent_types import (
 )
 from src.registry import AGENT
 from src.utils import assemble_project_path
+from src.utils.token_utils import (
+    DEFAULT_CONTEXT_IMAGE_TOKEN_ESTIMATE,
+    DEFAULT_CONTEXT_PRUNE_RESERVE_TOKENS,
+    DEFAULT_CONTEXT_PRUNE_TAIL_SEGMENTS,
+    DEFAULT_CONTEXT_PRUNE_THRESHOLD_RATIO,
+    estimate_messages_tokens,
+    prune_messages_to_budget,
+)
 
 
 @AGENT.register_module(name="general_agent", force=True)
@@ -137,72 +145,68 @@ class GeneralAgent(AsyncMultiStepAgent):
         return list(self.tools.values()) + list(self.managed_agents.values())
 
     def _estimate_token_count(self, messages: list) -> int:
-        """Rough token estimate from message character count (chars / 3.5)."""
-        total_chars = 0
-        for msg in messages:
-            content = msg.content if hasattr(msg, 'content') else str(msg)
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and "text" in part:
-                        total_chars += len(part["text"])
-                    else:
-                        total_chars += len(str(part))
-            else:
-                total_chars += len(str(content))
-        return int(total_chars / 3.5)
+        """Token estimate via tiktoken (or heuristic chars/3.5 when configured)."""
+        model_id = getattr(self.model, "model_id", None)
+        mode = getattr(self.config, "token_estimation_mode", "tiktoken")
+        image_est = getattr(
+            self.config, "context_image_token_estimate", DEFAULT_CONTEXT_IMAGE_TOKEN_ESTIMATE
+        )
+        return estimate_messages_tokens(
+            messages,
+            model_id,
+            mode=mode,
+            context_image_token_estimate=image_est,
+        )
 
     def _prune_messages_if_needed(self, messages: list) -> list:
         """Prune conversation history if approaching the model's context limit.
 
-        Keeps the system prompt (first message) and the most recent messages,
-        truncating middle messages to tool-call summaries.
+        Drops whole Tier B segments (assistant + tool results) from the middle before the tail,
+        never splitting tool chains. Inserts a placeholder when middle content is removed.
         """
-        max_model_len = getattr(self.config, 'max_model_len', 32768)
-        threshold = int(max_model_len * 0.85)
+        max_model_len = getattr(self.config, "max_model_len", 32768)
+        ratio = getattr(
+            self.config, "context_prune_threshold_ratio", DEFAULT_CONTEXT_PRUNE_THRESHOLD_RATIO
+        )
+        reserve = getattr(
+            self.config, "context_prune_reserve_tokens", DEFAULT_CONTEXT_PRUNE_RESERVE_TOKENS
+        )
+        tail_segments = getattr(
+            self.config, "context_prune_tail_segments", DEFAULT_CONTEXT_PRUNE_TAIL_SEGMENTS
+        )
+        mode = getattr(self.config, "token_estimation_mode", "tiktoken")
+        image_est = getattr(
+            self.config, "context_image_token_estimate", DEFAULT_CONTEXT_IMAGE_TOKEN_ESTIMATE
+        )
+        model_id = getattr(self.model, "model_id", None)
 
+        effective_budget = int(max_model_len * ratio) - reserve
         estimated_tokens = self._estimate_token_count(messages)
-        if estimated_tokens <= threshold:
+        if estimated_tokens <= effective_budget:
             return messages
 
         logger.warning(
             f"[Context Pruning] Estimated {estimated_tokens} tokens exceeds "
-            f"threshold {threshold} (max_model_len={max_model_len}). Pruning..."
+            f"effective budget {effective_budget} (max_model_len={max_model_len}, "
+            f"ratio={ratio}, reserve={reserve}). Pruning..."
         )
 
-        if len(messages) <= 4:
-            return messages
-
-        keep_tail = min(4, len(messages) - 1)
-        head = messages[:1]
-        tail = messages[-keep_tail:]
-        middle = messages[1:-keep_tail]
-
-        pruned_middle = []
-        for msg in middle:
-            content = msg.content if hasattr(msg, 'content') else str(msg)
-            if isinstance(content, list):
-                text_parts = [p.get("text", "") if isinstance(p, dict) else str(p) for p in content]
-                full_text = " ".join(text_parts)
-            else:
-                full_text = str(content)
-
-            if len(full_text) > 500:
-                truncated = full_text[:250] + " ... [truncated] ... " + full_text[-200:]
-                init_kwargs = {"role": msg.role, "content": [{"type": "text", "text": truncated}]}
-                for attr in ("tool_calls", "tool_call_id", "name", "raw"):
-                    val = getattr(msg, attr, None)
-                    if val is not None:
-                        init_kwargs[attr] = val
-                try:
-                    pruned_msg = ChatMessage(**init_kwargs)
-                except TypeError:
-                    pruned_msg = ChatMessage(role=msg.role, content=[{"type": "text", "text": truncated}])
-                pruned_middle.append(pruned_msg)
-            else:
-                pruned_middle.append(msg)
-
-        result = head + pruned_middle + tail
-        new_est = self._estimate_token_count(result)
+        result = prune_messages_to_budget(
+            messages,
+            model_id,
+            max_model_len=max_model_len,
+            context_prune_threshold_ratio=ratio,
+            context_prune_reserve_tokens=reserve,
+            context_prune_tail_segments=tail_segments,
+            token_estimation_mode=mode,
+            context_image_token_estimate=image_est,
+        )
+        new_est = estimate_messages_tokens(
+            result,
+            model_id,
+            mode=mode,
+            context_image_token_estimate=image_est,
+        )
         logger.warning(
             f"[Context Pruning] Pruned {len(messages)} messages -> {len(result)} messages, "
             f"estimated tokens: {estimated_tokens} -> {new_est}"

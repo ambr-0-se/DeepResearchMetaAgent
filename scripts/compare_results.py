@@ -33,7 +33,16 @@ except ImportError:
     HAS_PANDAS = False
     print("Warning: pandas not available, using basic comparison")
 
-from src.metric import question_scorer
+from src.metric import question_scorer, arc_question_scorer
+
+
+def _auto_detect_scorer(results: List[Dict]):
+    """Pick the appropriate scorer based on true_answer format."""
+    for r in results:
+        truth = str(r.get("true_answer", "")).strip()
+        if truth.startswith("[["):
+            return arc_question_scorer
+    return question_scorer
 
 
 def load_results(filepath: str) -> List[Dict]:
@@ -46,18 +55,19 @@ def load_results(filepath: str) -> List[Dict]:
     return results
 
 
-def calculate_accuracy(results: List[Dict]) -> Tuple[float, int, int]:
+def calculate_accuracy(results: List[Dict], scorer=None) -> Tuple[float, int, int]:
     """
     Calculate accuracy from results.
     
     Returns:
         Tuple of (accuracy, correct_count, total_count)
     """
+    if scorer is None:
+        scorer = question_scorer
     correct = 0
     total = 0
     
     for result in results:
-        # Skip if no ground truth
         if result.get('true_answer') == '?':
             continue
             
@@ -69,14 +79,14 @@ def calculate_accuracy(results: List[Dict]) -> Tuple[float, int, int]:
             continue
         
         total += 1
-        if question_scorer(str(prediction), str(truth)):
+        if scorer(str(prediction), str(truth)):
             correct += 1
     
     accuracy = correct / total if total > 0 else 0.0
     return accuracy, correct, total
 
 
-def calculate_accuracy_by_level(results: List[Dict]) -> Dict[str, Tuple[float, int, int]]:
+def calculate_accuracy_by_level(results: List[Dict], scorer=None) -> Dict[str, Tuple[float, int, int]]:
     """
     Calculate accuracy grouped by task level/difficulty.
     
@@ -91,7 +101,7 @@ def calculate_accuracy_by_level(results: List[Dict]) -> Dict[str, Tuple[float, i
     
     accuracies = {}
     for level, level_results in sorted(by_level.items()):
-        accuracies[level] = calculate_accuracy(level_results)
+        accuracies[level] = calculate_accuracy(level_results, scorer=scorer)
     
     return accuracies
 
@@ -99,7 +109,8 @@ def calculate_accuracy_by_level(results: List[Dict]) -> Dict[str, Tuple[float, i
 def compare_results(
     baseline_path: str,
     adaptive_path: str,
-    output_format: str = 'text'
+    output_format: str = 'text',
+    scorer=None,
 ) -> str:
     """
     Compare baseline and adaptive results.
@@ -108,23 +119,23 @@ def compare_results(
         baseline_path: Path to baseline JSONL file
         adaptive_path: Path to adaptive JSONL file
         output_format: 'text', 'markdown', or 'json'
+        scorer: Scoring function (auto-detected if None)
         
     Returns:
         Formatted comparison string
     """
-    # Load results
     baseline = load_results(baseline_path)
     adaptive = load_results(adaptive_path)
+
+    if scorer is None:
+        scorer = _auto_detect_scorer(baseline + adaptive)
     
-    # Overall accuracy
-    base_acc, base_correct, base_total = calculate_accuracy(baseline)
-    adapt_acc, adapt_correct, adapt_total = calculate_accuracy(adaptive)
+    base_acc, base_correct, base_total = calculate_accuracy(baseline, scorer=scorer)
+    adapt_acc, adapt_correct, adapt_total = calculate_accuracy(adaptive, scorer=scorer)
     
-    # By level accuracy
-    base_by_level = calculate_accuracy_by_level(baseline)
-    adapt_by_level = calculate_accuracy_by_level(adaptive)
+    base_by_level = calculate_accuracy_by_level(baseline, scorer=scorer)
+    adapt_by_level = calculate_accuracy_by_level(adaptive, scorer=scorer)
     
-    # Per-question comparison
     base_by_id = {r.get('task_id'): r for r in baseline}
     adapt_by_id = {r.get('task_id'): r for r in adaptive}
     
@@ -145,8 +156,8 @@ def compare_results(
         base_pred = base_result.get('prediction')
         adapt_pred = adapt_result.get('prediction')
         
-        base_correct_q = base_pred and question_scorer(str(base_pred), str(truth))
-        adapt_correct_q = adapt_pred and question_scorer(str(adapt_pred), str(truth))
+        base_correct_q = base_pred and scorer(str(base_pred), str(truth))
+        adapt_correct_q = adapt_pred and scorer(str(adapt_pred), str(truth))
         
         item = {
             'task_id': task_id,
@@ -319,10 +330,15 @@ def main():
         '--save', '-s',
         help='Save comparison to file'
     )
+    parser.add_argument(
+        '--scorer',
+        choices=['gaia', 'arc', 'auto'],
+        default='auto',
+        help='Scoring function to use (default: auto-detect from data)'
+    )
     
     args = parser.parse_args()
     
-    # Validate files exist
     if not Path(args.baseline).exists():
         print(f"Error: Baseline file not found: {args.baseline}")
         sys.exit(1)
@@ -330,8 +346,13 @@ def main():
         print(f"Error: Adaptive file not found: {args.adaptive}")
         sys.exit(1)
     
-    # Run comparison
-    result = compare_results(args.baseline, args.adaptive, args.output)
+    scorer = None
+    if args.scorer == 'arc':
+        scorer = arc_question_scorer
+    elif args.scorer == 'gaia':
+        scorer = question_scorer
+
+    result = compare_results(args.baseline, args.adaptive, args.output, scorer=scorer)
     
     # Output
     print(result)

@@ -19,8 +19,9 @@ sys.path.append(root)
 from src.logger import logger
 from src.config import config
 from src.models import model_manager
-from src.metric import question_scorer
-from src.agent import create_agent, prepare_response
+from src.metric import arc_question_scorer
+from src.agent import create_agent
+from src.agent.arc_reformulator import prepare_arc_response
 from src.registry import DATASET
 
 append_answer_lock = threading.Lock()
@@ -53,36 +54,27 @@ def append_answer(entry: dict, jsonl_file: str) -> None:
 def filter_answers(answers_file):
     answer_df = pd.read_json(answers_file, lines=True)
 
-    filttered_df = []
+    filtered_df = []
     for row in answer_df.iterrows():
         row = row[1]
 
         prediction = row['prediction']
         truth = row['true_answer']
 
-        # If the prediction is "Unable to determine", we set it to None
-        if str(prediction) == "Unable to determine":
-            prediction = None
+        if prediction is None or str(prediction) in ("None", "", "Unable to determine"):
+            continue
 
-        # Processing the test dataset that not contains the true answer
-        if truth == "?":
-            if prediction is not None:
-                filttered_df.append(row)
-        # Processing the validation dataset that contains the true answer
-        else:
-            if prediction is not None:
-                prediction = str(prediction)
-                score = question_scorer(prediction, truth)
-                if score:
-                    filttered_df.append(row)
+        prediction = str(prediction)
+        if arc_question_scorer(prediction, truth):
+            filtered_df.append(row)
 
-    filttered_df = pd.DataFrame(filttered_df)
-    filttered_df.to_json(answers_file, lines=True, orient='records')
+    filtered_df = pd.DataFrame(filtered_df)
+    filtered_df.to_json(answers_file, lines=True, orient='records')
 
-    logger.info(f"Previous answers filtered! {len(answer_df)} -> {len(filttered_df)}")
+    logger.info(f"Previous answers filtered! {len(answer_df)} -> {len(filtered_df)}")
 
 def get_tasks_to_run(answers_file, dataset) -> List[dict]:
-    
+
     data = dataset.data
 
     logger.info(f"Loading answers from {answers_file}...")
@@ -94,7 +86,7 @@ def get_tasks_to_run(answers_file, dataset) -> List[dict]:
 
             df = pd.read_json(answers_file, lines=True)
             if "task_id" not in df.columns:
-                logger.warning(f"Answers file {answers_file} does not contain 'task_id' column. Please check the file format.")
+                logger.warning(f"Answers file {answers_file} does not contain 'task_id' column.")
                 return []
             done_questions = df["task_id"].tolist()
             logger.info(f"Found {len(done_questions)} previous results!")
@@ -102,13 +94,12 @@ def get_tasks_to_run(answers_file, dataset) -> List[dict]:
             done_questions = []
     except Exception as e:
         logger.warning("Error when loading records: ", e)
-        logger.warning("No usable records! ▶️ Starting new.")
+        logger.warning("No usable records! Starting new.")
         done_questions = []
     return [line for line in data.to_dict(orient="records") if line["task_id"] not in done_questions]
 
 TRANSIENT_ERROR_KEYWORDS = [
-    "Connection refused", "Connection reset", "Connection error",
-    "ConnectionError",
+    "Connection refused", "Connection reset", "ConnectionError",
     "Internal Server Error", "503", "502", "RemoteDisconnected",
     "ConnectionAbortedError",
 ]
@@ -123,13 +114,7 @@ async def answer_single_question(config, example):
 
     augmented_question = example["question"]
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    per_question_timeout = getattr(config, "per_question_timeout_secs", 1200)
-
-    if example["file_name"]:
-        prompt_use_files = "\n\nTo solve the task above, you will have to use these attached files:\n"
-        file_description = f" - Attached file: {example['file_name']}"
-        prompt_use_files += file_description
-        augmented_question += prompt_use_files
+    per_question_timeout = getattr(config, "per_question_timeout_secs", 600)
 
     output = None
     intermediate_steps = []
@@ -145,34 +130,37 @@ async def answer_single_question(config, example):
             agent = await create_agent(config)
             if attempt == 0:
                 logger.visualize_agent_tree(agent)
-            logger.info(f"Task Id: {example['task_id']}, Final Answer: {example['true_answer']}")
+            logger.info(f"Task Id: {example['task_id']}, True Answer: {example['true_answer'][:80]}")
 
-            final_result = await asyncio.wait_for(
+            raw_result = await asyncio.wait_for(
                 agent.run(task=augmented_question),
                 timeout=per_question_timeout,
             )
 
             agent_memory = await agent.write_memory_to_messages(summary_mode=True)
             reformulation_model_id = getattr(config.agent_config, 'model_id', 'gpt-4.1')
-            final_result = await prepare_response(
+            final_result = await prepare_arc_response(
                 augmented_question,
                 agent_memory,
                 reformulation_model=model_manager.registed_models[reformulation_model_id],
             )
 
-            output = str(final_result)
+            output = str(final_result) if final_result is not None else None
             for memory_step in agent.memory.steps:
                 memory_step.model_input_messages = None
             intermediate_steps = _serialize_steps(agent.memory.steps)
             intermediate_steps_str = [str(step) for step in agent.memory.steps]
 
             parsing_error = any("AgentParsingError" in step for step in intermediate_steps_str)
-            iteration_limit_exceeded = "Agent stopped due to iteration limit or time limit." in output
+            raw_result_str = str(raw_result) if raw_result is not None else ""
+            iteration_limit_exceeded = (
+                "Agent stopped due to iteration limit or time limit." in raw_result_str
+            )
             raised_exception = False
             break
 
         except asyncio.TimeoutError:
-            logger.warning(f"Question timed out after {per_question_timeout}s: {augmented_question[:80]}")
+            logger.warning(f"Question timed out after {per_question_timeout}s: {example['task_id']}")
             output = None
             intermediate_steps = []
             iteration_limit_exceeded = True
@@ -189,7 +177,7 @@ async def answer_single_question(config, example):
                 await asyncio.sleep(RETRY_WAIT_SECS)
                 continue
 
-            logger.info(f"Error on {augmented_question[:80]}: {e}")
+            logger.info(f"Error on {example['task_id']}: {e}")
             output = None
             intermediate_steps = []
             exception = e
@@ -216,8 +204,8 @@ async def answer_single_question(config, example):
     append_answer(annotated_example, config.save_path)
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='main')
-    parser.add_argument("--config", default=os.path.join(root, "configs", "config_gaia.py"), help="config file path")
+    parser = argparse.ArgumentParser(description='ARC-AGI evaluation')
+    parser.add_argument("--config", default=os.path.join(root, "configs", "config_arc.py"), help="config file path")
 
     parser.add_argument(
         '--cfg-options',
@@ -233,26 +221,20 @@ def parse_args():
     return args
 
 async def main():
-    # Parse command line arguments
     args = parse_args()
 
-    # Initialize the configuration
     config.init_config(args.config, args)
 
-    # Initialize the logger
     logger.init_logger(log_path=config.log_path)
     logger.info(f"| Logger initialized at: {config.log_path}")
     logger.info(f"| Config:\n{config.pretty_text}")
 
-    # Registed models
-    model_manager.init_models(use_local_proxy=getattr(config, 'use_local_proxy', True))
-    logger.info("| Registed models: %s", ", ".join(model_manager.registed_models.keys()))
-    
-    # Load dataset
+    model_manager.init_models(use_local_proxy=getattr(config, 'use_local_proxy', False))
+    logger.info("| Registered models: %s", ", ".join(model_manager.registed_models.keys()))
+
     dataset = DATASET.build(config.dataset)
     logger.info(f"| Loaded dataset: {len(dataset)} examples.")
 
-    # Load answers
     tasks_to_run = get_tasks_to_run(config.save_path, dataset)
     max_samples = getattr(config, "max_samples", None)
     if max_samples is not None:
@@ -261,7 +243,6 @@ async def main():
     else:
         logger.info(f"| Loaded {len(tasks_to_run)} tasks to run.")
 
-    # Run tasks
     batch_size = getattr(config, "concurrency", 4)
     for i in range(0, len(tasks_to_run), batch_size):
         batch = tasks_to_run[i:min(i + batch_size, len(tasks_to_run))]

@@ -36,3 +36,4 @@ httpx_aiohttp>=0.1.6
 inflection>=0.5.1
 mmengine>=0.10.7
 pyyaml>=6.0
+tiktoken>=0.9.0

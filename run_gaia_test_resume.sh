@@ -81,6 +81,11 @@ export CUDA_VISIBLE_DEVICES=0,1
 
 cd "$REPO_ROOT"
 
+bash scripts/ensure_playwright_browsers.sh || {
+    echo "ERROR: Playwright Chromium missing (needed for browser_use_agent). See scripts/ensure_playwright_browsers.sh"
+    exit 1
+}
+
 # ---------------------------------------------------------------------------
 # vLLM lifecycle (same as run_gaia_test_eval.sh)
 # ---------------------------------------------------------------------------

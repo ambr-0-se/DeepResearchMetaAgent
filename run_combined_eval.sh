@@ -34,6 +34,11 @@ export CUDA_VISIBLE_DEVICES=0,1
 
 cd /userhome/cs2/ambr0se/DeepResearchMetaAgent
 
+bash scripts/ensure_playwright_browsers.sh || {
+    echo "ERROR: Playwright Chromium missing (needed for browser_use_agent). See scripts/ensure_playwright_browsers.sh"
+    exit 1
+}
+
 # Ensure vLLM server and watchdog are always killed, even on crash/signal
 VLLM_PID_FILE=$(mktemp /tmp/vllm_pid.XXXXXX)
 MONITOR_PID=""

@@ -117,39 +117,27 @@ system_prompt: |-
   Now Begin!
 
 task_instruction: |-
-  You have one question to answer. It is paramount that you provide a correct answer. Give it all you can: I know for a fact that you have access to all the relevant tools and team members to solve it and find the correct answer (the answer does exist). 
-  Failure or 'I cannot answer' or 'None found' or 'Unable to determine' will not be tolerated, success will be rewarded.
-  You MUST provide a concrete answer. If you are uncertain, provide your best guess rather than giving up.
-  If all team members fail, try a different approach or team member before resorting to final_answer.
-  * You must begin by creating a detailed plan that explicitly incorporates the available TOOLS and TEAM MEMBERS. Then, follow the plan step by step to solve the complex task.
-  * If the task involves analyzing an ATTACHED FILE, a URL, performing CALCULATIONS, or playing GAME, please use `deep_analyzer_agent`.
-  * If the task involves attached files, you are required to specify the absolute path in your plan and share it explicitly with your team members.
-  * If the task need to use the team members, you are required to provide the ORIGINAL TASK as the `task` parameter for the agents to understand the task. DO NOT modify the task.
-  * If the task involves interacting with web pages or conducting web searches, start with the `browser_use_agent` and follow up with the `deep_researcher_agent`.
-      - Firstly, please use `browser_use_agent` to search and interact with the most relevant web pages to find the answer. If the answer is found, please output the answer directly.
-      - Secondly, if the answer is not found, please use `deep_researcher_agent` to perform extensive web searches to find the answer.
-  * Run verification steps if that's needed, you must make sure you find the correct answer!
+  **Task constraints**
+  * Answer the single question below with a concrete answer. Do not reply with "I cannot answer", "None found", or "Unable to determine"; if uncertain, give your best guess.
+  * Use the tools and team members listed in your system prompt; the answer is attainable with them.
+  * If team members fail, try a different approach or another team member before calling `final_answer`.
 
-  ## Adaptive Execution Guidelines (THINK-ACT-OBSERVE-REFLECT)
-  
-  After receiving results from a team member, you should REFLECT on the quality of the response:
-  
-  1. **Is the response satisfactory?** Does it provide what you need to advance toward the goal?
-     - If YES: Continue with your plan to the next step.
-     - If NO: Proceed to step 2.
-  
-  2. **Is the failure reason clear from the response?**
-     - If YES: Decide whether to retry with different instructions, try a different team member, or adjust your approach.
-     - If NO: Use `diagnose_subagent` to investigate the team member's execution and understand what went wrong.
-  
-  3. **Based on your analysis, take adaptive action:**
-     - **Retry**: Give the same team member a more specific or differently worded task.
-     - **Modify**: Use `modify_subagent` to add tools or instructions to help the team member succeed.
-     - **Create**: Use `modify_subagent` with action="add_agent" to create a new specialized team member.
-     - **Switch**: Try a different existing team member better suited for this subtask.
-  
-  ### Using `diagnose_subagent`
-  When a team member's response is unsatisfactory and you don't understand why:
+  **Planning and routing**
+  * Begin with a detailed plan that names the TOOLS and TEAM MEMBERS you will use, then execute it step by step.
+  * If the task involves an attached file, a URL, calculations, or a game, use `deep_analyzer_agent`.
+  * For attached files, put the absolute path in your plan and pass it explicitly to team members.
+  * When delegating, pass the **original user task** verbatim as the `task` argument (do not rewrite or shorten the user's question). Changing sub-agent capabilities via `modify_subagent` is separate from editing the delegated task text.
+  * If the task involves web pages or web search, use `browser_use_agent` first, then `deep_researcher_agent` if needed:
+      - Use `browser_use_agent` to open and interact with the most relevant pages; if you have the answer, proceed.
+      - If not, use `deep_researcher_agent` for broader web search and synthesis.
+  * Run verification when the task requires it; prioritize correctness.
+  * Use `planning_tool` to record your plan (`create` with steps). When observations change your next steps, use `update` to revise the plan and `mark_step` to track progress.
+
+  **After each team member (think-act-observe-reflect)**
+  * If the response is satisfactory and advances the goal, continue with your plan.
+  * If it is unsatisfactory and the failure reason is clear, retry with clearer instructions, switch to a better-suited team member, or use `modify_subagent` (tools, instructions, or a new sub-agent per the tool description).
+  * If the failure reason is unclear, call `diagnose_subagent` so you can see the sub-agent's reasoning, tool calls, and observations (arguments are defined in the tool schema).
+  * **Example call shapes** (notional names and strings; use real `agent_name` values and fields from your tool list):
   ```json
   {
     "name": "diagnose_subagent",
@@ -161,9 +149,6 @@ task_instruction: |-
     }
   }
   ```
-  
-  ### Using `modify_subagent`
-  To improve a team member's capabilities:
   ```json
   {
     "name": "modify_subagent",
@@ -174,8 +159,6 @@ task_instruction: |-
     }
   }
   ```
-  
-  To add a tool to a team member:
   ```json
   {
     "name": "modify_subagent",
@@ -186,8 +169,6 @@ task_instruction: |-
     }
   }
   ```
-  
-  To create a new specialized team member:
   ```json
   {
     "name": "modify_subagent",
@@ -203,8 +184,7 @@ task_instruction: |-
   {{task}}
 
 user_prompt: |-
-  You should think step by step and provide a detailed plan for the task.
-  Remember to REFLECT after each team member response - if unsatisfactory, diagnose and adapt.
+  Think step by step, produce a detailed plan, then execute it following the instructions above.
 
 managed_agent:
   task: |-

@@ -1,7 +1,9 @@
 """Tests for the P0-P2 evaluation fixes."""
 import sys
 import os
+import json
 import asyncio
+import tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -518,6 +520,106 @@ class TestPromptFix:
 # Runner
 # ============================================================================
 
+# ============================================================================
+# GAIA: fair resume (filter_answers)
+# ============================================================================
+
+
+def _read_jsonl(path: Path) -> list:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+class TestGaiaFilterAnswers:
+    """Resume keeps test-split abstentions; drops rows with agent_error; validation unchanged."""
+
+    def test_test_split_keeps_unable_to_determine_without_agent_error(self):
+        from examples.run_gaia import filter_answers
+
+        path = Path(tempfile.mkdtemp()) / "dra.jsonl"
+        row = {
+            "task_id": "t_abstain",
+            "true_answer": "?",
+            "prediction": "Unable to determine",
+            "agent_error": None,
+        }
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        filter_answers(str(path))
+        out = _read_jsonl(path)
+        assert len(out) == 1
+        assert out[0]["task_id"] == "t_abstain"
+        assert out[0]["prediction"] == "Unable to determine"
+
+    def test_test_split_drops_when_agent_error_set(self):
+        from examples.run_gaia import filter_answers
+
+        path = Path(tempfile.mkdtemp()) / "dra.jsonl"
+        row = {
+            "task_id": "t_fail",
+            "true_answer": "?",
+            "prediction": None,
+            "agent_error": "Per-question timeout (1200s) exceeded",
+        }
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        filter_answers(str(path))
+        assert _read_jsonl(path) == []
+
+    def test_validation_drops_unable_to_determine_if_not_correct(self):
+        from examples.run_gaia import filter_answers
+
+        path = Path(tempfile.mkdtemp()) / "dra.jsonl"
+        row = {
+            "task_id": "v1",
+            "true_answer": "unique_gt_xyz_12345",
+            "prediction": "Unable to determine",
+            "agent_error": None,
+        }
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        filter_answers(str(path))
+        assert _read_jsonl(path) == []
+
+    def test_combined_resume_behavior(self):
+        from examples.run_gaia import filter_answers
+
+        path = Path(tempfile.mkdtemp()) / "dra.jsonl"
+        rows = [
+            {
+                "task_id": "keep_abstain",
+                "true_answer": "?",
+                "prediction": "Unable to determine",
+                "agent_error": None,
+            },
+            {
+                "task_id": "drop_error",
+                "true_answer": "?",
+                "prediction": None,
+                "agent_error": "OOM",
+            },
+            {
+                "task_id": "drop_val_wrong",
+                "true_answer": "99",
+                "prediction": "Unable to determine",
+                "agent_error": None,
+            },
+        ]
+        path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        filter_answers(str(path))
+        out = _read_jsonl(path)
+        assert {r["task_id"] for r in out} == {"keep_abstain"}
+
+    def test_legacy_row_without_agent_error_column_keeps_test_answer(self):
+        from examples.run_gaia import filter_answers
+
+        path = Path(tempfile.mkdtemp()) / "dra.jsonl"
+        row = {"task_id": "legacy", "true_answer": "?", "prediction": "Unable to determine"}
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        filter_answers(str(path))
+        out = _read_jsonl(path)
+        assert len(out) == 1 and out[0]["task_id"] == "legacy"
+
+
 def run_all_tests():
     import traceback
     test_classes = [
@@ -528,6 +630,7 @@ def run_all_tests():
         TestContextPruning,
         TestTransientErrorDetection,
         TestPromptFix,
+        TestGaiaFilterAnswers,
     ]
     total = 0
     passed = 0

@@ -5,7 +5,8 @@ Export a GAIA evaluation JSONL (dra.jsonl) to the leaderboard submission format.
 The GAIA leaderboard expects a JSONL file with exactly two fields per line:
     {"task_id": "...", "model_answer": "..."}
 
-This script reads the agent's output JSONL, maps `prediction` -> `model_answer`,
+This script reads the agent's output JSONL, maps `prediction` -> `model_answer`
+(intentional abstentions such as `Unable to determine` stay as non-empty `model_answer`),
 and validates the result against the expected test-split question counts
 (Level 1: 93, Level 2: 159, Level 3: 49 = 301 total).
 

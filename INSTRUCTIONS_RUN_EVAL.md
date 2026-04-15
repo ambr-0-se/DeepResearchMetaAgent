@@ -55,7 +55,7 @@ python examples/run_gaia.py --config configs/config_gaia_test_qwen.py \
   --cfg-options tag=gaia_test_<JOBID>_<timestamp>
 ```
 
-(`run_gaia.py` skips `task_id`s already present after `filter_answers`; failed rows with no prediction are dropped from the file on load so those questions are retried.)
+(`run_gaia.py` skips `task_id`s already present after `filter_answers`. For the **test** split, any row with a **completed** run (`agent_error` empty) is kept—including final answers **`Unable to determine`**—so resumes do not re-run abstentions. Rows with **`agent_error` set** (timeout, OOM, API failure after retries, etc.) are **removed** on load so only those questions are retried. Validation split behavior is unchanged: only **scorer-correct** rows are kept for resume.)
 
 ### ARC-AGI (GPU farm, Qwen on vLLM)
 

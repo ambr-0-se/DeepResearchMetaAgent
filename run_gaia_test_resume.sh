@@ -13,8 +13,9 @@
 #SBATCH --error=logs/gaia_test_resume_%j.err
 
 # Resume a partial GAIA *test* split run by reusing the same workdir tag as the original job.
-# run_gaia.py skips task_ids already in dra.jsonl (after filter_answers); failed rows without
-# a prediction are dropped on reload so those questions are retried.
+# run_gaia.py skips task_ids already in dra.jsonl (after filter_answers). Test-split rows with
+# agent_error set are dropped on reload so those questions are retried; completed rows (including
+# Unable to determine) are kept so abstentions are not re-run.
 #
 # Usage (TAG = directory name under workdir/, e.g. gaia_test_127877_20260327_230408):
 #

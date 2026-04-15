@@ -50,6 +50,17 @@ def append_answer(entry: dict, jsonl_file: str) -> None:
     assert os.path.exists(jsonl_file), "File not found!"
     print("Answer exported to file:", jsonl_file.resolve())
 
+
+def _has_agent_error(row: pd.Series) -> bool:
+    """True when the run failed (timeout, crash, etc.) and should be retried on resume."""
+    if "agent_error" not in row.index:
+        return False
+    err = row["agent_error"]
+    if pd.isna(err):
+        return False
+    return bool(str(err).strip())
+
+
 def filter_answers(answers_file):
     answer_df = pd.read_json(answers_file, lines=True)
 
@@ -57,24 +68,20 @@ def filter_answers(answers_file):
     for row in answer_df.iterrows():
         row = row[1]
 
-        prediction = row['prediction']
-        truth = row['true_answer']
+        truth = row["true_answer"]
 
-        # If the prediction is "Unable to determine", we set it to None
-        if str(prediction) == "Unable to determine":
-            prediction = None
-
-        # Processing the test dataset that not contains the true answer
+        # Test split: keep any completed run (no agent_error), including abstention
+        # "Unable to determine", so a resume does not re-run those questions.
         if truth == "?":
-            if prediction is not None:
+            if not _has_agent_error(row):
                 filttered_df.append(row)
-        # Processing the validation dataset that contains the true answer
         else:
-            if prediction is not None:
-                prediction = str(prediction)
-                score = question_scorer(prediction, truth)
-                if score:
-                    filttered_df.append(row)
+            prediction = row["prediction"]
+            if prediction is None or pd.isna(prediction):
+                continue
+            prediction = str(prediction)
+            if question_scorer(prediction, truth):
+                filttered_df.append(row)
 
     filttered_df = pd.DataFrame(filttered_df)
     filttered_df.to_json(answers_file, lines=True, orient='records')

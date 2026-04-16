@@ -1,15 +1,23 @@
 """
-Configuration for AdaptivePlanningAgent evaluation on GAIA benchmark.
+Condition C2 — GAIA with AdaptivePlanningAgent (reactive diagnose + modify tools).
 
 This config inherits from config_gaia.py and overrides the planning agent
-to use the AdaptivePlanningAgent with self-modification capabilities.
+to use the AdaptivePlanningAgent. The planner has `diagnose_subagent` and
+`modify_subagent` tools available and may invoke them reactively when a
+sub-agent delegation fails. There is no structural REVIEW step — that is
+added by C3 (configs/config_gaia_c3.py).
+
+All architectural modifications remain task-scoped via
+AdaptiveMixin._reset_to_original_state(); there is no cross-task
+persistence. For persistent skill library behavior, see C4
+(configs/config_gaia_c4.py).
 
 Usage:
-    # Run evaluation with adaptive agent
+    # Run C2 evaluation
     python examples/run_gaia.py --config configs/config_gaia_adaptive.py
-    
-    # Compare with baseline
-    python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_adaptive/dra.jsonl
+
+    # Compare C2 vs C0 baseline
+    python scripts/compare_results.py workdir/gaia_c0/dra.jsonl workdir/gaia_adaptive/dra.jsonl
 """
 
 _base_ = './config_gaia.py'
@@ -23,7 +31,7 @@ planning_agent_config = dict(
     name="adaptive_planning_agent",
     model_id="claude-3.7-sonnet-thinking",
     description="An adaptive planning agent that can diagnose and modify sub-agents at runtime.",
-    max_steps=25,  # Slightly more steps to allow for reflection and adaptation
+    max_steps=25,  # Slightly more steps than C0 (20) to allow for reactive adaptation
     template_path="src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent.yaml",
     provide_run_summary=True,
     tools=["planning_tool"],  # diagnose_subagent and modify_subagent added automatically

@@ -133,7 +133,7 @@ task_instruction: |-
   * Run verification when the task requires it; prioritize correctness.
   * Use `planning_tool` to record your plan (`create` with steps). When observations change your next steps, use `update` to revise the plan and `mark_step` to track progress.
 
-  **After each team member (think-act-observe-reflect)**
+  **After each team member response**
   * If the response is satisfactory and advances the goal, continue with your plan.
   * If it is unsatisfactory and the failure reason is clear, retry with clearer instructions, switch to a better-suited team member, or use `modify_subagent` (tools, instructions, or a new sub-agent per the tool description).
   * If the failure reason is unclear, call `diagnose_subagent` so you can see the sub-agent's reasoning, tool calls, and observations (arguments are defined in the tool schema).

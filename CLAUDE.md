@@ -27,11 +27,13 @@ python main.py
 # Single agent example
 python examples/run_general.py
 
-# GAIA evaluation (baseline)
-python examples/run_gaia.py --config configs/config_gaia.py
+# GAIA evaluation — experimental conditions (see "Experimental Conditions" section)
+python examples/run_gaia.py --config configs/config_gaia_c0.py        # C0: baseline PlanningAgent
+python examples/run_gaia.py --config configs/config_gaia_adaptive.py  # C2: AdaptivePlanningAgent (reactive)
+# C3/C4 configs are added in later implementation phases
 
-# GAIA evaluation (adaptive agent)
-python examples/run_gaia.py --config configs/config_gaia_adaptive.py
+# Legacy alias (equivalent to C0)
+python examples/run_gaia.py --config configs/config_gaia.py
 
 # ARC-AGI evaluation (API models)
 python examples/run_arc.py --config configs/config_arc.py
@@ -40,8 +42,8 @@ python examples/run_arc.py --config configs/config_arc.py
 # sbatch run_arc_test.sh
 # sbatch run_arc_eval.sh
 
-# Compare baseline vs adaptive results
-python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_adaptive/dra.jsonl
+# Compare conditions (output dirs are workdir/gaia_<tag>/ where <tag> comes from the config)
+python scripts/compare_results.py workdir/gaia_c0/dra.jsonl workdir/gaia_adaptive/dra.jsonl
 
 # Override config options
 python main.py --config configs/config_main.py --cfg-options model_id=gpt-4.1
@@ -85,10 +87,11 @@ Agent configs reference tool configs by name convention: `{tool_name}` → `{too
 **Top-level:** `PlanningAgent` - coordinates lower-level agents
 
 **Adaptive top-level:** `AdaptivePlanningAgent` - extends PlanningAgent with self-modification capabilities
-- Uses THINK-ACT-OBSERVE-REFLECT loop
-- Can diagnose sub-agent failures via `diagnose_subagent` tool
-- Can modify sub-agents at runtime via `modify_subagent` tool
+- Uses THINK-ACT-OBSERVE loop (same as `PlanningAgent`) augmented with reactive self-modification tools
+- Can diagnose sub-agent failures via `diagnose_subagent` tool (reactive; agent-invoked)
+- Can modify sub-agents at runtime via `modify_subagent` tool (reactive; agent-invoked)
 - All modifications are task-scoped (reset after each task)
+- A structural REVIEW step (automatic post-delegation assessment) is added by C3 via an optional `review_step` component — see `src/meta/review_step.py` and `configs/config_gaia_c3.py`
 
 **Specialized lower-level agents:**
 - `DeepAnalyzerAgent` - in-depth analysis of input information
@@ -158,15 +161,30 @@ OpenAI-native tool message support throughout the stack:
 
 ### Adaptive Agent Files
 - `src/meta/adaptive_mixin.py`: Runtime modification mixin (uses `_find_managed_agent` fallback to check both `managed_agents` and `tools`)
-- `src/meta/diagnose_tool.py`: Sub-agent diagnostic tool
-- `src/meta/modify_tool.py`: Sub-agent modification tool
+- `src/meta/diagnose_tool.py`: Sub-agent diagnostic tool (delegates formatting to `_memory_format`)
+- `src/meta/modify_tool.py`: Sub-agent modification tool (7 actions: add/remove agents, add/remove tools, modify instructions, set max_steps)
 - `src/meta/tool_generator.py`: Dynamic tool generation
 - `src/meta/agent_generator.py`: Dynamic agent creation
+- `src/meta/_memory_format.py`: Shared helpers for rendering agent memory/tools (reused by diagnose tool and future review components)
 - `src/agent/adaptive_planning_agent/`: Adaptive planning agent implementation
-- `configs/config_gaia_adaptive.py`: GAIA evaluation config for adaptive agent
+- `configs/config_gaia_c0.py`: Condition C0 — baseline PlanningAgent (alias over `config_gaia.py`)
+- `configs/config_gaia_adaptive.py`: Condition C2 — AdaptivePlanningAgent with reactive diagnose/modify tools
 - `configs/config_gaia_adaptive_qwen.py`: Qwen/vLLM evaluation config
-- `scripts/compare_results.py`: Compare baseline vs adaptive results
+- `scripts/compare_results.py`: Compare results across conditions
 - `scripts/analyze_results.py`: Generate terminal/HTML evaluation reports
+
+### Experimental Conditions
+
+This codebase is set up to run four experimental conditions for ADAS research on GAIA:
+
+| Condition | Config | Planner | Meta-agent capability |
+|-----------|--------|---------|----------------------|
+| **C0** | `config_gaia_c0.py` | `PlanningAgent` | None (baseline) |
+| **C2** | `config_gaia_adaptive.py` | `AdaptivePlanningAgent` | Reactive diagnose/modify tools (agent-invoked) |
+| **C3** | `config_gaia_c3.py` (planned) | `AdaptivePlanningAgent` + `review_step` | C2 + structural REVIEW step (automatic post-delegation assessment) |
+| **C4** | `config_gaia_c4.py` (planned) | C3 + `skill_registry` | C3 + cross-task skill library (pre-seeded + learned) |
+
+C1 (reactive diagnose-only, no modify) was dropped because the existing `modify_subagent` action space covers both C1 and C2 uses without meaningful distinction. All conditions are selected via config; the `AdaptivePlanningAgent` class is shared with optional `review_step` / `skill_registry` components. See the plan file for implementation details.
 
 ### Evaluation Infrastructure
 - `run_combined_eval.sh`: Full GAIA evaluation SLURM job with vLLM watchdog

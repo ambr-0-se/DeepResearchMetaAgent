@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, Any, Optional
 from src.tools import AsyncTool
 from src.models import ChatMessage, MessageRole
 from src.logger import logger, LogLevel
+from src.meta._memory_format import (
+    format_agent_tools as _mf_format_agent_tools,
+    format_execution_history as _mf_format_execution_history,
+)
 
 if TYPE_CHECKING:
     from src.base.async_multistep_agent import AsyncMultiStepAgent
@@ -158,77 +162,12 @@ Returns a diagnosis explaining:
         return diagnosis
     
     def _format_execution_history(self, agent: "AsyncMultiStepAgent") -> str:
-        """
-        Format the agent's execution history from memory.
-        
-        Args:
-            agent: The agent to get history from
-            
-        Returns:
-            Formatted string of execution history
-        """
-        if not hasattr(agent, 'memory') or agent.memory is None:
-            return "No execution history available (memory is empty)."
-        
-        history_parts = []
-        
-        # Get memory steps
-        steps = getattr(agent.memory, 'steps', [])
-        
-        if not steps:
-            return "No execution steps recorded."
-        
-        for i, step in enumerate(steps):
-            step_info = [f"=== Step {i + 1} ==="]
-            
-            # Handle different step types
-            step_type = type(step).__name__
-            step_info.append(f"Type: {step_type}")
-            
-            # Extract relevant information based on step type
-            if hasattr(step, 'task'):
-                step_info.append(f"Task: {step.task[:500]}..." if len(str(step.task)) > 500 else f"Task: {step.task}")
-            
-            if hasattr(step, 'model_output') and step.model_output:
-                output = str(step.model_output)
-                step_info.append(f"Agent Reasoning: {output[:800]}..." if len(output) > 800 else f"Agent Reasoning: {output}")
-            
-            if hasattr(step, 'tool_calls') and step.tool_calls:
-                for tc in step.tool_calls:
-                    if hasattr(tc, 'name') and hasattr(tc, 'arguments'):
-                        args_str = str(tc.arguments)[:300]
-                        step_info.append(f"Tool Called: {tc.name}({args_str})")
-            
-            if hasattr(step, 'observations') and step.observations:
-                obs = str(step.observations)
-                step_info.append(f"Observation: {obs[:500]}..." if len(obs) > 500 else f"Observation: {obs}")
-            
-            if hasattr(step, 'error') and step.error:
-                step_info.append(f"ERROR: {step.error}")
-            
-            history_parts.append("\n".join(step_info))
-        
-        return "\n\n".join(history_parts)
-    
+        """Thin wrapper for backward compatibility. See `src.meta._memory_format`."""
+        return _mf_format_execution_history(agent)
+
     def _format_agent_tools(self, agent: "AsyncMultiStepAgent") -> str:
-        """
-        Format the agent's available tools.
-        
-        Args:
-            agent: The agent to get tools from
-            
-        Returns:
-            Formatted string of available tools
-        """
-        if not hasattr(agent, 'tools') or not agent.tools:
-            return "No tools available."
-        
-        tool_info = []
-        for name, tool in agent.tools.items():
-            desc = getattr(tool, 'description', 'No description')[:200]
-            tool_info.append(f"- {name}: {desc}")
-        
-        return "\n".join(tool_info)
+        """Thin wrapper for backward compatibility. See `src.meta._memory_format`."""
+        return _mf_format_agent_tools(agent)
     
     def _build_diagnosis_prompt(
         self,

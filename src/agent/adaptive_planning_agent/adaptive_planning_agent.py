@@ -28,15 +28,18 @@ from src.meta.modify_tool import ModifySubAgentTool
 @AGENT.register_module(name="adaptive_planning_agent", force=True)
 class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
     """
-    Planning agent with THINK-ACT-OBSERVE-REFLECT loop and self-modification capabilities.
-    
+    Planning agent with THINK-ACT-OBSERVE loop and reactive self-modification capabilities.
+
     Extends PlanningAgent with:
     - AdaptiveMixin for runtime modifications to sub-agents
-    - diagnose_subagent tool for investigating sub-agent failures
-    - modify_subagent tool for modifying sub-agent capabilities
-    - Enhanced prompt template with REFLECT guidance
+    - diagnose_subagent tool for investigating sub-agent failures (reactive; agent-invoked)
+    - modify_subagent tool for modifying sub-agent capabilities (reactive; agent-invoked)
+    - Enhanced prompt template with reactive diagnose/modify guidance
     - State management for task-scoped changes
-    
+
+    Note: a structural REVIEW step (automatic post-delegation assessment) is added by the
+    C3 variant via the optional `review_step` component; see `src/meta/review_step.py`.
+
     All modifications made during a task are automatically reset after task completion,
     ensuring isolation between tasks.
     """

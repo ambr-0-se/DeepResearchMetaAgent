@@ -1,0 +1,330 @@
+[92m18:47:32 - logger:INFO[0m: test_config.py:40 - | Logger initialized at: /userhome/cs2/ambr0se/DeepResearchMetaAgent/workdir/general/log.txt
+[92m18:47:32 - logger:INFO[0m: test_config.py:41 - | Config:
+agent_config = dict(
+    description='A general agent that can handle various tasks.',
+    max_steps=20,
+    mcp_tools=[
+        'calculate_average_of_deviations',
+        'calculate_statistical_average',
+        'get_wikipedia_page_revision_history',
+        'find_first_year_for_date',
+        'count_letter_frequency',
+        'calculate_remaining_letters',
+        'find_needed_letters',
+        'solve_annotator_error_puzzle',
+        'count_objects_in_image',
+        'verify_and_correct_isbn13',
+        'calculate_offspring_genotype_probabilities',
+        'format_as_percentage',
+        'count_next_door_neighbors',
+        'calculate_antipodal_coordinates',
+        'get_street_view_direction_of_object',
+        'execute_code_in_virtual_environment',
+        'find_book_title',
+        'calculate_final_beaker_weight',
+    ],
+    model_id='gpt-4.1',
+    name='general_agent',
+    provide_run_summary=True,
+    template_path='src/agent/general_agent/prompts/general_agent.yaml',
+    tools=[
+        'python_interpreter_tool',
+        'image_generator_tool',
+        'video_generator_tool',
+    ],
+    type='general_agent')
+auto_browser_use_tool_config = dict(
+    model_id='gpt-4.1', type='auto_browser_use_tool')
+concurrency = 4
+deep_analyzer_tool_config = dict(
+    analyzer_model_ids=[
+        'gemini-2.5-pro',
+    ],
+    summarizer_model_id='gemini-2.5-pro',
+    type='deep_analyzer_tool')
+deep_researcher_tool_config = dict(
+    max_depth=2,
+    max_follow_ups=3,
+    max_insights=20,
+    model_id='gpt-4.1',
+    time_limit_seconds=60,
+    type='deep_researcher_tool')
+exp_path = '/userhome/cs2/ambr0se/DeepResearchMetaAgent/workdir/general'
+file_reader_tool_config = dict(type='file_reader_tool')
+general_agent_config = dict(
+    description='A general agent that can handle various tasks.',
+    max_steps=20,
+    mcp_tools=[
+        'calculate_average_of_deviations',
+        'calculate_statistical_average',
+        'get_wikipedia_page_revision_history',
+        'find_first_year_for_date',
+        'count_letter_frequency',
+        'calculate_remaining_letters',
+        'find_needed_letters',
+        'solve_annotator_error_puzzle',
+        'count_objects_in_image',
+        'verify_and_correct_isbn13',
+        'calculate_offspring_genotype_probabilities',
+        'format_as_percentage',
+        'count_next_door_neighbors',
+        'calculate_antipodal_coordinates',
+        'get_street_view_direction_of_object',
+        'execute_code_in_virtual_environment',
+        'find_book_title',
+        'calculate_final_beaker_weight',
+    ],
+    model_id='gpt-4.1',
+    name='general_agent',
+    provide_run_summary=True,
+    template_path='src/agent/general_agent/prompts/general_agent.yaml',
+    tools=[
+        'python_interpreter_tool',
+        'image_generator_tool',
+        'video_generator_tool',
+    ],
+    type='general_agent')
+image_generator_tool_config = dict(
+    analyzer_model_id='o3',
+    generator_model_id='imagen',
+    type='image_generator_tool')
+log_path = '/userhome/cs2/ambr0se/DeepResearchMetaAgent/workdir/general/log.txt'
+mcp_tools_config = dict(
+    mcpServers=dict(
+        LocalMCP=dict(
+            args=[
+                '/userhome/cs2/ambr0se/DeepResearchMetaAgent/src/mcp/server.py',
+            ],
+            command='python',
+            env=dict(DEBUG='true'))))
+oai_deep_research_tool_config = dict(
+    model_id='o3-deep-research', type='oai_deep_research_tool')
+tag = 'general'
+use_hierarchical_agent = False
+use_local_proxy = False
+video_generator_tool_config = dict(
+    analyzer_model_id='o3',
+    fetch_model_id='veo3-fetch',
+    predict_model_id='veo3-predict',
+    type='video_generator_tool')
+web_fetcher_tool_config = dict(type='web_fetcher_tool')
+web_searcher_tool_config = dict(
+    country='us',
+    engine='Firecrawl',
+    fetch_content=True,
+    lang='en',
+    max_length=4096,
+    max_retries=3,
+    num_results=5,
+    retry_delay=10,
+    type='web_searcher_tool')
+workdir = 'workdir'
+
+[92m18:48:19 - logger:INFO[0m: test_messages.py:63 - | Logger initialized at: /userhome/cs2/ambr0se/DeepResearchMetaAgent/workdir/general/log.txt
+[92m18:48:19 - logger:INFO[0m: test_messages.py:64 - | Config:
+agent_config = dict(
+    description='A general agent that can handle various tasks.',
+    max_steps=20,
+    mcp_tools=[
+        'calculate_average_of_deviations',
+        'calculate_statistical_average',
+        'get_wikipedia_page_revision_history',
+        'find_first_year_for_date',
+        'count_letter_frequency',
+        'calculate_remaining_letters',
+        'find_needed_letters',
+        'solve_annotator_error_puzzle',
+        'count_objects_in_image',
+        'verify_and_correct_isbn13',
+        'calculate_offspring_genotype_probabilities',
+        'format_as_percentage',
+        'count_next_door_neighbors',
+        'calculate_antipodal_coordinates',
+        'get_street_view_direction_of_object',
+        'execute_code_in_virtual_environment',
+        'find_book_title',
+        'calculate_final_beaker_weight',
+    ],
+    model_id='gpt-4.1',
+    name='general_agent',
+    provide_run_summary=True,
+    template_path='src/agent/general_agent/prompts/general_agent.yaml',
+    tools=[
+        'python_interpreter_tool',
+        'image_generator_tool',
+        'video_generator_tool',
+    ],
+    type='general_agent')
+auto_browser_use_tool_config = dict(
+    model_id='gpt-4.1', type='auto_browser_use_tool')
+concurrency = 4
+deep_analyzer_tool_config = dict(
+    analyzer_model_ids=[
+        'gemini-2.5-pro',
+    ],
+    summarizer_model_id='gemini-2.5-pro',
+    type='deep_analyzer_tool')
+deep_researcher_tool_config = dict(
+    max_depth=2,
+    max_follow_ups=3,
+    max_insights=20,
+    model_id='gpt-4.1',
+    time_limit_seconds=60,
+    type='deep_researcher_tool')
+exp_path = '/userhome/cs2/ambr0se/DeepResearchMetaAgent/workdir/general'
+file_reader_tool_config = dict(type='file_reader_tool')
+general_agent_config = dict(
+    description='A general agent that can handle various tasks.',
+    max_steps=20,
+    mcp_tools=[
+        'calculate_average_of_deviations',
+        'calculate_statistical_average',
+        'get_wikipedia_page_revision_history',
+        'find_first_year_for_date',
+        'count_letter_frequency',
+        'calculate_remaining_letters',
+        'find_needed_letters',
+        'solve_annotator_error_puzzle',
+        'count_objects_in_image',
+        'verify_and_correct_isbn13',
+        'calculate_offspring_genotype_probabilities',
+        'format_as_percentage',
+        'count_next_door_neighbors',
+        'calculate_antipodal_coordinates',
+        'get_street_view_direction_of_object',
+        'execute_code_in_virtual_environment',
+        'find_book_title',
+        'calculate_final_beaker_weight',
+    ],
+    model_id='gpt-4.1',
+    name='general_agent',
+    provide_run_summary=True,
+    template_path='src/agent/general_agent/prompts/general_agent.yaml',
+    tools=[
+        'python_interpreter_tool',
+        'image_generator_tool',
+        'video_generator_tool',
+    ],
+    type='general_agent')
+image_generator_tool_config = dict(
+    analyzer_model_id='o3',
+    generator_model_id='imagen',
+    type='image_generator_tool')
+log_path = '/userhome/cs2/ambr0se/DeepResearchMetaAgent/workdir/general/log.txt'
+mcp_tools_config = dict(
+    mcpServers=dict(
+        LocalMCP=dict(
+            args=[
+                '/userhome/cs2/ambr0se/DeepResearchMetaAgent/src/mcp/server.py',
+            ],
+            command='python',
+            env=dict(DEBUG='true'))))
+oai_deep_research_tool_config = dict(
+    model_id='o3-deep-research', type='oai_deep_research_tool')
+tag = 'general'
+use_hierarchical_agent = False
+use_local_proxy = False
+video_generator_tool_config = dict(
+    analyzer_model_id='o3',
+    fetch_model_id='veo3-fetch',
+    predict_model_id='veo3-predict',
+    type='video_generator_tool')
+web_fetcher_tool_config = dict(type='web_fetcher_tool')
+web_searcher_tool_config = dict(
+    country='us',
+    engine='Firecrawl',
+    fetch_content=True,
+    lang='en',
+    max_length=4096,
+    max_retries=3,
+    num_results=5,
+    retry_delay=10,
+    type='web_searcher_tool')
+workdir = 'workdir'
+
+[92m18:48:19 - logger:INFO[0m: models.py:187 - Using remote API for OpenAI models
+[92m18:48:19 - logger:INFO[0m: models.py:284 - Using remote API for Anthropic models
+[92m18:48:19 - logger:INFO[0m: models.py:377 - Using remote API for Google models
+[92m18:48:20 - logger:INFO[0m: models.py:465 - Using remote API for LangChain models
+[92m18:48:23 - logger:WARNING[0m: models.py:586 - DeepSeek models are not supported in remote API mode.
+[92m18:48:23 - logger:INFO[0m: models.py:595 - Registering OpenRouter models
+[92m18:48:24 - logger:INFO[0m: test_messages.py:69 - Registed models: gpt-4o, gpt-4.1, o1, o3, gpt-4o-search-preview, claude37-sonnet, claude37-sonnet-thinking, gemini-2.5-pro, qwen2.5-7b-instruct, qwen2.5-14b-instruct, qwen2.5-32b-instruct, langchain-gpt-4o, langchain-gpt-4.1, langchain-o3, Qwen, langchain-Qwen, Qwen-VL, gpt-oss-120b, langchain-gpt-oss-120b
+[92m18:48:24 - logger:INFO[0m: test_messages.py:51 - | Single Text Message: [
+    {
+        "role": "user",
+        "content": "What is the capital of France?"
+    }
+]
+[92m18:48:24 - logger:INFO[0m: test_messages.py:51 - | Multiple Text Messages: [
+    {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": "What is the capital of France?"
+            },
+            {
+                "type": "text",
+                "text": "What is the capital of Germany?"
+            }
+        ]
+    }
+]
+[92m18:48:25 - logger:INFO[0m: test_messages.py:51 - | Single Text Message with Image: [
+    {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": "What is the capital of France?"
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,iVBORw0K..."
+                }
+            }
+        ]
+    }
+]
+[92m18:48:26 - logger:INFO[0m: test_messages.py:51 - | Single Text Message with Image (No Convert): [
+    {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": "What is the capital of France?"
+            },
+            {
+                "type": "image",
+                "image": "iVBORw0KGgoAAAANSUhEUgAAEccAAA..."
+            }
+        ]
+    }
+]
+[92m18:48:26 - logger:INFO[0m: test_messages.py:51 - | Single Text Message with Response API: [
+    {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": "What is the capital of France?"
+            }
+        ]
+    }
+]
+[92m18:48:26 - logger:INFO[0m: test_messages.py:51 - | Multiple Text Messages with Response API: [
+    {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": "What is the capital of France?"
+            },
+            {
+                "type": "text",
+                "text": "What is the capital of Germany?"
+            }
+        ]
+    }
+]

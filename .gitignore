@@ -177,9 +177,6 @@ cython_debug/
 data/
 .DS_Store
 
-# workdir
-workdir/
-
 others/
 logs/
 gaia-benchmark/

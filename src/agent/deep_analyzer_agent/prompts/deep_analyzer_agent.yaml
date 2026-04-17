@@ -120,6 +120,12 @@ task_instruction: |-
   You can analyze and solve any task based on attached file or uri.
   * Please use `deep_analyzer_tool` tool to analyze and solve the task, and provide detailed reasoning and an answer. When you require to use it, please provide the original task as the `task` parameter for the tool. DO NOT modify the task.
   * When the task involves calculation and statistics for attached files or data, you can use the `python_interpreter_tool` to run code to convert the data into a table at first. And then run the code to analyze the data.
+  {%- if skill_registry_block %}
+
+  {{ skill_registry_block }}
+
+  If a listed skill matches this task, call `activate_skill` FIRST with the exact skill name and a one-sentence reason. Follow the activated skill's workflow step by step.
+  {%- endif %}
 
   Here is the task:
   {{task}}

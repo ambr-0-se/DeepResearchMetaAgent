@@ -123,10 +123,39 @@ class GeneralAgent(AsyncMultiStepAgent):
         return user_prompt
 
     def initialize_task_instruction(self) -> str:
-        """Initialize the task instruction for the agent."""
+        """
+        Initialize the task instruction for the agent.
+
+        Variables passed to the Jinja template:
+            task                  — the user-provided task text
+            skill_registry_block  — optional skill-registry injection
+                                    (C4). Defaults to empty string so
+                                    templates can safely conditionalise
+                                    with `{% if skill_registry_block %}`
+                                    even when skills are not in use.
+            plus any additional key/value pairs the owner placed in
+            `self._extra_task_variables` (a plain dict attribute) before
+            calling `run()`. AdaptivePlanningAgent uses this to pass the
+            per-sub-agent skill registry block without modifying the
+            base `AsyncMultiStepAgent.__call__` path.
+
+        Unknown variables in `_extra_task_variables` are forwarded verbatim;
+        it is the template author's responsibility to only reference known
+        names.
+        """
+        variables = {
+            "task": self.task,
+            # Always provided so Jinja's StrictUndefined mode does not raise
+            # when a template uses `{% if skill_registry_block %}` even in
+            # C0/C2/C3 where no skill registry is active. Empty string is
+            # falsy, so the block is effectively omitted.
+            "skill_registry_block": "",
+        }
+        extras = getattr(self, "_extra_task_variables", None) or {}
+        variables.update(extras)
         task_instruction = populate_template(
             self.prompt_templates["task_instruction"],
-            variables={"task": self.task},
+            variables=variables,
         )
         return task_instruction
 

@@ -121,7 +121,13 @@ task_instruction: |-
   * Please use `auto_browser_use_tool` tool to search the web and interact with them to find the answer. When you require to use it, please provide the original task as the `task` parameter for the tool. DO NOT modify the task.
     - When you need to extract the content from the web page, do not ignore the content in the web screen shot.
   * You can also use the `python_interpreter_tool` tool to run any code to support your analysis.
-  
+  {%- if skill_registry_block %}
+
+  {{ skill_registry_block }}
+
+  If a listed skill matches this task, call `activate_skill` FIRST with the exact skill name and a one-sentence reason. Follow the activated skill's workflow step by step.
+  {%- endif %}
+
   Here is the task:
   {{task}}
 

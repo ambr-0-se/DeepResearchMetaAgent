@@ -52,6 +52,7 @@ from src.utils.token_utils import (
     estimate_messages_tokens,
     prune_messages_to_budget,
 )
+from src.agent.general_agent._tool_call_guard import apply_final_answer_guard
 
 
 @AGENT.register_module(name="general_agent", force=True)
@@ -324,7 +325,51 @@ class GeneralAgent(AsyncMultiStepAgent):
         parallel_calls = []
         parallel_tool_calls_meta = []
         assert chat_message.tool_calls is not None
-        for tool_call in chat_message.tool_calls:
+
+        # --- Up-front premature-final-answer guard ---
+        # Small models (e.g. Qwen-4B) autoregressively generate a `final_answer_tool`
+        # call in the same turn as research/analysis calls, with a fabricated answer
+        # argument. Inspect the raw tool-call list and decide what to keep before
+        # we start yielding or recording anything. Ordering-independent; covers
+        # duplicate finals too. Pure-function logic lives in `_tool_call_guard`
+        # so it can be unit-tested without instantiating a full GeneralAgent.
+        raw_tool_calls = list(chat_message.tool_calls)
+        effective_tool_calls, guard_status = apply_final_answer_guard(raw_tool_calls)
+
+        if guard_status == "premature":
+            dropped = [tc for tc in raw_tool_calls if tc.function.name == "final_answer_tool"]
+            self.logger.log(
+                Text(
+                    f"[premature-final-answer guard] Rejected {len(dropped)} "
+                    f"final_answer_tool call(s) emitted alongside {len(effective_tool_calls)} other "
+                    f"tool call(s). Dropped arguments: "
+                    f"{[tc.function.arguments for tc in dropped]!r}. "
+                    f"Other calls will run; model must regenerate final answer next turn.",
+                    style=f"bold {YELLOW_HEX}",
+                ),
+                level=LogLevel.WARNING,
+            )
+        elif guard_status == "duplicate":
+            dropped = [tc for tc in raw_tool_calls if tc.function.name == "final_answer_tool"]
+            self.logger.log(
+                Text(
+                    f"[duplicate-final-answer guard] Received {len(dropped)} "
+                    f"final_answer_tool calls with no other tools; dropping all and "
+                    f"forcing regeneration. Arguments: "
+                    f"{[tc.function.arguments for tc in dropped]!r}",
+                    style=f"bold {YELLOW_HEX}",
+                ),
+                level=LogLevel.WARNING,
+            )
+
+        # Sync the chat_message so memory/message-replay sees only the kept calls.
+        # `memory_step.model_output_message` holds a reference to this ChatMessage;
+        # without this sync, next turn's API request would carry assistant tool_calls
+        # with no matching role=tool messages, which vLLM/OpenAI reject as 400.
+        if guard_status != "none":
+            chat_message.tool_calls = effective_tool_calls or None
+
+        for tool_call in effective_tool_calls:
             yield tool_call
             tool_name = tool_call.function.name
             tool_arguments = tool_call.function.arguments
@@ -473,6 +518,42 @@ class GeneralAgent(AsyncMultiStepAgent):
             raise AgentToolCallError(error_msg, self.logger) from e
 
         except Exception as e:
+            # Pass 3.1 RC2 diagnostics: when the inner exception is a Python
+            # scope error (NameError / UnboundLocalError), log the FULL
+            # exception chain with tracebacks before wrapping. The wrap below
+            # reduces the inner exception to a single-line `str(e)`, which has
+            # made it impossible to trace the reported `cannot access local
+            # variable 'final_answer'` RC2 bug. One-line diagnostic behavior;
+            # does not change error-propagation on the happy path.
+            if isinstance(e, (NameError, UnboundLocalError)):
+                import traceback
+                chain_parts: list[str] = []
+                cur: BaseException | None = e
+                depth = 0
+                while cur is not None and depth < 10:
+                    label = (
+                        "root"
+                        if depth == 0
+                        else ("__cause__" if cur is getattr(cur, "__cause__", None) else "__context__")
+                    )
+                    tb_str = "".join(traceback.format_exception(type(cur), cur, cur.__traceback__))
+                    chain_parts.append(
+                        f"--- [{depth}] {label}: {type(cur).__name__}: {cur} ---\n{tb_str}"
+                    )
+                    # Prefer explicit __cause__; fall back to __context__.
+                    nxt: BaseException | None = getattr(cur, "__cause__", None)
+                    if nxt is None:
+                        nxt = getattr(cur, "__context__", None)
+                    if nxt is cur:
+                        break
+                    cur = nxt
+                    depth += 1
+                self.logger.log(
+                    f"[RC2 diagnostic] Scope error in sub-agent '{tool_name}' — "
+                    f"full exception chain follows:\n" + "\n".join(chain_parts),
+                    level=LogLevel.ERROR,
+                )
+
             # Handle execution errors
             if is_managed_agent:
                 error_msg = (

@@ -7,7 +7,7 @@ at the chosen model.
 Model: mistral-small
 Mistral Small 4 (mistral-small-2603) — native multimodal, no thinking mode.
 
-Output dir: workdir/gaia_c2_mistral/
+Output dir: workdir/gaia_c2_mistral_<run_id>/
 
 Initial-run knobs (override via --cfg-options):
   - max_samples=N        # cap to first N questions; leave None for full set
@@ -18,7 +18,11 @@ Initial-run knobs (override via --cfg-options):
 
 _base_ = './config_gaia_adaptive.py'
 
-tag = "gaia_c2_mistral"
+import os as _os
+from datetime import datetime as _datetime
+_RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+
+tag = f"gaia_c2_mistral_{_RUN_ID}"
 
 # ---- model overrides --------------------------------------------------------
 

@@ -237,11 +237,13 @@ concurrency = 4
 '''
 
 
-#: Prelude block emitted only for C4 configs. Reads DRA_RUN_ID from the
-#: environment with a fresh-timestamp fallback, so every C4 invocation
-#: lands in its own isolated output/skills directory unless the matrix
-#: runner (or the operator) explicitly reuses a run id.
-_C4_RUN_ID_PRELUDE = (
+#: Prelude block emitted for ALL matrix configs. Reads DRA_RUN_ID from the
+#: environment with a fresh-timestamp fallback, so every invocation lands
+#: in its own isolated output directory unless the matrix runner (or the
+#: operator) explicitly reuses a run id. For C4, the same run id also
+#: drives the per-run `skills_dir` so extracted skills stay co-located
+#: with the dra.jsonl they produced.
+_RUN_ID_PRELUDE = (
     "\n"
     "import os as _os\n"
     "from datetime import datetime as _datetime\n"
@@ -256,16 +258,12 @@ def render_config(model_label: str, model_id: str, langchain_alias: str,
     self_path = f"configs/config_gaia_{condition}_{model_label}.py"
     planning_block = PLANNING_TEMPLATES[condition].format(model_id=model_id)
 
-    if condition == "c4":
-        # C4 tag includes a run id so repeat runs never collide and each
-        # run's skills library is inspectable forever after.
-        run_id_prelude = _C4_RUN_ID_PRELUDE
-        tag_expr = f'f"gaia_{tag_prefix}_{{_RUN_ID}}"'
-        tag_dir_comment = f"gaia_{tag_prefix}_<run_id>"
-    else:
-        run_id_prelude = ""
-        tag_expr = f'"gaia_{tag_prefix}"'
-        tag_dir_comment = f"gaia_{tag_prefix}"
+    # Every condition now carries a DRA_RUN_ID so repeat runs of the same
+    # (model, condition) never collide — each run's dra.jsonl (and, for C4,
+    # skills/) is inspectable forever after.
+    run_id_prelude = _RUN_ID_PRELUDE
+    tag_expr = f'f"gaia_{tag_prefix}_{{_RUN_ID}}"'
+    tag_dir_comment = f"gaia_{tag_prefix}_<run_id>"
 
     return CONFIG_TEMPLATE.format(
         model_label_upper=model_label.upper(),

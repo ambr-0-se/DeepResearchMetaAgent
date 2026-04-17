@@ -22,8 +22,13 @@ Usage:
 
 _base_ = './config_gaia.py'
 
-# Different tag for separate results directory
-tag = "gaia_adaptive"
+# Per-run output isolation: `workdir/gaia_adaptive_<RUN_ID>/`.
+# Set `DRA_RUN_ID` explicitly to resume a prior run.
+import os as _os
+from datetime import datetime as _datetime
+_RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+
+tag = f"gaia_adaptive_{_RUN_ID}"
 
 # Override planning agent to use adaptive version
 planning_agent_config = dict(

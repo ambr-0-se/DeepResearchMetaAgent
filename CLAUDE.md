@@ -143,11 +143,11 @@ Python package (internal):
 - `_seed.py` — `seed_skills_dir(dst, src)`. Copies the 7 canonical seed skills from `src/skills/` into a fresh per-run `skills_dir` on first construction. Writes a `.seeded` marker last so resumed runs do not re-copy and clobber learned skills. No-op when `dst == src` (legacy standalone behaviour). Only directories containing `SKILL.md` are copied — package files (`_registry.py`, `README.md`, etc.) are skipped by construction.
 - `validate.py` — CLI validator (`python -m src.skills.validate <path>`).
 
-**Per-run skill-library layout (C4 evaluation matrix).** Every C4 config derives `skills_dir=f"workdir/{tag}/skills"` where `tag` contains a `DRA_RUN_ID` timestamp (env var; fresh timestamp fallback at config load). Each evaluation run therefore writes both `dra.jsonl` and its full skill library into the same `workdir/gaia_c4_<model>_<run_id>/` directory, so:
-- Parallel runs (matrix runner launches mistral/kimi/qwen in parallel) cannot race on the shared seed dir.
-- Repeated runs of the same model never overwrite history — each run's evolved library stays inspectable forever (`diff -r workdir/gaia_c4_mistral_<A>/skills/ workdir/gaia_c4_mistral_<B>/skills/`).
-- `scripts/run_eval_matrix.sh` exports one `DRA_RUN_ID` for the whole invocation and maintains a `workdir/gaia_c4_<model>_latest` symlink pointing at the most recent run for quick inspection.
-- To resume a prior run (e.g. after Ctrl-C): `DRA_RUN_ID=<prior_id> bash scripts/run_eval_matrix.sh full '' c4` — the existing `dra.jsonl` is appended to, and the `.seeded` marker causes seed-copy to be skipped so prior learned skills survive.
+**Per-run output layout (all conditions).** Every matrix config — C0, C2, C3, and C4 — derives `tag = f"gaia_<cond>_<model>_{_RUN_ID}"` from the `DRA_RUN_ID` env var (fresh `YYYYMMDD_HHMMSS` fallback at config load). Each invocation therefore writes `dra.jsonl` into its own `workdir/gaia_<cond>_<model>_<run_id>/` directory. For C4 specifically, `skills_dir=f"workdir/{tag}/skills"` co-locates the evolved skill library with the results that produced it. This guarantees:
+- Parallel runs (matrix runner launches mistral/kimi/qwen in parallel) cannot race on any shared directory.
+- Repeated runs of the same `(model, condition)` never overwrite history — each run stays inspectable forever (`diff -r workdir/gaia_c4_mistral_<A>/skills/ workdir/gaia_c4_mistral_<B>/skills/`).
+- `scripts/run_eval_matrix.sh` exports one `DRA_RUN_ID` for the whole invocation and maintains a `workdir/gaia_<cond>_<model>_latest` symlink per cell pointing at the most recent run for quick inspection.
+- To resume a prior run (e.g. after Ctrl-C): `DRA_RUN_ID=<prior_id> bash scripts/run_eval_matrix.sh full` — the existing `dra.jsonl` is appended to, and for C4 the `.seeded` marker causes seed-copy to be skipped so prior learned skills survive.
 
 Pre-seeded skills (committed to the repo, 7 total covering all 4 consumer scopes):
 - Planner scope: `handling-file-attachments`, `task-decomposition-complex-queries`, `delegation-failure-recovery`

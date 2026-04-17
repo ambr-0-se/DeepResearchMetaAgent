@@ -7,7 +7,7 @@ at the chosen model.
 Model: qwen3.6-plus-failover
 Qwen 3.6 Plus via DashScope-primary / OpenRouter-backup auto-failover. Free tier consumed first; flips on quota exhaustion (one-way per process).
 
-Output dir: workdir/gaia_c2_qwen/
+Output dir: workdir/gaia_c2_qwen_<run_id>/
 
 Initial-run knobs (override via --cfg-options):
   - max_samples=N        # cap to first N questions; leave None for full set
@@ -18,7 +18,11 @@ Initial-run knobs (override via --cfg-options):
 
 _base_ = './config_gaia_adaptive.py'
 
-tag = "gaia_c2_qwen"
+import os as _os
+from datetime import datetime as _datetime
+_RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+
+tag = f"gaia_c2_qwen_{_RUN_ID}"
 
 # ---- model overrides --------------------------------------------------------
 

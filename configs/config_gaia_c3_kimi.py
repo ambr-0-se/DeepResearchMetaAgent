@@ -7,7 +7,7 @@ at the chosen model.
 Model: kimi-k2.5-no-thinking
 Kimi K2.5 with thinking DISABLED — required for C3/C4 JSON output. Browser-use LangChain wrapper still uses the base alias (no extra_body).
 
-Output dir: workdir/gaia_c3_kimi/
+Output dir: workdir/gaia_c3_kimi_<run_id>/
 
 Initial-run knobs (override via --cfg-options):
   - max_samples=N        # cap to first N questions; leave None for full set
@@ -18,7 +18,11 @@ Initial-run knobs (override via --cfg-options):
 
 _base_ = './config_gaia_c3.py'
 
-tag = "gaia_c3_kimi"
+import os as _os
+from datetime import datetime as _datetime
+_RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+
+tag = f"gaia_c3_kimi_{_RUN_ID}"
 
 # ---- model overrides --------------------------------------------------------
 

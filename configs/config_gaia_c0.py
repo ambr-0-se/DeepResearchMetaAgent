@@ -19,5 +19,11 @@ Compared against:
 
 _base_ = './config_gaia.py'
 
-# Separate results directory so C0/C2/C3/C4 don't overwrite each other.
-tag = "gaia_c0"
+# Per-run output isolation: every invocation writes its dra.jsonl to
+# `workdir/gaia_c0_<RUN_ID>/` so re-runs never clobber prior results.
+# Set `DRA_RUN_ID` explicitly to resume a prior run.
+import os as _os
+from datetime import datetime as _datetime
+_RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+
+tag = f"gaia_c0_{_RUN_ID}"

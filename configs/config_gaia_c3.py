@@ -23,8 +23,13 @@ Usage:
 
 _base_ = './config_gaia_adaptive.py'
 
-# Separate results directory so C0/C2/C3/C4 don't overwrite each other.
-tag = "gaia_c3"
+# Per-run output isolation: `workdir/gaia_c3_<RUN_ID>/`.
+# Set `DRA_RUN_ID` explicitly to resume a prior run.
+import os as _os
+from datetime import datetime as _datetime
+_RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+
+tag = f"gaia_c3_{_RUN_ID}"
 
 # Override the adaptive planning agent config for C3:
 # - Swap in the C3-specific YAML template (documents the [REVIEW] block)

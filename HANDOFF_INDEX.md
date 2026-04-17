@@ -14,6 +14,7 @@ Entry point for change handoffs that still need validation on the GPU farm. Each
 | 4 | Core C3 / C4 implementation — structural REVIEW step + cross-task skill library (the four experimental conditions C0/C2/C3/C4 themselves) | [HANDOFF_C3_C4_IMPLEMENTATION.md](HANDOFF_C3_C4_IMPLEMENTATION.md) | Ready to validate | `60065a8` → `433c30e` → `0643089` → `d247605` | Yes |
 | 5 | RC1 premature `final_answer_tool` guard + duplicate-yield bug fix + RC2 exception-chain diagnostic hook + prompt contradictions fix | [HANDOFF_RC1_FINAL_ANSWER_GUARD.md](HANDOFF_RC1_FINAL_ANSWER_GUARD.md) | Ready to validate | `54e7707` → `a9a6985` → `c52cf91` → `912685f` → `d36f4d4` | Yes |
 | 6 | Pass 2 Qwen-4B (vLLM) tuning — sub-agent `max_steps` 3/3/5→7/7/7 and `context_prune_threshold_ratio`=0.75 on `config_gaia_adaptive_qwen.py` | [HANDOFF_PASS2_QWEN_TUNING.md](HANDOFF_PASS2_QWEN_TUNING.md) | Ready to validate (stacks on #5) | `63486ca` | **No — push pending this session** |
+| 7 | ToolGenerator hardening — allowlist + AST imports, repair retry, prompt examples, `Tool.from_code(expected_tool_name)`, collision-safe dynamic tool names, unit tests | [HANDOFF_TOOLGENERATOR.md](HANDOFF_TOOLGENERATOR.md) | Ready to validate | `0161321` | Yes |
 
 ---
 

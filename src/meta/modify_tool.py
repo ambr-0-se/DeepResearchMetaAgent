@@ -46,7 +46,11 @@ All modifications are task-scoped (reset after task completion).
 Examples:
 - Add web search capability: action="add_existing_tool_to_agent", agent_name="deep_analyzer_agent", specification="web_searcher_tool"
 - Create calculation specialist: action="add_agent", agent_name="math_agent", specification="A specialized agent for mathematical calculations using python"
-- Add instructions: action="modify_agent_instructions", agent_name="browser_use_agent", specification="Focus on extracting specific data points, not general summaries" """
+- Add instructions: action="modify_agent_instructions", agent_name="browser_use_agent", specification="Focus on extracting specific data points, not general summaries"
+- Generate tool (NL requirement, not code): action="add_new_tool_to_agent", agent_name="deep_analyzer_agent", specification="A tool that takes a CSV file path and returns per-column mean, median, and standard deviation as JSON. Use stdlib only."
+- Remove tool: action="remove_tool_from_agent", agent_name="browser_use_agent", specification="python_interpreter_tool"
+- Extend step budget: action="set_agent_max_steps", agent_name="deep_researcher_agent", specification="20"
+- Remove agent: action="remove_agent", agent_name="math_expert_agent", specification="superseded by python_interpreter added to deep_analyzer_agent" """
 
     parameters = {
         "type": "object",
@@ -61,7 +65,18 @@ Examples:
             },
             "specification": {
                 "type": "string",
-                "description": "Depends on action: add_agent (agent description), add_existing_tool_to_agent (tool name), add_new_tool_to_agent (tool description), modify_agent_instructions (additional instructions), set_agent_max_steps (new max_steps value), remove_* (optional reason)",
+                "description": (
+                    "Action-specific. "
+                    "add_agent: natural-language description of the new agent (purpose, task guidance). "
+                    "add_existing_tool_to_agent: exact tool name from the registry (e.g., 'python_interpreter_tool'). "
+                    "add_new_tool_to_agent: natural-language requirement for the tool; code is generated automatically by ToolGenerator (do NOT write Python yourself). "
+                    "Allowed imports: requests, json, re, os, datetime, math, typing. "
+                    "Disallowed: external API keys/credentials, subprocess, eval, exec, __import__, file writes, shutil.rmtree, os.remove. "
+                    "remove_tool_from_agent: exact tool name to remove. "
+                    "modify_agent_instructions: additional instructions (appended to existing task_instruction). "
+                    "set_agent_max_steps: integer string; hard clamp [1, 50], recommended practical cap 20. "
+                    "remove_agent: optional reason (free text)."
+                ),
                 "nullable": True
             }
         },

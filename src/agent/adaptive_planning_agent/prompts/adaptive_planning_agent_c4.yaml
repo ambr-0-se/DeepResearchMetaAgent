@@ -163,6 +163,24 @@ task_instruction: |-
       - `next_action: escalate <from> -> <to>: <reason>` → delegate to `<to>` using the reformulated task.
   * REVIEW is an informed recommendation, NOT a mandate. If you have stronger context (e.g. you know the recommended modification is wrong), override it — but do so deliberately, not reflexively.
   * Because REVIEW already diagnoses failures automatically, you usually don't need to call `diagnose_subagent` directly. Call it only if you disagree with REVIEW's verdict or want to inspect the sub-agent's memory in more detail than REVIEW showed.
+  * When the REVIEW recommends `modify_agent`, pick the **least-invasive** action. Mapping:
+
+      | Failure mode                                          | Action                        |
+      | ----------------------------------------------------- | ----------------------------- |
+      | Wrong scope / format / focus in the output            | modify_agent_instructions     |
+      | Missing capability, tool exists in registry           | add_existing_tool_to_agent    |
+      | Missing capability, no registered tool fits           | add_new_tool_to_agent         |
+      | Sub-agent hit max_steps mid-task                      | set_agent_max_steps           |
+      | Tool clutter causing wrong tool selection             | remove_tool_from_agent        |
+      | No existing agent fits the domain at all              | add_agent (last resort)       |
+      | A dynamically-created agent became harmful/duplicate  | remove_agent                  |
+
+      Preference order (least-invasive first): instruction edit > add existing tool > set max_steps > remove tool > generate new tool > add agent > remove agent. `set_agent_max_steps` is hard-clamped to [1, 50]; recommended practical ceiling is 20. For `add_new_tool_to_agent`, the `specification` is a natural-language requirement (not code); only stdlib-ish imports are permitted (`requests, json, re, os, datetime, math, typing`) and tools needing external API keys are rejected by the validator.
+  * **Do NOT**:
+      - Override REVIEW's `next_action: proceed` reflexively; modification requires a REVIEW verdict of `partial` or `unsatisfactory`, OR your own strong contextual disagreement with REVIEW.
+      - Stack two modifications with near-identical specifications on the same agent.
+      - Use `add_new_tool_to_agent` for tasks achievable with `python_interpreter_tool`, or request tools needing external API keys.
+      - Create a new agent when appending instructions to an existing one would suffice.
   * **Example call shapes** for `modify_subagent` (the REVIEW block's `next_action` maps directly onto these — use real `agent_name` values from your team list):
   ```json
   {
@@ -191,6 +209,46 @@ task_instruction: |-
       "action": "add_agent",
       "agent_name": "math_expert_agent",
       "specification": "A specialized agent for mathematical calculations. Uses python for all computations. Verifies answers step by step."
+    }
+  }
+  ```
+  ```json
+  {
+    "name": "modify_subagent",
+    "arguments": {
+      "action": "add_new_tool_to_agent",
+      "agent_name": "deep_analyzer_agent",
+      "specification": "A tool that takes a CSV file path and returns per-column mean, median, and standard deviation as JSON. Use stdlib only."
+    }
+  }
+  ```
+  ```json
+  {
+    "name": "modify_subagent",
+    "arguments": {
+      "action": "remove_tool_from_agent",
+      "agent_name": "browser_use_agent",
+      "specification": "python_interpreter_tool"
+    }
+  }
+  ```
+  ```json
+  {
+    "name": "modify_subagent",
+    "arguments": {
+      "action": "set_agent_max_steps",
+      "agent_name": "deep_researcher_agent",
+      "specification": "20"
+    }
+  }
+  ```
+  ```json
+  {
+    "name": "modify_subagent",
+    "arguments": {
+      "action": "remove_agent",
+      "agent_name": "math_expert_agent",
+      "specification": "superseded by python_interpreter added to deep_analyzer_agent"
     }
   }
   ```

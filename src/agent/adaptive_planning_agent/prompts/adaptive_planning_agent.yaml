@@ -136,8 +136,26 @@ task_instruction: |-
 
   **After each team member response**
   * If the response is satisfactory and advances the goal, continue with your plan.
-  * If it is unsatisfactory and the failure reason is clear, retry with clearer instructions, switch to a better-suited team member, or use `modify_subagent` (tools, instructions, or a new sub-agent per the tool description).
+  * If it is unsatisfactory and the failure reason is clear, retry with clearer instructions, switch to a better-suited team member, or call `modify_subagent`.
   * If the failure reason is unclear, call `diagnose_subagent` so you can see the sub-agent's reasoning, tool calls, and observations (arguments are defined in the tool schema).
+  * Pick the **least-invasive** `modify_subagent` action first. Mapping:
+
+      | Failure mode                                          | Action                        |
+      | ----------------------------------------------------- | ----------------------------- |
+      | Wrong scope / format / focus in the output            | modify_agent_instructions     |
+      | Missing capability, tool exists in registry           | add_existing_tool_to_agent    |
+      | Missing capability, no registered tool fits           | add_new_tool_to_agent         |
+      | Sub-agent hit max_steps mid-task                      | set_agent_max_steps           |
+      | Tool clutter causing wrong tool selection             | remove_tool_from_agent        |
+      | No existing agent fits the domain at all              | add_agent (last resort)       |
+      | A dynamically-created agent became harmful/duplicate  | remove_agent                  |
+
+      Preference order (least-invasive first): instruction edit > add existing tool > set max_steps > remove tool > generate new tool > add agent > remove agent. `set_agent_max_steps` is hard-clamped to [1, 50]; recommended practical ceiling is 20. For `add_new_tool_to_agent`, the `specification` is a natural-language requirement (not code); only stdlib-ish imports are permitted (`requests, json, re, os, datetime, math, typing`) and tools needing external API keys are rejected by the validator.
+  * **Do NOT**:
+      - Call `modify_subagent` before at least one delegation has been attempted.
+      - Stack two modifications with near-identical specifications on the same agent.
+      - Use `add_new_tool_to_agent` for tasks achievable with `python_interpreter_tool`, or request tools needing external API keys.
+      - Create a new agent when appending instructions to an existing one would suffice.
   * **Example call shapes** (notional names and strings; use real `agent_name` values and fields from your tool list):
   ```json
   {
@@ -177,6 +195,46 @@ task_instruction: |-
       "action": "add_agent",
       "agent_name": "math_expert_agent",
       "specification": "A specialized agent for mathematical calculations. Uses python for all computations. Verifies answers step by step."
+    }
+  }
+  ```
+  ```json
+  {
+    "name": "modify_subagent",
+    "arguments": {
+      "action": "add_new_tool_to_agent",
+      "agent_name": "deep_analyzer_agent",
+      "specification": "A tool that takes a CSV file path and returns per-column mean, median, and standard deviation as JSON. Use stdlib only."
+    }
+  }
+  ```
+  ```json
+  {
+    "name": "modify_subagent",
+    "arguments": {
+      "action": "remove_tool_from_agent",
+      "agent_name": "browser_use_agent",
+      "specification": "python_interpreter_tool"
+    }
+  }
+  ```
+  ```json
+  {
+    "name": "modify_subagent",
+    "arguments": {
+      "action": "set_agent_max_steps",
+      "agent_name": "deep_researcher_agent",
+      "specification": "20"
+    }
+  }
+  ```
+  ```json
+  {
+    "name": "modify_subagent",
+    "arguments": {
+      "action": "remove_agent",
+      "agent_name": "math_expert_agent",
+      "specification": "superseded by python_interpreter added to deep_analyzer_agent"
     }
   }
   ```

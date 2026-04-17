@@ -504,6 +504,11 @@ You have been provided with these additional arguments, that you can access usin
                 action_step.error = e
             finally:
                 self._finalize_step(action_step)
+                # Async extension point for subclasses (e.g. AdaptivePlanningAgent
+                # fires ReviewStep here under condition C3). Must be awaited so
+                # the step's `observations` can be mutated before it is appended
+                # to memory and yielded. Default implementation is a no-op.
+                await self._post_action_hook(action_step)
                 self.memory.steps.append(action_step)
                 yield action_step
                 self.step_number += 1
@@ -527,6 +532,34 @@ You have been provided with these additional arguments, that you can access usin
             callback(memory_step) if len(inspect.signature(callback).parameters) == 1 else callback(
                 memory_step, agent=self
             )
+
+    async def _post_action_hook(self, memory_step: ActionStep) -> None:
+        """
+        Async extension point called once per action step, after
+        `_finalize_step` has run all synchronous step callbacks, but
+        BEFORE the step is appended to memory and yielded to the caller.
+
+        Subclasses may override this to perform async post-step work that
+        needs to mutate `memory_step` in place (for example, appending a
+        REVIEW block to `memory_step.observations` so the next THINK sees
+        it). Any mutation of `memory_step` here is visible to the yielded
+        step and to all future reads of `self.memory.steps`.
+
+        The default implementation is a no-op so that `PlanningAgent` (C0)
+        and other subclasses are unaffected unless they opt in.
+
+        Contract:
+        - Must not raise. Hook implementations are expected to catch their
+          own errors and log/fallback, because raising here would corrupt
+          the action loop's memory state.
+        - Fires once per ActionStep, never for PlanningStep or
+          FinalAnswerStep.
+        - ALSO fires on error'd steps (where `_step_stream` raised an
+          `AgentError` captured into `memory_step.error`). Subclasses that
+          only want to run on successful steps must guard on
+          `memory_step.error is None`.
+        """
+        return None
 
     async def _handle_max_steps_reached(self, task: str, images: list["PIL.Image.Image"]) -> Any:
         action_step_start_time = time.time()

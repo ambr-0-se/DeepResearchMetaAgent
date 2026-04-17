@@ -17,6 +17,7 @@ from src.models.restful import (RestfulModel,
                                 RestfulVeoPridictModel,
                                 RestfulVeoFetchModel,
                                 RestfulResponseModel)
+from src.models.failover import FailoverModel
 from src.utils import Singleton
 from src.proxy.local_proxy import HTTP_CLIENT, ASYNC_HTTP_CLIENT
 
@@ -41,6 +42,10 @@ class ModelManager(metaclass=Singleton):
         self._register_moonshot_models()
         self._register_minimax_models()
         self._register_openrouter_models()
+        # Failover wrappers must register LAST — they read already-registered
+        # primary + backup models and wrap them. Order: dashscope + openrouter
+        # both run before this line.
+        self._register_qwen_failover_models()
 
     def _check_local_api_key(self, local_api_key_name: str, remote_api_key_name: str) -> str:
         api_key = os.getenv(local_api_key_name, PLACEHOLDER)
@@ -736,7 +741,16 @@ class ModelManager(metaclass=Singleton):
         logger.info("Registering Moonshot (Kimi) models")
 
         models = [
-            {"model_name": "kimi-k2.5", "model_id": "kimi-k2.5"},
+            {"model_name": "kimi-k2.5", "model_id": "kimi-k2.5", "extra_body": None},
+            # Thinking-disabled variant — REQUIRED for C3 ReviewAgent and C4
+            # SkillExtractor because Moonshot disallows response_format=json_object
+            # while thinking is on (which is the default). Use this alias for any
+            # config where the model must emit structured JSON.
+            {
+                "model_name": "kimi-k2.5-no-thinking",
+                "model_id": "kimi-k2.5",
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
         ]
         for m in models:
             model_name = m["model_name"]
@@ -746,6 +760,7 @@ class ModelManager(metaclass=Singleton):
                 model_id=model_id,
                 http_client=client,
                 custom_role_conversions=custom_role_conversions,
+                extra_body=m.get("extra_body"),
             )
             self.registed_models[model_name] = registered_model
 
@@ -845,3 +860,40 @@ class ModelManager(metaclass=Singleton):
                 base_url=api_base,
             )
             self.registed_models[f"langchain-{model_name}"] = langchain_model
+
+    def _register_qwen_failover_models(self):
+        """Register `qwen3.6-plus-failover` if both DashScope and OpenRouter are
+        configured. Routes calls to DashScope first (free tier) and switches to
+        OpenRouter on quota-exhaustion errors. Switch is one-way per process.
+
+        See `src/models/failover.py` for the detection heuristics.
+        """
+        primary = self.registed_models.get("qwen3.6-plus")
+        backup = self.registed_models.get("or-qwen3.6-plus")
+        if primary is None or backup is None:
+            logger.info(
+                "Skipping qwen3.6-plus-failover registration "
+                "(primary=%s, backup=%s)",
+                "set" if primary else "missing",
+                "set" if backup else "missing",
+            )
+            return
+
+        alias = "qwen3.6-plus-failover"
+        self.registed_models[alias] = FailoverModel(
+            primary=primary, backup=backup, alias=alias,
+        )
+        # LangChain wrapper for browser-use tool: cannot wrap FailoverModel
+        # (it's not a ChatModel). Default to DashScope; on quota exhaustion
+        # the browser-use sub-agent's LangChain calls will hard-fail and the
+        # operator should switch the config to `or-qwen3.6-plus` for that role.
+        # Explicitly register an alias so configs can name it.
+        if "langchain-qwen3.6-plus" in self.registed_models:
+            self.registed_models[f"langchain-{alias}"] = self.registed_models[
+                "langchain-qwen3.6-plus"
+            ]
+        logger.info(
+            "Registered %s (primary=qwen3.6-plus / DashScope, "
+            "backup=or-qwen3.6-plus / OpenRouter)",
+            alias,
+        )

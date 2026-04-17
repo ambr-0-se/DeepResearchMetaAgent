@@ -24,13 +24,13 @@ metadata:
    - The input (absolute path / URL / specific entity)
    - The expected output shape (number, list, boolean, structured data)
 3. Check for dependencies between sub-questions. If sub-question B needs the answer from A, run them sequentially. If they are independent, they can be delegated in parallel (one per step).
-4. After all sub-questions are resolved, aggregate results in a `deep_analyzer_agent` call with python_interpreter (for calculations) or inline reasoning (for qualitative merging).
+4. After all sub-questions are resolved, aggregate results in a `deep_analyzer_agent` call with `python_interpreter_tool` (for calculations) or inline reasoning (for qualitative merging).
 5. Run a final verification check against the original question text — confirm every part of the task is addressed before `final_answer`.
 
 ## Avoid
 - Delegating the full complex task to a single sub-agent — they lack cross-domain orchestration.
 - Skipping the plan step and delegating ad-hoc — this leads to missed sub-questions.
-- Aggregating by concatenation when calculation is needed (use python_interpreter).
+- Aggregating by concatenation when calculation is needed (use `python_interpreter_tool`).
 
 ## Example plan
 Task: "Compare the Q3 revenue of Apple and Microsoft, expressed in the same currency."

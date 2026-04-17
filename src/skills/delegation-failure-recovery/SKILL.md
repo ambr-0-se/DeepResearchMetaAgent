@@ -20,10 +20,10 @@ metadata:
 
 1. **Retry with clearer instructions**. Cheapest option — no structural change. Write a reformulated task that explicitly:
    - States the expected output format ("Return a number only", "Return JSON with keys X, Y").
-   - Lists specific approaches to try first ("Use python_interpreter to compute X; if that fails, try method Y").
+   - Lists specific approaches to try first ("Use `python_interpreter_tool` to compute X; if that fails, try method Y").
    - Names patterns to avoid ("Do not return 'I don't know' — make a best-effort guess based on available context").
 
-2. **Modify the sub-agent's instructions** if retry fails. Use `modify_subagent` with `action=modify_agent_instructions` to append a persistent rule the sub-agent should always follow for this task type. Example: `"When analyzing financial data, always use python_interpreter to verify calculations and show intermediate steps."`
+2. **Modify the sub-agent's instructions** if retry fails. Use `modify_subagent` with `action=modify_agent_instructions` to append a persistent rule the sub-agent should always follow for this task type. Example: `"When analyzing financial data, always use python_interpreter_tool to verify calculations and show intermediate steps."`
 
 3. **Add a tool** if the failure was a capability gap (e.g. sub-agent couldn't do math because it didn't have `python_interpreter_tool`). Use `modify_subagent` with `action=add_existing_tool_to_agent`.
 

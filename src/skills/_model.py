@@ -57,7 +57,7 @@ SKILL_DESCRIPTION_MAX_LEN: int = 1024
 VALID_CONSUMERS_RESERVED: frozenset[str] = frozenset({"planner", "all"})
 
 #: Skill source, stored under `metadata.source`:
-#: "seeded"   — hand-authored from the literature review
+#: "seeded"   — pre-committed corpus skill (curated / human-verified for this repo)
 #: "success"  — extracted from a successful task trajectory
 #: "failure"  — extracted from a failed task (failure-avoidance skill)
 VALID_SOURCES: frozenset[str] = frozenset({"seeded", "success", "failure"})

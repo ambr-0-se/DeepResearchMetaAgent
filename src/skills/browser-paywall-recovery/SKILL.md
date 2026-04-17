@@ -18,8 +18,8 @@ metadata:
 
 ## Recovery order
 
-1. **Try the Wayback Machine (archive.org)**. Prepend `https://web.archive.org/web/` to the original URL; the Wayback snapshot is usually paywall-free and does not require login.
-2. **Try Google Cache** by navigating to `https://webcache.googleusercontent.com/search?q=cache:<URL>` (note: Google deprecated public cache in 2024; works intermittently).
+1. **Try the Wayback Machine (archive.org)**. Prepend `https://web.archive.org/web/` to the original URL; many articles have at least one snapshot that is easier to read than the live paywalled page (coverage is not guaranteed).
+2. **Try Google Cache** by navigating to `https://webcache.googleusercontent.com/search?q=cache:<URL>` only as a low-probability fallback — public cache access is often blocked, rate-limited, or empty for major publishers.
 3. **Try the site's AMP / print / reader version**:
    - Append `?outputType=amp` or check for `/amp/` routes.
    - Append `?print=1` or look for a "print this article" link.
@@ -27,9 +27,9 @@ metadata:
 5. **If all else fails**, report that the page is inaccessible and provide the best alternative snippet you did find (search result summary, cached excerpt). Do NOT return an empty result.
 
 ## Avoid
-- Trying to dismiss cookie modals by clicking "Agree" — this often succeeds but is ethically questionable and frequently just reveals the paywall anyway.
+- Dismissing cookie modals with "Agree" as a default tactic — it often still leaves the article behind a paywall and burns steps.
 - Repeatedly retrying the same URL after a 429 — rate limits don't clear instantly.
-- Using `python_interpreter_tool` to send HTTP requests bypassing the browser (`requests.get`). It often works but lacks the cookie/JS handling needed for modern sites and can look like bot traffic.
+- Using `python_interpreter_tool` to send HTTP requests bypassing the browser (`requests` is not on the default interpreter allowlist anyway). Even where raw HTTP works, it lacks full browser cookie/JS behavior and can trigger bot defenses.
 
 ## Example
 ```

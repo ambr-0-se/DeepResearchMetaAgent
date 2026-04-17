@@ -57,7 +57,7 @@ The validator checks agentskills.io compliance (name regex, description length, 
 
 ## Seed vs. learned skills
 
-The 7 SKILL.md files shipped in this repo are **seeded** — hand-authored from the literature review and committed as part of condition C4's starting corpus. They all have `metadata.source: seeded`.
+The 7 SKILL.md files shipped in this repo are **seeded** — a **small curated starter corpus** for condition C4, drafted with model assistance then **edited against the real tool and interpreter surfaces** in this repo (agent tool lists, `python_interpreter_tool` import allowlist, GAIA defaults). They all have `metadata.source: seeded`. They are not guaranteed to match every custom deployment; extend or replace seeds when your config adds tools (e.g. `archive_searcher_tool`) or extra `authorized_imports`.
 
 New skills **learned** during C4 training runs are written to this same directory by `SkillExtractor` at task end. They carry `metadata.source: success` or `metadata.source: failure` depending on whether the trajectory succeeded or revealed an actionable failure mode. Learned skills are not pre-committed — they accumulate on the branch used for the training run.
 

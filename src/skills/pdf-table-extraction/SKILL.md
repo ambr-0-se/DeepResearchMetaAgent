@@ -1,6 +1,6 @@
 ---
 name: pdf-table-extraction
-description: Extract tables from PDF documents and reason over them by converting to CSV first. Use when a PDF task mentions tables, rows/columns, percentages, or numeric data arranged spatially. Avoids the common failure mode of misreading cell boundaries when reasoning over raw PDF text output.
+description: Extract and reason over PDF tables using deep_analyzer_tool first, then python_interpreter_tool only with its allowed import set (math, re, statistics, etc.). Use when a PDF task mentions tables, rows/columns, or numeric data where cell alignment matters. Avoids misreading linearized PDF text.
 metadata:
   consumer: deep_analyzer_agent
   skill_type: tool_usage
@@ -15,33 +15,26 @@ metadata:
 - Task involves a PDF file AND references tabular data (rows, columns, percentages, financial figures, comparisons).
 - You already received generic text output from the PDF but cannot align specific numbers to rows/columns.
 
-## Workflow
-1. Use `python_interpreter_tool` with `pdfplumber` to extract tables directly:
-   ```python
-   import pdfplumber
-   with pdfplumber.open("/absolute/path/to/file.pdf") as pdf:
-       for i, page in enumerate(pdf.pages):
-           for j, table in enumerate(page.extract_tables() or []):
-               print(f"--- page {i+1} table {j+1} ---")
-               for row in table:
-                   print(row)
-   ```
-2. Inspect the output. If rows/columns are misaligned, try `page.extract_table(table_settings={"vertical_strategy": "lines", "horizontal_strategy": "lines"})`.
-3. Convert the chosen table to a pandas DataFrame for row/column querying:
-   ```python
-   import pandas as pd
-   df = pd.DataFrame(table[1:], columns=table[0])
-   ```
-4. Answer the question by filtering/aggregating the DataFrame (`df.query`, `df.groupby`, `df[col].sum()`, etc.) rather than by eyeballing the raw extraction.
+## Constraints (read first)
+- **`python_interpreter_tool` allowlist:** only these imports work by default: `collections`, `datetime`, `itertools`, `math`, `queue`, `random`, `re`, `stat`, `statistics`, `time`, `unicodedata`. There is **no** `pandas`, `pdfplumber`, `pdf2image`, or `pytesseract` in the sandbox unless an operator extended the config.
+- **Primary extraction** must go through **`deep_analyzer_tool`**, which reads the PDF via the stack’s converter (same path as file ingestion) and reasons over the extracted text.
 
-## If pdfplumber fails
-- For scanned PDFs (images of pages), switch to OCR: try `pdf2image` + `pytesseract`.
-- For born-digital PDFs with unusual table formatting, fall back to `deep_analyzer_tool` with an explicit instruction ("The PDF has non-standard tables; extract the data in the table on page N as a list of (column, value) pairs").
+## Workflow
+1. Call **`deep_analyzer_tool`** with `source` set to the **absolute** PDF path and a `task` that forces structured output, for example:
+   - “Extract the table on page N as a **markdown table** with header row.”
+   - “List every row of the revenue table as **pipe-separated** values (no prose between rows).”
+   - “Output **one JSON object per table row** with keys taken from the header.”
+2. If you need programmatic checks on that structured text, call **`python_interpreter_tool`** using **only** the allowed imports — e.g. parse pipe- or tab-separated lines with `re.split`, then aggregate with `statistics.mean` / `sum` / `math.fsum`.
+3. If columns are still misaligned, **re-call `deep_analyzer_tool`** with stricter instructions (name the columns you expect, ask for TSV only, or ask for “(row label, column name, cell value)” triples).
+
+## If extraction is still poor
+- **Scanned PDFs:** rely on `deep_analyzer_tool` with an explicit OCR-oriented task (“treat pages as images; transcribe the printed table”). Do not assume OCR libraries in the interpreter.
+- **Born-digital but ugly layout:** repeat `deep_analyzer_tool` with page-specific instructions rather than regexing raw stream text.
 
 ## Avoid
-- Reasoning over raw `pdfminer.extract_text()` output when the answer depends on table alignment — cell boundaries are frequently wrong.
-- Using regex to "parse" table text into structure — spacing is unreliable across PDFs.
-- Reporting a number without having loaded it into python first (no way to verify).
+- `import pandas`, `import pdfplumber`, or any other module outside the interpreter allowlist — the call will fail.
+- Reasoning over **raw linearized PDF text** when the answer depends on which number belongs to which column.
+- Using regex alone to “reconstruct” a table from badly spaced text when another `deep_analyzer_tool` pass with clearer output shape would work better.
 
 ## Verification
-Before returning, re-compute the key numbers in python and print them. If the user asked for "Q3 revenue", your final answer should be preceded by python output like `print(df.loc[df["Quarter"]=="Q3", "Revenue"].iloc[0])` — that gives an audit trail the manager can check.
+Recompute any reported figure inside **`python_interpreter_tool`** from the numeric literals you extracted (show prints). If you cannot parse the model’s table output reliably, fix the **`deep_analyzer_tool`** prompt before trusting the number.

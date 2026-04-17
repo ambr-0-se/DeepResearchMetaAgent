@@ -31,7 +31,7 @@ python examples/run_general.py
 python examples/run_gaia.py --config configs/config_gaia_c0.py         # C0: baseline PlanningAgent
 python examples/run_gaia.py --config configs/config_gaia_adaptive.py   # C2: AdaptivePlanningAgent (reactive diagnose/modify)
 python examples/run_gaia.py --config configs/config_gaia_c3.py         # C3: + structural REVIEW step
-python examples/run_gaia.py --config configs/config_gaia_c4.py         # C4: C3 structural REVIEW + cross-task skill library (training mode)
+python examples/run_gaia.py --config configs/config_gaia_c4.py         # C4: + cross-task skill library (training mode)
 
 # Legacy alias (equivalent to C0)
 python examples/run_gaia.py --config configs/config_gaia.py
@@ -96,8 +96,9 @@ Agent configs reference tool configs by name convention: `{tool_name}` → `{too
 - Can diagnose sub-agent failures via `diagnose_subagent` tool (reactive; agent-invoked)
 - Can modify sub-agents at runtime via `modify_subagent` tool (reactive; agent-invoked)
 - All architectural modifications are task-scoped (reset after each task)
-- **C3**: adds a structural REVIEW step (automatic post-delegation assessment) via optional `review_step` when `enable_review=True` — see `src/meta/review_step.py` and `configs/config_gaia_c3.py`. Review findings are injected into `action_step.observations` with a `[REVIEW]` marker so the next THINK sees them.
-- **C4**: keeps the same structural REVIEW as C3 (`enable_review=True`) and **adds** a cross-task skill library via optional `skill_registry` / `skill_extractor` — see `src/skills/` and `configs/config_gaia_c4.py`. Skills persist across tasks (unlike architectural modifications). Each agent (planner and sub-agents) gets an `activate_skill` tool scoped to the skills visible to it.
+- **C3**: adds a structural REVIEW step (automatic post-delegation assessment) via optional `review_step` component — see `src/meta/review_step.py` and `configs/config_gaia_c3.py`. Review findings are injected into `action_step.observations` with a `[REVIEW]` marker so the next THINK sees them.
+- **C4**: adds a cross-task skill library via optional `skill_registry` component — see `src/skills/` and `configs/config_gaia_c4.py`. Skills persist across tasks (unlike architectural modifications). Each agent (planner and sub-agents) gets an `activate_skill` tool scoped to the skills visible to it.
+
 
 **Specialized lower-level agents:**
 - `DeepAnalyzerAgent` - in-depth analysis of input information

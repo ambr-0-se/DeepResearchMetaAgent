@@ -22,7 +22,7 @@ Do NOT activate for web URLs — those are `browser_use_agent` / `deep_researche
 1. Resolve any relative file path to an absolute path BEFORE delegation. Sub-agents run with a different working directory and relative paths fail.
 2. Select the right sub-agent by file type:
    - PDF, DOCX, CSV, XLSX, JSON, TXT, MD → `deep_analyzer_agent`
-   - PNG, JPG, screenshot → `deep_analyzer_agent` (it has vision support)
+   - PNG, JPG, screenshot → `deep_analyzer_agent` (multimodal analysis via the analyzer pipeline; use absolute paths)
    - Archive (ZIP, TAR) → `deep_analyzer_agent` with explicit "extract and list contents first" instruction
 3. Pass the absolute path explicitly in the delegation's `task` argument AND verbatim in the user-facing question.
 4. For structured data (tables), request extraction to CSV/JSON format BEFORE reasoning — reasoning over raw PDF output is error-prone.

@@ -71,7 +71,7 @@ def skills_dir(tmp_path: Path) -> Path:
     _write_skill(
         root,
         name="pdf-table-extraction",
-        description="Extract tables from PDFs using pdfplumber then reason over CSV.",
+        description="Extract PDF tables via deep_analyzer_tool then verify with allowed python_interpreter imports.",
         consumer="deep_analyzer_agent",
         skill_type="tool_usage",
     )

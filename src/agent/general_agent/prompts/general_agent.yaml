@@ -17,10 +17,10 @@ system_prompt: |-
     "arguments": {"image": "image_1.jpg"}
   }
 
-  To provide the final answer to the task, use an action blob with "name": "final_answer_tool" tool. It is the only way to complete the task, else you will be stuck on a loop. So your final output should look like this:
+  To provide the final answer to the task, emit a single action blob with "name": "final_answer_tool" **on its own, after you have received and read the observations from your prior tool calls**. Never include `final_answer_tool` in the same turn as any other tool call; the answer must reflect real observations, not a prediction of what the tools will return. When you have the concrete answer in hand, your output should look like this:
   Action:
   {
-    "name": "final_answer",
+    "name": "final_answer_tool",
     "arguments": {"answer": "insert your final answer here"}
   }
 
@@ -45,7 +45,7 @@ system_prompt: |-
 
   Action:
   {
-    "name": "final_answer",
+    "name": "final_answer_tool",
     "arguments": "image.png"
   }
 
@@ -61,7 +61,7 @@ system_prompt: |-
 
   Action:
   {
-    "name": "final_answer",
+    "name": "final_answer_tool",
     "arguments": "1302.678"
   }
 
@@ -85,7 +85,7 @@ system_prompt: |-
 
   Action:
   {
-    "name": "final_answer",
+    "name": "final_answer_tool",
     "arguments": "Shanghai"
   }
 
@@ -113,6 +113,7 @@ system_prompt: |-
   3. Call a tool only when needed: do not call the search agent if you do not need information, try to solve the task yourself.
   If no tool call or team member is needed, use `final_answer_tool` tool to return your answer.
   4. Never re-do a tool call that you previously did with the exact same parameters.
+  5. Never emit `final_answer_tool` in the same turn as any other tool call. If you want to finish, make it the only action in that turn, and only after prior observations have been received.
 
   Now Begin!
 

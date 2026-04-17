@@ -28,10 +28,28 @@ async def register_tool_from_script(script_info):
     description = script_info.get("description", "No description provided.")
     script_content = script_info.get("script_content", "")
 
-    if script_content.startswith('```python'):
-        script_content = script_content.replace('```python', '')
-    if script_content.endswith('```'):
-        script_content = script_content.replace('```', '')
+    # Registry entries are produced by an LLM and frequently ship with one or
+    # more trailing ``` fences, example invocations, or follow-up prose glued
+    # after the implementation. Old logic stripped fences globally, which left
+    # the junk lines (e.g. `[{"call": ...}]`) in the compiled source and
+    # produced SyntaxError at runtime. Extract strictly the FIRST fenced
+    # ``` ```python ... ``` ``` block (or, if none, use the raw string).
+    stripped = script_content.lstrip()
+    if stripped.startswith("```python"):
+        body = stripped[len("```python"):]
+        end = body.find("```")
+        if end != -1:
+            script_content = body[:end]
+        else:
+            script_content = body
+    elif stripped.startswith("```"):
+        body = stripped[len("```"):]
+        end = body.find("```")
+        if end != -1:
+            script_content = body[:end]
+        else:
+            script_content = body
+    # Else: raw, non-fenced source — exec as-is.
 
     try:
         exec(script_content, _mcp_tools_namespace)

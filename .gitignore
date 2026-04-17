@@ -181,3 +181,6 @@ others/
 logs/
 gaia-benchmark/
 .context/
+
+# Evaluation runtime output (per-run dra.jsonl + log.txt + skills/)
+workdir/

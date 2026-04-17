@@ -9,7 +9,21 @@ from src.registry import DATASET
 
 @DATASET.register_module(name="gaia_dataset", force=True)
 class GAIADataset():
-    def __init__(self, path, name, split):
+    def __init__(self, path, name, split, task_ids=None, skip_file_attachments=False):
+        """
+        Args:
+            path: filesystem path to the downloaded GAIA dataset
+            name: GAIA subset name (e.g. "2023_all")
+            split: "validation" | "test"
+            task_ids: optional list of task_id strings to restrict to.
+                      When set, all other questions are dropped (preserves
+                      original order of the matches).
+            skip_file_attachments: when True, drops every question with a
+                      non-empty `file_name`. Useful for smoke validation in
+                      environments where attachment handling is broken
+                      (e.g. local dev path contains spaces; browser-use's
+                      pdf download truncates at the first space).
+        """
         self.path = path
         self.name = name
         self.split = split
@@ -18,9 +32,24 @@ class GAIADataset():
         ds = datasets.load_dataset(path, name, trust_remote_code=True)[split]
         ds = ds.rename_columns({"Question": "question", "Final answer": "true_answer", "Level": "task"})
         ds = ds.map(self.preprocess_file_paths, load_from_cache_file=False, fn_kwargs={"split": split, "path": path})
-        
+
         data = pd.DataFrame(ds)
-        
+
+        if skip_file_attachments:
+            before = len(data)
+            data = data[data["file_name"].map(lambda s: not s)].reset_index(drop=True)
+            logger.info(
+                f"[GAIADataset] skip_file_attachments=True: {before} -> {len(data)} questions"
+            )
+
+        if task_ids:
+            allowed = set(task_ids)
+            before = len(data)
+            data = data[data["task_id"].isin(allowed)].reset_index(drop=True)
+            logger.info(
+                f"[GAIADataset] task_ids filter applied: {before} -> {len(data)} questions"
+            )
+
         self.data = data
         
     def preprocess_file_paths(self, row, path, split):

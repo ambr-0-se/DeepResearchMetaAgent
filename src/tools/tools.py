@@ -568,6 +568,18 @@ class Tool:
         if not isinstance(tool_class.inputs, dict):
             tool_class.inputs = ast.literal_eval(tool_class.inputs)
 
+        # Dynamically-generated tools (ToolGenerator, seeded scripts) typically
+        # declare only `inputs` — the flat legacy schema. The current Tool base
+        # class additionally requires a JSON-schema `parameters` dict. Synthesize
+        # it from `inputs` when the tool didn't supply one so from_code stays
+        # a permissive entry point for both schemas.
+        if getattr(tool_class, "parameters", None) is None:
+            tool_class.parameters = {
+                "type": "object",
+                "properties": dict(tool_class.inputs or {}),
+                "required": list((tool_class.inputs or {}).keys()),
+            }
+
         return tool_class(**kwargs)
 
     @staticmethod

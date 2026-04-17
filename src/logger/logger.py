@@ -21,8 +21,9 @@ YELLOW_HEX = "#d4b702"
 class LogLevel(IntEnum):
     OFF = -1  # No output
     ERROR = 0  # Only errors
-    INFO = 1  # Normal output (default)
-    DEBUG = 2  # Detailed output
+    WARNING = 1  # Recoverable issue — registry / skill-library non-fatal warnings
+    INFO = 2  # Normal output (default)
+    DEBUG = 3  # Detailed output
 
 class AgentLogger(logging.Logger, metaclass=Singleton):
     def __init__(self, name="logger", level=logging.INFO):

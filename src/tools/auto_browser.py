@@ -31,11 +31,28 @@ class AutoBrowserUseTool(AsyncTool):
 
     def __init__(self,
                  model_id: str = "gpt-4.1",
+                 max_steps: int = 50,
                  ):
+        """
+        Args:
+            model_id: LangChain-compatible model alias the browser-use Agent
+                should drive. Anything without a ``langchain-`` prefix is
+                auto-prefixed.
+            max_steps: Hard ceiling on the browser-use library's inner
+                planning loop per single tool invocation. The default of 50
+                matches browser-use's own default and suits production
+                research tasks. For smoke / handoff validation runs, drop
+                this to 8–15 via ``--cfg-options
+                auto_browser_use_tool_config.max_steps=10`` so the agent
+                exits the inner loop quickly, producing more outer-loop
+                delegations (and therefore more REVIEW / diagnose / skill
+                evidence) within the same wall-clock budget.
+        """
 
         super(AutoBrowserUseTool, self).__init__()
 
         self.model_id = model_id
+        self.max_steps = int(max_steps)
         self.http_server_path = assemble_project_path("src/tools/browser/http_server")
         self.http_save_path = assemble_project_path("src/tools/browser/http_server/local")
         os.makedirs(self.http_save_path, exist_ok=True)
@@ -85,7 +102,7 @@ class AutoBrowserUseTool(AsyncTool):
             page_extraction_llm=model,
         )
 
-        history = await browser_agent.run(max_steps=50)
+        history = await browser_agent.run(max_steps=self.max_steps)
         contents = history.extracted_content()
         joined = "\n".join(c for c in contents if c)
 

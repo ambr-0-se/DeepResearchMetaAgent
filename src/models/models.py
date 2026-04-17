@@ -652,13 +652,19 @@ class ModelManager(metaclass=Singleton):
         # switch DashScope reasoning mode on. The reasoning_content echo happens
         # automatically via MessageManager.needs_reasoning_echo() because the
         # thinking variant's model_id contains both "qwen3" and "thinking".
+        #
+        # Base (non-thinking) variants must EXPLICITLY send enable_thinking=False
+        # because DashScope defaults some models (e.g. qwen3.6-plus) to thinking
+        # mode server-side. Thinking mode rejects `tool_choice="required"` with
+        # 400 InternalError.Algo.InvalidParameter, breaking the tool-calling
+        # agent loop used by this project.
         models = [
-            {"name": "qwen3-max", "id": "qwen3-max", "extra_body": None},
+            {"name": "qwen3-max", "id": "qwen3-max", "extra_body": {"enable_thinking": False}},
             {"name": "qwen3-max-thinking", "id": "qwen3-max", "extra_body": {"enable_thinking": True}},
-            {"name": "qwen3.6-plus", "id": "qwen3.6-plus", "extra_body": None},
+            {"name": "qwen3.6-plus", "id": "qwen3.6-plus", "extra_body": {"enable_thinking": False}},
             {"name": "qwen3.6-plus-thinking", "id": "qwen3.6-plus", "extra_body": {"enable_thinking": True}},
-            {"name": "qwen-plus", "id": "qwen-plus", "extra_body": None},
-            {"name": "qwen3-coder-plus", "id": "qwen3-coder-plus", "extra_body": None},
+            {"name": "qwen-plus", "id": "qwen-plus", "extra_body": {"enable_thinking": False}},
+            {"name": "qwen3-coder-plus", "id": "qwen3-coder-plus", "extra_body": {"enable_thinking": False}},
         ]
         for m in models:
             model_name = m["name"]

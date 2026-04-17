@@ -249,7 +249,11 @@ async def main():
     # Initialize the logger
     logger.init_logger(log_path=config.log_path)
     logger.info(f"| Logger initialized at: {config.log_path}")
-    logger.info(f"| Config:\n{config.pretty_text}")
+    try:
+        logger.info(f"| Config:\n{config.pretty_text}")
+    except Exception as _pt_err:
+        logger.warning(f"| Config: pretty_text failed ({type(_pt_err).__name__}); dumping raw dict.")
+        logger.info(f"| Config (raw): {dict(config)}")
 
     # Registed models
     model_manager.init_models(use_local_proxy=getattr(config, 'use_local_proxy', True))

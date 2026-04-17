@@ -28,6 +28,9 @@ _base_ = './config_gaia_adaptive.py'
 import os as _os
 from datetime import datetime as _datetime
 _RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+# mmengine's Config.pretty_text would otherwise emit the module/class values of
+# these imports as invalid Python (e.g. `_datetime=<class ...>`), crashing yapf.
+del _os, _datetime
 
 tag = f"gaia_c3_{_RUN_ID}"
 

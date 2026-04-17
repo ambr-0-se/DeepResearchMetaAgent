@@ -39,10 +39,13 @@ MODELS = [
     ),
     (
         "kimi",
-        "kimi-k2.5-no-thinking",
-        "langchain-kimi-k2.5",
-        "Kimi K2.5 with thinking DISABLED — required for C3/C4 JSON output. "
-        "Browser-use LangChain wrapper still uses the base alias (no extra_body).",
+        "or-kimi-k2.5",
+        "langchain-or-kimi-k2.5",
+        "Kimi K2.5 via OpenRouter (operator preference — OPENROUTER_API_KEY). "
+        "Native MOONSHOT_API_KEY path is intentionally left as a placeholder. "
+        "OpenRouter does not enforce Moonshot's thinking-on default, so this "
+        "also satisfies the C3/C4 JSON-output requirement without an extra_body "
+        "override.",
     ),
     (
         "qwen",
@@ -249,6 +252,11 @@ _RUN_ID_PRELUDE = (
     "from datetime import datetime as _datetime\n"
     "_RUN_ID = _os.environ.get(\"DRA_RUN_ID\") or "
     "_datetime.now().strftime(\"%Y%m%d_%H%M%S\")\n"
+    # mmengine's Config.pretty_text walks every module-level name and emits it\n"
+    # as a Python assignment via yapf. Class/module values (e.g.\n"
+    # `_datetime=<class 'datetime.datetime'>`) are not valid Python and make\n"
+    # yapf crash. Drop the imports now that _RUN_ID is captured.\n"
+    "del _os, _datetime\n"
 )
 
 

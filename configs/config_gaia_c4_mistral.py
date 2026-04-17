@@ -21,6 +21,7 @@ _base_ = './config_gaia_c4.py'
 import os as _os
 from datetime import datetime as _datetime
 _RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+del _os, _datetime
 
 tag = f"gaia_c4_mistral_{_RUN_ID}"
 

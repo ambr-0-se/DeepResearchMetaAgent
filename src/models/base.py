@@ -98,6 +98,11 @@ class ChatMessage:
     content: str | list[dict[str, Any]] | None = None
     tool_calls: list[ChatMessageToolCall] | None = None
     tool_call_id: str | None = None  # OpenAI: links a tool result message to assistant tool_calls[].id
+    # Provider reasoning / chain-of-thought output (DeepSeek-reasoner, Qwen3-thinking,
+    # GLM-Z1 etc.). Round-tripped through memory because some providers require it
+    # to be echoed back on the next turn of a tool-calling loop. MiniMax-style models
+    # that embed <think> inside `content` do NOT use this field.
+    reasoning_content: str | None = None
     raw: Any | None = None  # Stores the raw output from the API
     token_usage: TokenUsage | None = None
 
@@ -119,6 +124,7 @@ class ChatMessage:
             content=data.get("content"),
             tool_calls=data.get("tool_calls"),
             tool_call_id=data.get("tool_call_id"),
+            reasoning_content=data.get("reasoning_content"),
             raw=raw,
             token_usage=token_usage,
         )
@@ -163,6 +169,10 @@ class ChatMessageStreamDelta:
     content: str | None = None
     tool_calls: list[ChatMessageToolCallStreamDelta] | None = None
     token_usage: TokenUsage | None = None
+    # Streaming reasoning delta (DeepSeek-reasoner, Qwen3-thinking). Accumulated
+    # separately from `content` because the provider emits them on separate fields
+    # and agents must preserve the distinction for echo-back.
+    reasoning_content: str | None = None
 
 
 class MessageRole(str, Enum):
@@ -187,6 +197,7 @@ def agglomerate_stream_deltas(
     """
     accumulated_tool_calls: dict[int, ChatMessageToolCallStreamDelta] = {}
     accumulated_content = ""
+    accumulated_reasoning = ""
     total_input_tokens = 0
     total_output_tokens = 0
     for stream_delta in stream_deltas:
@@ -195,6 +206,8 @@ def agglomerate_stream_deltas(
             total_output_tokens += stream_delta.token_usage.output_tokens
         if stream_delta.content:
             accumulated_content += stream_delta.content
+        if getattr(stream_delta, "reasoning_content", None):
+            accumulated_reasoning += stream_delta.reasoning_content
         if stream_delta.tool_calls:
             for tool_call_delta in stream_delta.tool_calls:  # ?ormally there should be only one call at a time
                 # Extend accumulated_tool_calls list to accommodate the new tool call if needed
@@ -238,6 +251,7 @@ def agglomerate_stream_deltas(
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
         ),
+        reasoning_content=accumulated_reasoning or None,
     )
 
 

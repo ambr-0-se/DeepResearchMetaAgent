@@ -54,6 +54,49 @@ UNSUPPORTED_TOOL_CHOICE_MODELS = [
     'claude37-sonnet',
 ]
 
+# Sampling params to drop for Moonshot Kimi (temperature/top_p locked by provider;
+# n=1 only; presence/frequency penalty ignored — stripping avoids 400s).
+# Applied AFTER caller-kwargs merge so provider constraint always wins.
+_KIMI_BANNED_SAMPLING_PARAMS = (
+    "temperature", "top_p", "n", "presence_penalty", "frequency_penalty", "logprobs", "logit_bias"
+)
+
+# MiniMax M2.7: temperature must be in (0, 1.0]; n must be 1; presence/frequency
+# penalty silently ignored upstream but cleaner to drop.
+_MINIMAX_BANNED_SAMPLING_PARAMS = (
+    "n", "presence_penalty", "frequency_penalty", "logprobs", "logit_bias"
+)
+
+
+def _model_id_tail(model_id: str) -> str:
+    """Return the terminal segment of a model id ('moonshotai/kimi-k2.5' -> 'kimi-k2.5')."""
+    return (model_id or "").split("/")[-1].lower()
+
+
+def is_moonshot_kimi(model_id: str) -> bool:
+    tail = _model_id_tail(model_id)
+    return tail.startswith("kimi-") or "moonshot" in tail
+
+
+def is_minimax(model_id: str) -> bool:
+    return "minimax" in _model_id_tail(model_id)
+
+
+def needs_reasoning_echo(model_id: str) -> bool:
+    """Providers that require the assistant's previous `reasoning_content` to be
+    echoed back in the next request or they 400 on turn 2+ of a tool loop.
+
+    As of 2026-04: DeepSeek V3.2 reasoner is the primary offender. Qwen3 thinking
+    mode on DashScope returns reasoning in `reasoning_content` and also expects it
+    echoed when `enable_thinking=True` is persisted across turns.
+    """
+    tail = _model_id_tail(model_id)
+    return (
+        "deepseek-reasoner" in tail
+        or tail.startswith("deepseek-v3.2")
+        or ("qwen3" in tail and "thinking" in tail)
+    )
+
 class MessageManager():
     def __init__(self, model_id: str, api_type: str = "chat/completions"):
         self.model_id = model_id
@@ -121,13 +164,19 @@ class MessageManager():
 
             # Assistant message that issued tool_calls (must include tool_calls in the API payload)
             if message.role == MessageRole.ASSISTANT and message.tool_calls:
-                output_message_list.append(
-                    {
-                        "role": "assistant",
-                        "content": message.content,
-                        "tool_calls": _tool_calls_to_openai_api_format(message.tool_calls),
-                    }
-                )
+                assistant_payload: Dict[str, Any] = {
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": _tool_calls_to_openai_api_format(message.tool_calls),
+                }
+                # Echo reasoning_content when the provider requires it for tool-loop
+                # continuity (DeepSeek-reasoner / Qwen3-thinking). Sending it to
+                # providers that don't recognize the field is harmless (silently dropped),
+                # but we gate on the predicate to avoid surprising OpenAI/Anthropic payloads.
+                reasoning = getattr(message, "reasoning_content", None)
+                if reasoning and needs_reasoning_echo(self.model_id):
+                    assistant_payload["reasoning_content"] = reasoning
+                output_message_list.append(assistant_payload)
                 continue
 
             # encode images if needed
@@ -146,10 +195,15 @@ class MessageManager():
                         else:
                             element["image"] = encode_image_base64(element["image"])
 
+            # Don't merge assistant messages that carry reasoning_content — merging
+            # into the previous turn would fabricate reasoning attribution and risk
+            # double-billing the provider's reasoning-token count.
+            has_reasoning = bool(getattr(message, "reasoning_content", None))
             can_merge = (
                 len(output_message_list) > 0
                 and message.role == output_message_list[-1]["role"]
                 and message.role != MessageRole.TOOL
+                and not has_reasoning
             )
             if can_merge:
                 assert isinstance(message.content, list), "Error: wrong content:" + str(message.content)
@@ -170,12 +224,13 @@ class MessageManager():
                         content = message.content or ""
                 else:
                     content = message.content
-                output_message_list.append(
-                    {
-                        "role": message.role,
-                        "content": content,
-                    }
-                )
+                payload: Dict[str, Any] = {
+                    "role": message.role,
+                    "content": content,
+                }
+                if has_reasoning and needs_reasoning_echo(self.model_id):
+                    payload["reasoning_content"] = message.reasoning_content
+                output_message_list.append(payload)
         return output_message_list
 
     def _get_responses_message_list(self,
@@ -318,6 +373,11 @@ class MessageManager():
             }
 
     def get_clean_completion_kwargs(self, completion_kwargs: Dict[str, Any]):
+        """Final sanitizer applied AFTER caller kwargs have merged into completion_kwargs.
+
+        Order matters: provider hard-constraints must win over caller-injected overrides,
+        so this runs at the tail of `_prepare_completion_kwargs` in OpenAIServerModel.
+        """
 
         model_id = self.model_id.split("/")[-1]
 
@@ -325,4 +385,25 @@ class MessageManager():
             completion_kwargs.pop("tool_choice", None)
         if model_id in UNSUPPORTED_STOP_MODELS:
             completion_kwargs.pop("stop", None)
+
+        # Moonshot Kimi locks sampling params (temperature/top_p), allows n=1 only,
+        # ignores penalty/logit params. Strip them regardless of what the caller sent —
+        # the provider will 400 otherwise. Applied after caller merge on purpose.
+        if is_moonshot_kimi(self.model_id):
+            for param in _KIMI_BANNED_SAMPLING_PARAMS:
+                completion_kwargs.pop(param, None)
+
+        # MiniMax: clamp temperature to (0, 1.0], force n=1. presence/frequency
+        # penalty silently ignored by provider — drop to keep requests clean.
+        if is_minimax(self.model_id):
+            for param in _MINIMAX_BANNED_SAMPLING_PARAMS:
+                completion_kwargs.pop(param, None)
+            temp = completion_kwargs.get("temperature")
+            if temp is not None:
+                # Provider rejects temperature=0 and values > 1.0.
+                if temp <= 0:
+                    completion_kwargs["temperature"] = 0.01
+                elif temp > 1.0:
+                    completion_kwargs["temperature"] = 1.0
+
         return completion_kwargs

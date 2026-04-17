@@ -75,6 +75,7 @@ class OpenAIServerModel(ApiModel):
         custom_role_conversions: dict[str, str] | None = None,
         flatten_messages_as_text: bool = False,
         http_client: Any = None,
+        extra_body: dict[str, Any] | None = None,
         **kwargs,
         ):
         self.model_id = model_id
@@ -97,6 +98,13 @@ class OpenAIServerModel(ApiModel):
         }
 
         self.message_manager = MessageManager(model_id=model_id)
+
+        # Non-OpenAI vendor-specific request fields (e.g. DashScope `enable_thinking`,
+        # Moonshot `thinking={"type":"disabled"}`). Injected into every completion call
+        # via self.kwargs so `_prepare_completion_kwargs` forwards it to the SDK, which
+        # passes it through as the `extra_body` parameter on chat.completions.create.
+        if extra_body:
+            kwargs = {**kwargs, "extra_body": dict(extra_body)}
 
         super().__init__(
             model_id=model_id,
@@ -212,8 +220,13 @@ class OpenAIServerModel(ApiModel):
             if event.choices:
                 choice = event.choices[0]
                 if choice.delta:
+                    # Some providers stream reasoning on a parallel `reasoning_content`
+                    # delta (DeepSeek-reasoner, Qwen3-thinking). Capture it alongside
+                    # the content delta so downstream agglomeration keeps them distinct.
+                    reasoning_delta = getattr(choice.delta, "reasoning_content", None)
                     yield ChatMessageStreamDelta(
                         content=choice.delta.content,
+                        reasoning_content=reasoning_delta,
                         tool_calls=[
                             ChatMessageToolCallStreamDelta(
                                 index=delta.index,
@@ -257,8 +270,17 @@ class OpenAIServerModel(ApiModel):
                 response = await self.client.chat.completions.create(**completion_kwargs)
                 self._last_input_token_count = response.usage.prompt_tokens
                 self._last_output_token_count = response.usage.completion_tokens
+                # Capture reasoning_content directly from the SDK message object before
+                # dumping: include={"role","content","tool_calls"} would silently drop
+                # it, which breaks DeepSeek-reasoner (and other thinking models) on the
+                # next tool-loop turn since the provider requires it to be echoed back.
+                msg_obj = response.choices[0].message
+                msg_dict = msg_obj.model_dump(include={"role", "content", "tool_calls"})
+                reasoning = getattr(msg_obj, "reasoning_content", None)
+                if reasoning:
+                    msg_dict["reasoning_content"] = reasoning
                 return ChatMessage.from_dict(
-                    response.choices[0].message.model_dump(include={"role", "content", "tool_calls"}),
+                    msg_dict,
                     raw=response,
                     token_usage=TokenUsage(
                         input_tokens=response.usage.prompt_tokens,

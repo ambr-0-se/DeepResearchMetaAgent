@@ -36,6 +36,10 @@ class ModelManager(metaclass=Singleton):
         self._register_langchain_models(use_local_proxy=use_local_proxy)
         self._register_vllm_models(use_local_proxy=use_local_proxy)
         self._register_deepseek_models(use_local_proxy=use_local_proxy)
+        self._register_dashscope_models()
+        self._register_mistral_models()
+        self._register_moonshot_models()
+        self._register_minimax_models()
         self._register_openrouter_models()
 
     def _check_local_api_key(self, local_api_key_name: str, remote_api_key_name: str) -> str:
@@ -583,7 +587,211 @@ class ModelManager(metaclass=Singleton):
             )
             self.registed_models[model_name] = model
         else:
-            logger.warning("DeepSeek models are not supported in remote API mode.")
+            # Native DeepSeek API (https://api.deepseek.com).
+            # OpenAI-SDK compatible. Supports deepseek-chat (V3.2) and
+            # deepseek-reasoner (V3.2 with chain-of-thought reasoning_content).
+            api_key = os.getenv("DEEPSEEK_API_KEY", PLACEHOLDER)
+            if api_key == PLACEHOLDER:
+                logger.warning(
+                    "DEEPSEEK_API_KEY is not set, skipping native DeepSeek models"
+                )
+                return
+
+            api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+            logger.info("Registering native DeepSeek models")
+
+            models = [
+                {"model_name": "deepseek-chat", "model_id": "deepseek-chat"},
+                {"model_name": "deepseek-reasoner", "model_id": "deepseek-reasoner"},
+            ]
+            for m in models:
+                model_name = m["model_name"]
+                model_id = m["model_id"]
+                client = AsyncOpenAI(api_key=api_key, base_url=api_base)
+                registered_model = OpenAIServerModel(
+                    model_id=model_id,
+                    http_client=client,
+                    custom_role_conversions=custom_role_conversions,
+                )
+                self.registed_models[model_name] = registered_model
+
+                langchain_model = ChatOpenAI(
+                    model=model_id,
+                    api_key=api_key,
+                    base_url=api_base,
+                )
+                self.registed_models[f"langchain-{model_name}"] = langchain_model
+
+    def _register_dashscope_models(self):
+        """Native Alibaba DashScope (Qwen) OpenAI-compatible endpoint.
+
+        Covers Qwen3 Max / Qwen3.6 Plus / Qwen3-Coder-Plus etc. Uses the
+        international endpoint by default; override via DASHSCOPE_API_BASE.
+        Per-request `enable_thinking` must be threaded through config when
+        reasoning mode is desired — not a constructor concern here.
+        """
+        api_key = os.getenv("DASHSCOPE_API_KEY", PLACEHOLDER)
+        if api_key == PLACEHOLDER:
+            logger.warning(
+                "DASHSCOPE_API_KEY is not set, skipping DashScope (Qwen3) models"
+            )
+            return
+
+        api_base = os.getenv(
+            "DASHSCOPE_API_BASE",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        )
+        logger.info("Registering DashScope (Qwen3) models")
+
+        # Each base model also registers a `-thinking` variant via extra_body to
+        # switch DashScope reasoning mode on. The reasoning_content echo happens
+        # automatically via MessageManager.needs_reasoning_echo() because the
+        # thinking variant's model_id contains both "qwen3" and "thinking".
+        models = [
+            {"name": "qwen3-max", "id": "qwen3-max", "extra_body": None},
+            {"name": "qwen3-max-thinking", "id": "qwen3-max", "extra_body": {"enable_thinking": True}},
+            {"name": "qwen3.6-plus", "id": "qwen3.6-plus", "extra_body": None},
+            {"name": "qwen3.6-plus-thinking", "id": "qwen3.6-plus", "extra_body": {"enable_thinking": True}},
+            {"name": "qwen-plus", "id": "qwen-plus", "extra_body": None},
+            {"name": "qwen3-coder-plus", "id": "qwen3-coder-plus", "extra_body": None},
+        ]
+        for m in models:
+            model_name = m["name"]
+            model_id = m["id"]
+            client = AsyncOpenAI(api_key=api_key, base_url=api_base)
+            registered_model = OpenAIServerModel(
+                model_id=model_name if m["extra_body"] else model_id,
+                http_client=client,
+                custom_role_conversions=custom_role_conversions,
+                extra_body=m["extra_body"],
+            )
+            # Preserve the actual model_id DashScope expects on the wire.
+            # We only used model_name above so needs_reasoning_echo() sees "thinking".
+            registered_model.model_id = model_id
+            # But expose the friendly alias for echo-routing: stash on a side attr
+            # that MessageManager can read if needed (it uses self.model_id by default,
+            # so the approach above collides). Simpler: keep MessageManager's predicate
+            # keyed on the alias by setting message_manager.model_id to the alias.
+            registered_model.message_manager.model_id = model_name
+            self.registed_models[model_name] = registered_model
+
+            langchain_model = ChatOpenAI(
+                model=model_id,
+                api_key=api_key,
+                base_url=api_base,
+            )
+            self.registed_models[f"langchain-{model_name}"] = langchain_model
+
+    def _register_mistral_models(self):
+        """Native Mistral La Plateforme (OpenAI-compatible).
+
+        Covers Mistral Small 4 (`mistral-small-2603`). Tool results use role
+        `tool`; parallel tool calls opt-in via `parallel_tool_calls` per request.
+        """
+        api_key = os.getenv("MISTRAL_API_KEY", PLACEHOLDER)
+        if api_key == PLACEHOLDER:
+            logger.warning("MISTRAL_API_KEY is not set, skipping Mistral models")
+            return
+
+        api_base = os.getenv("MISTRAL_API_BASE", "https://api.mistral.ai/v1")
+        logger.info("Registering Mistral models")
+
+        models = [
+            {"model_name": "mistral-small", "model_id": "mistral-small-2603"},
+            {"model_name": "mistral-small-latest", "model_id": "mistral-small-latest"},
+        ]
+        for m in models:
+            model_name = m["model_name"]
+            model_id = m["model_id"]
+            client = AsyncOpenAI(api_key=api_key, base_url=api_base)
+            registered_model = OpenAIServerModel(
+                model_id=model_id,
+                http_client=client,
+                custom_role_conversions=custom_role_conversions,
+            )
+            self.registed_models[model_name] = registered_model
+
+            langchain_model = ChatOpenAI(
+                model=model_id,
+                api_key=api_key,
+                base_url=api_base,
+            )
+            self.registed_models[f"langchain-{model_name}"] = langchain_model
+
+    def _register_moonshot_models(self):
+        """Native Moonshot (Kimi) OpenAI-compatible endpoint.
+
+        Covers Kimi K2.5. Note: Moonshot fixes temperature (1.0 thinking /
+        0.6 non-thinking) and top_p (0.95); callers must avoid overriding
+        these sampling params. Thinking mode is on by default.
+        """
+        api_key = os.getenv("MOONSHOT_API_KEY", PLACEHOLDER)
+        if api_key == PLACEHOLDER:
+            logger.warning(
+                "MOONSHOT_API_KEY is not set, skipping Moonshot (Kimi) models"
+            )
+            return
+
+        api_base = os.getenv("MOONSHOT_API_BASE", "https://api.moonshot.ai/v1")
+        logger.info("Registering Moonshot (Kimi) models")
+
+        models = [
+            {"model_name": "kimi-k2.5", "model_id": "kimi-k2.5"},
+        ]
+        for m in models:
+            model_name = m["model_name"]
+            model_id = m["model_id"]
+            client = AsyncOpenAI(api_key=api_key, base_url=api_base)
+            registered_model = OpenAIServerModel(
+                model_id=model_id,
+                http_client=client,
+                custom_role_conversions=custom_role_conversions,
+            )
+            self.registed_models[model_name] = registered_model
+
+            langchain_model = ChatOpenAI(
+                model=model_id,
+                api_key=api_key,
+                base_url=api_base,
+            )
+            self.registed_models[f"langchain-{model_name}"] = langchain_model
+
+    def _register_minimax_models(self):
+        """Native MiniMax OpenAI-compatible endpoint.
+
+        Covers MiniMax-M2.7 (and highspeed variant). IMPORTANT: M2.7 emits
+        interleaved reasoning inside <think></think> that MUST be preserved
+        across tool-calling turns. Temperature must be in (0, 1.0]; n=1 only.
+        """
+        api_key = os.getenv("MINIMAX_API_KEY", PLACEHOLDER)
+        if api_key == PLACEHOLDER:
+            logger.warning("MINIMAX_API_KEY is not set, skipping MiniMax models")
+            return
+
+        api_base = os.getenv("MINIMAX_API_BASE", "https://api.minimax.io/v1")
+        logger.info("Registering MiniMax models")
+
+        models = [
+            {"model_name": "minimax-m2.7", "model_id": "MiniMax-M2.7"},
+            {"model_name": "minimax-m2.7-highspeed", "model_id": "MiniMax-M2.7-highspeed"},
+        ]
+        for m in models:
+            model_name = m["model_name"]
+            model_id = m["model_id"]
+            client = AsyncOpenAI(api_key=api_key, base_url=api_base)
+            registered_model = OpenAIServerModel(
+                model_id=model_id,
+                http_client=client,
+                custom_role_conversions=custom_role_conversions,
+            )
+            self.registed_models[model_name] = registered_model
+
+            langchain_model = ChatOpenAI(
+                model=model_id,
+                api_key=api_key,
+                base_url=api_base,
+            )
+            self.registed_models[f"langchain-{model_name}"] = langchain_model
 
     def _register_openrouter_models(self):
         api_key = os.getenv("OPENROUTER_API_KEY", PLACEHOLDER)
@@ -600,6 +808,19 @@ class ModelManager(metaclass=Singleton):
                 "model_name": "gpt-oss-120b",
                 "model_id": "openai/gpt-oss-120b:free",
             },
+            # DeepSeek V3.2 — reasoner: must echo reasoning_content across tool turns
+            {"model_name": "or-deepseek-v3.2", "model_id": "deepseek/deepseek-v3.2"},
+            {"model_name": "or-deepseek-v3.2-exp", "model_id": "deepseek/deepseek-v3.2-exp"},
+            # Mistral Small 4
+            {"model_name": "or-mistral-small", "model_id": "mistralai/mistral-small-2603"},
+            # Qwen3 family
+            {"model_name": "or-qwen3-max", "model_id": "qwen/qwen3-max"},
+            {"model_name": "or-qwen3.6-plus", "model_id": "qwen/qwen3.6-plus"},
+            {"model_name": "or-qwen3-coder-next", "model_id": "qwen/qwen3-coder-next"},
+            # Moonshot Kimi K2.5 — fixed sampling params (temp/top_p locked)
+            {"model_name": "or-kimi-k2.5", "model_id": "moonshotai/kimi-k2.5"},
+            # MiniMax M2.7 — preserve <think> blocks across tool turns
+            {"model_name": "or-minimax-m2.7", "model_id": "minimax/minimax-m2.7"},
         ]
 
         for model in models:

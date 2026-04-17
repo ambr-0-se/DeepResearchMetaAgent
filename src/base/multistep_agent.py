@@ -531,8 +531,11 @@ You have been provided with these additional arguments, that you can access usin
                 self.step_number += 1
 
         if not returned_final_answer and self.step_number == max_steps + 1:
-            final_answer = self._handle_max_steps_reached(task, images)
-            yield action_step
+            final_memory_step = self._handle_max_steps_reached(task, images)
+            # Yield the fresh max-steps memory step (not the stale loop action_step)
+            # so streaming consumers observe the correct final state.
+            yield final_memory_step
+            final_answer = final_memory_step.action_output
         yield FinalAnswerStep(handle_agent_output_types(final_answer))
 
     def _validate_final_answer(self, final_answer: Any):
@@ -550,7 +553,14 @@ You have been provided with these additional arguments, that you can access usin
                 memory_step, agent=self
             )
 
-    def _handle_max_steps_reached(self, task: str, images: list["PIL.Image.Image"]) -> Any:
+    def _handle_max_steps_reached(self, task: str, images: list["PIL.Image.Image"]) -> ActionStep:
+        """Build, finalize, and append the terminal max-steps memory step.
+
+        Returns the `ActionStep` so callers can both read `action_output` and
+        yield the fresh step (avoids the stale-step duplicate-yield bug where
+        `_run_stream` re-emitted the last loop `action_step` after this method
+        had already appended its own terminal step).
+        """
         action_step_start_time = time.time()
         final_answer = self.provide_final_answer(task, images)
         final_memory_step = ActionStep(
@@ -562,7 +572,7 @@ You have been provided with these additional arguments, that you can access usin
         final_memory_step.action_output = final_answer.content
         self._finalize_step(final_memory_step)
         self.memory.steps.append(final_memory_step)
-        return final_answer.content
+        return final_memory_step
 
     def _generate_planning_step(
         self, task, is_first_step: bool, step: int

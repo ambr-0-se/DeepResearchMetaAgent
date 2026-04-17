@@ -28,9 +28,10 @@ python main.py
 python examples/run_general.py
 
 # GAIA evaluation — experimental conditions (see "Experimental Conditions" section)
-python examples/run_gaia.py --config configs/config_gaia_c0.py        # C0: baseline PlanningAgent
-python examples/run_gaia.py --config configs/config_gaia_adaptive.py  # C2: AdaptivePlanningAgent (reactive)
-# C3/C4 configs are added in later implementation phases
+python examples/run_gaia.py --config configs/config_gaia_c0.py         # C0: baseline PlanningAgent
+python examples/run_gaia.py --config configs/config_gaia_adaptive.py   # C2: AdaptivePlanningAgent (reactive diagnose/modify)
+python examples/run_gaia.py --config configs/config_gaia_c3.py         # C3: + structural REVIEW step
+python examples/run_gaia.py --config configs/config_gaia_c4.py         # C4: + cross-task skill library (training mode)
 
 # Legacy alias (equivalent to C0)
 python examples/run_gaia.py --config configs/config_gaia.py
@@ -44,6 +45,10 @@ python examples/run_arc.py --config configs/config_arc.py
 
 # Compare conditions (output dirs are workdir/gaia_<tag>/ where <tag> comes from the config)
 python scripts/compare_results.py workdir/gaia_c0/dra.jsonl workdir/gaia_adaptive/dra.jsonl
+python scripts/compare_results.py workdir/gaia_c3/dra.jsonl workdir/gaia_c4/dra.jsonl
+
+# Validate seed / learned SKILL.md files
+python -m src.skills.validate src/skills
 
 # Override config options
 python main.py --config configs/config_main.py --cfg-options model_id=gpt-4.1
@@ -90,8 +95,9 @@ Agent configs reference tool configs by name convention: `{tool_name}` → `{too
 - Uses THINK-ACT-OBSERVE loop (same as `PlanningAgent`) augmented with reactive self-modification tools
 - Can diagnose sub-agent failures via `diagnose_subagent` tool (reactive; agent-invoked)
 - Can modify sub-agents at runtime via `modify_subagent` tool (reactive; agent-invoked)
-- All modifications are task-scoped (reset after each task)
-- A structural REVIEW step (automatic post-delegation assessment) is added by C3 via an optional `review_step` component — see `src/meta/review_step.py` and `configs/config_gaia_c3.py`
+- All architectural modifications are task-scoped (reset after each task)
+- **C3**: adds a structural REVIEW step (automatic post-delegation assessment) via optional `review_step` component — see `src/meta/review_step.py` and `configs/config_gaia_c3.py`. Review findings are injected into `action_step.observations` with a `[REVIEW]` marker so the next THINK sees them.
+- **C4**: adds a cross-task skill library via optional `skill_registry` component — see `src/skills/` and `configs/config_gaia_c4.py`. Skills persist across tasks (unlike architectural modifications). Each agent (planner and sub-agents) gets an `activate_skill` tool scoped to the skills visible to it.
 
 **Specialized lower-level agents:**
 - `DeepAnalyzerAgent` - in-depth analysis of input information
@@ -103,17 +109,49 @@ Agent configs reference tool configs by name convention: `{tool_name}` → `{too
 Default `config_main.py` uses: DeepAnalyzerAgent, DeepResearcherAgent, BrowserUseAgent
 
 ### Meta-Agent Module (`src/meta/`)
-Provides runtime modification capabilities for adaptive agents:
-- `AdaptiveMixin` - Mixin class for state management and modification methods
-- `DiagnoseSubAgentTool` - Investigates sub-agent execution failures
-- `ModifySubAgentTool` - Modifies sub-agent tools, instructions, and capabilities
-- `ToolGenerator` - Generates new tools from natural language descriptions
-- `AgentGenerator` - Creates new agents with in-memory templates
+Provides runtime modification, review, and skill-activation capabilities for adaptive agents:
+- `AdaptiveMixin` — Mixin for state management (`_store_original_state` / `_reset_to_original_state`) and modification methods (add/remove agents + tools, modify instructions, set max_steps)
+- `DiagnoseSubAgentTool` — Reactive sub-agent failure investigation (agent-invoked). Reused internally by `ReviewAgent`.
+- `ModifySubAgentTool` — 7-action modification tool (add/remove agents, add existing/new tool, remove tool, modify instructions, set max_steps)
+- `ToolGenerator` — Generates new tools from natural language descriptions (used by `modify_subagent`'s `add_new_tool_to_agent` action)
+- `AgentGenerator` — Creates new agents with in-memory templates (used by `modify_subagent`'s `add_agent` action)
+- `_memory_format.py` — Shared helpers (`format_execution_history`, `format_agent_tools`) used by both DiagnoseSubAgentTool and the sealed ReviewAgent.
+
+**C3 components (REVIEW step):**
+- `review_schema.py` — Pydantic models: `ReviewResult`, `RootCauseCategory` (8-item taxonomy), polymorphic `NextAction` discriminated union (`ProceedSpec`, `RetrySpec`, `ModifyAgentSpec`, `EscalateSpec`).
+- `review_agent.py` — Internal sealed `ReviewAgent`. Subclass of `GeneralAgent` but NOT registered via `@AGENT.register_module`. Built via `object.__new__` + manual attribute init so no YAML file I/O is needed.
+- `review_step.py` — `ReviewStep` orchestrator. Invoked by `AdaptivePlanningAgent._post_action_hook` after every sub-agent delegation. Extracts `DelegationContext`, fast-paths skip for non-delegations / final answers / near max_steps, invokes the sealed ReviewAgent, parses JSON, validates `EscalateSpec.to_agent` against real managed_agents, falls back safely on any error.
+
+**C4 components (skill activation):**
+- `activate_skill_tool.py` — `ActivateSkillTool` (AsyncTool). Each instance is bound to a fixed `consumer` scope so skills scoped to one agent cannot leak to another. Returns skill body or error string; read-only over the registry.
 
 Agents are created via `create_agent()` in `src/agent/agent.py`. The function:
 1. Loads MCP tools from config
 2. Builds managed agents recursively
 3. Builds the main agent with tools and managed agents
+
+For `AdaptivePlanningAgent`, review and skill components are constructed inside `__init__` based on `config.enable_review` / `config.enable_skills` / `config.enable_skill_extraction` flags — the `build_agent()` factory path is unchanged.
+
+### Skill Library (`src/skills/` — C4)
+Filesystem-backed catalogue following the [agentskills.io](https://agentskills.io/specification) specification. Each skill is a directory containing a `SKILL.md` file with YAML frontmatter + Markdown body.
+
+Python package (internal):
+- `_model.py` — `Skill` + `SkillMetadata` dataclasses. Parses frontmatter, validates names against the agentskills.io regex, enforces name-equals-directory-name.
+- `_registry.py` — `SkillRegistry`. Scans `skills_dir` at startup. `metadata_for(consumer)` filters skills visible to a given consumer (planner, sub-agent name, or `all`). `load_body()` reads body on demand. `render_registry_block()` produces the injection for system prompts. `add()` and `increment_verified_uses()` persist via atomic temp+rename writes.
+- `_extractor.py` — `SkillExtractor`. Six-stage pipeline at task end: worthiness heuristic → LLM propose JSON → structural validation → entity blocklist (years / currency / URLs / long numerics) → LLM-as-judge dedup → `registry.add`. Contracted never to raise.
+- `validate.py` — CLI validator (`python -m src.skills.validate <path>`).
+
+Pre-seeded skills (committed to the repo, 7 total covering all 4 consumer scopes):
+- Planner scope: `handling-file-attachments`, `task-decomposition-complex-queries`, `delegation-failure-recovery`
+- `deep_analyzer_agent` scope: `pdf-table-extraction`, `multi-hop-math-verification`
+- `browser_use_agent` scope: `browser-paywall-recovery`
+- `deep_researcher_agent` scope: `research-fallback-sources`
+
+Metadata schema extensions beyond agentskills.io (under `metadata:` block):
+- `consumer`: routing scope (`planner` | sub-agent name | `all`)
+- `skill_type`: canonical taxonomy (delegation_pattern, task_decomposition, failure_avoidance, modification_pattern, verification_pattern, tool_usage, domain_workflow)
+- `source`: seeded / success / failure
+- `verified_uses`, `confidence`, `created_at`, `learned_from_task_type`: telemetry & provenance.
 
 ### Core Base Classes
 - `MultiStepAgent` (`src/base/multistep_agent.py`): Base class using ReAct framework
@@ -160,31 +198,67 @@ OpenAI-native tool message support throughout the stack:
 - Preserves `tool_call_id` and other ChatMessage fields
 
 ### Adaptive Agent Files
-- `src/meta/adaptive_mixin.py`: Runtime modification mixin (uses `_find_managed_agent` fallback to check both `managed_agents` and `tools`)
-- `src/meta/diagnose_tool.py`: Sub-agent diagnostic tool (delegates formatting to `_memory_format`)
-- `src/meta/modify_tool.py`: Sub-agent modification tool (7 actions: add/remove agents, add/remove tools, modify instructions, set max_steps)
-- `src/meta/tool_generator.py`: Dynamic tool generation
-- `src/meta/agent_generator.py`: Dynamic agent creation
-- `src/meta/_memory_format.py`: Shared helpers for rendering agent memory/tools (reused by diagnose tool and future review components)
-- `src/agent/adaptive_planning_agent/`: Adaptive planning agent implementation
-- `configs/config_gaia_c0.py`: Condition C0 — baseline PlanningAgent (alias over `config_gaia.py`)
-- `configs/config_gaia_adaptive.py`: Condition C2 — AdaptivePlanningAgent with reactive diagnose/modify tools
-- `configs/config_gaia_adaptive_qwen.py`: Qwen/vLLM evaluation config
-- `scripts/compare_results.py`: Compare results across conditions
-- `scripts/analyze_results.py`: Generate terminal/HTML evaluation reports
+
+Meta-agent module (`src/meta/`):
+- `adaptive_mixin.py` — Runtime modification mixin (uses `_find_managed_agent` fallback over `managed_agents` + `tools`)
+- `diagnose_tool.py` — Reactive sub-agent diagnostic tool (delegates formatting to `_memory_format`)
+- `modify_tool.py` — 7-action modification tool (add/remove agents, add/remove tools, modify instructions, set max_steps)
+- `tool_generator.py` / `agent_generator.py` — Dynamic tool and agent creation
+- `_memory_format.py` — Shared history/tools formatting helpers
+- **`review_schema.py`** — Pydantic `ReviewResult` + `NextAction` discriminated union (C3)
+- **`review_agent.py`** — Sealed internal `ReviewAgent`; not registered, not in `managed_agents` (C3)
+- **`review_step.py`** — Orchestrator called from `_post_action_hook` after each delegation (C3)
+- **`activate_skill_tool.py`** — Consumer-scoped `ActivateSkillTool` AsyncTool (C4)
+
+Skill library (`src/skills/`):
+- **`_model.py`** — `Skill` + `SkillMetadata` + frontmatter parser (C4)
+- **`_registry.py`** — `SkillRegistry` with atomic persistence (C4)
+- **`_extractor.py`** — End-of-task `SkillExtractor` (C4)
+- **`validate.py`** — CLI validator (C4)
+- **7 seed `SKILL.md` files** covering all 4 consumer scopes (C4)
+
+Planning agent and prompts (`src/agent/adaptive_planning_agent/`):
+- `adaptive_planning_agent.py` — Single `AdaptivePlanningAgent` class; optional `review_step` / `skill_registry` / `skill_extractor` components selected by config flags.
+- `prompts/adaptive_planning_agent.yaml` — C2 prompt template (reactive tools only)
+- **`prompts/adaptive_planning_agent_c3.yaml`** — C3 prompt template (documents `[REVIEW]` block)
+- **`prompts/adaptive_planning_agent_c4.yaml`** — C4 prompt template (documents skill registry + `activate_skill`)
+
+Sub-agent prompt templates (`src/agent/{deep_analyzer,browser_use,deep_researcher}_agent/prompts/*.yaml`):
+- Contain a `{%- if skill_registry_block %}` conditional for the skill registry injection. Renders empty in C0/C2/C3; populated in C4.
+
+Configs:
+- `config_gaia_c0.py` — Condition C0 (baseline `PlanningAgent`; alias over `config_gaia.py`)
+- `config_gaia_adaptive.py` — Condition C2 (reactive diagnose/modify tools)
+- **`config_gaia_c3.py`** — Condition C3 (C2 + `enable_review=True`)
+- **`config_gaia_c4.py`** — Condition C4 (C3 + `enable_skills=True` + `enable_skill_extraction=True`)
+- `config_gaia_adaptive_qwen.py` — Qwen/vLLM evaluation config
+
+Scripts:
+- `scripts/compare_results.py` — Compare results across conditions
+- `scripts/analyze_results.py` — Generate terminal/HTML evaluation reports
+
+Tests:
+- **`tests/test_review_schema.py`** — Pydantic round-trip + validation tests (Phase 1)
+- **`tests/test_skill_registry.py`** — Skill parsing + registry behavior tests (Phase 2)
 
 ### Experimental Conditions
 
-This codebase is set up to run four experimental conditions for ADAS research on GAIA:
+This codebase is set up to run four experimental conditions for ADAS research on GAIA. **All four are fully implemented** (as of 2026-04).
 
-| Condition | Config | Planner | Meta-agent capability |
-|-----------|--------|---------|----------------------|
+| Condition | Config | Planner components | Meta-agent capability |
+|-----------|--------|-------------------|----------------------|
 | **C0** | `config_gaia_c0.py` | `PlanningAgent` | None (baseline) |
-| **C2** | `config_gaia_adaptive.py` | `AdaptivePlanningAgent` | Reactive diagnose/modify tools (agent-invoked) |
-| **C3** | `config_gaia_c3.py` (planned) | `AdaptivePlanningAgent` + `review_step` | C2 + structural REVIEW step (automatic post-delegation assessment) |
-| **C4** | `config_gaia_c4.py` (planned) | C3 + `skill_registry` | C3 + cross-task skill library (pre-seeded + learned) |
+| **C2** | `config_gaia_adaptive.py` | `AdaptivePlanningAgent` | Reactive `diagnose_subagent` + `modify_subagent` (agent-invoked) |
+| **C3** | `config_gaia_c3.py` | C2 + `review_step` | C2 + structural REVIEW step (automatic post-delegation assessment) |
+| **C4** | `config_gaia_c4.py` | C3 + `skill_registry` + `skill_extractor` | C3 + cross-task skill library (pre-seeded + learned via task-end extractor) |
 
-C1 (reactive diagnose-only, no modify) was dropped because the existing `modify_subagent` action space covers both C1 and C2 uses without meaningful distinction. All conditions are selected via config; the `AdaptivePlanningAgent` class is shared with optional `review_step` / `skill_registry` components. See the plan file for implementation details.
+**Design notes:**
+
+- C1 (reactive diagnose-only, no modify) was dropped because the existing `modify_subagent` action space covers both C1 and C2 uses without meaningful distinction.
+- All four conditions use the same `AdaptivePlanningAgent` class (no subclassing). Components are composed via constructor kwargs + config flags (`enable_review`, `enable_skills`, `enable_skill_extraction`).
+- Architectural modifications (tools, managed agents, instructions, max_steps) are **task-scoped** and reset after each task via `AdaptiveMixin._reset_to_original_state`.
+- The skill library is **cross-task** — newly-extracted skills persist across tasks and are visible to the next run. Set `enable_skill_extraction=False` to freeze the library for evaluation (recommended when the goal is to measure the contribution of a pre-trained skill library rather than online learning).
+- The REVIEW apparatus (`ReviewAgent`, `SkillRegistry`, `SkillExtractor`) is **sealed** from `modify_subagent`: none of these objects appear in `managed_agents` or `tools`, so `_find_managed_agent` cannot reach them. This is deliberate — allowing the planner to modify its own reviewer would enable reward hacking.
 
 ### Evaluation Infrastructure
 - `run_combined_eval.sh`: Full GAIA evaluation SLURM job with vLLM watchdog

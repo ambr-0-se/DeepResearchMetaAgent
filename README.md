@@ -32,11 +32,12 @@ The system adopts a two-layer structure:
 * Breaks down tasks into manageable sub-tasks and assigns them to appropriate lower-level agents.
 * Dynamically coordinates the collaboration among agents to ensure smooth task completion.
 
-**Adaptive Planning Agent** — An extended variant that adds runtime self-modification capabilities:
+**Adaptive Planning Agent** — An extended variant that adds runtime self-modification capabilities, used in experimental conditions C2/C3/C4:
 * Uses a THINK-ACT-OBSERVE loop (same as the base `PlanningAgent`) augmented with reactive self-modification tools.
-* Can diagnose sub-agent failures at runtime via `diagnose_subagent` and dynamically modify sub-agent tools, instructions, and capabilities via `modify_subagent`.
-* All modifications are task-scoped and reset after each task.
-* A structural REVIEW step (automatic post-delegation assessment) is added in the C3 variant; see `configs/config_gaia_c3.py`.
+* Can diagnose sub-agent failures at runtime via `diagnose_subagent` and dynamically modify sub-agent tools, instructions, and capabilities via `modify_subagent` (condition **C2**, and inherited by C3/C4).
+* All architectural modifications are task-scoped and reset after each task.
+* **C3**: adds a structural REVIEW step — an automatic post-delegation assessment that produces a structured verdict with a root-cause taxonomy and a recommended `next_action` (proceed / retry / modify_agent / escalate). The review apparatus is sealed from `modify_subagent` to prevent reward hacking. See `configs/config_gaia_c3.py`.
+* **C4**: adds a cross-task skill library following the [agentskills.io](https://agentskills.io/specification) spec. Each agent (planner and sub-agents) gets a consumer-scoped `activate_skill` tool. Seven pre-seeded skills ship with the repo; an end-of-task `SkillExtractor` proposes new skills during training runs (with an entity blocklist + LLM-judge dedup). Disable extraction via `enable_skill_extraction=False` for frozen-library evaluation. See `configs/config_gaia_c4.py` and `src/skills/`.
 
 ### 2. Specialized Lower-Level Agents
 
@@ -83,7 +84,10 @@ Image and Video Examples:
 </p>
 
 ## Updates
-* **2026.04**: Reorganise GAIA eval into four experimental conditions for ADAS research — C0 (baseline `PlanningAgent`), C2 (current `AdaptivePlanningAgent` with reactive diagnose/modify), C3 (planned: + structural REVIEW step), C4 (planned: + cross-task skill library). Correct misleading THINK-ACT-OBSERVE-REFLECT naming (the base loop is plain THINK-ACT-OBSERVE; structural REVIEW is introduced by C3). Extract shared `src/meta/_memory_format.py` helpers for reuse across diagnose/review components.
+* **2026.04**: Ship conditions **C3** and **C4** for the ADAS GAIA experiments.
+  * **C3 — structural REVIEW step**: automatic post-delegation assessment via a sealed internal `ReviewAgent`. Produces a Pydantic `ReviewResult` with a verdict, 8-category root-cause taxonomy, and a polymorphic `next_action` that maps directly onto `modify_subagent` arguments when remediation is needed. Review findings are injected into the next THINK's observations with a `[REVIEW]` marker. Apparatus is sealed from `modify_subagent` to prevent reward hacking. See `src/meta/review_*.py` and `configs/config_gaia_c3.py`.
+  * **C4 — cross-task skill library**: filesystem-backed skill registry following the [agentskills.io](https://agentskills.io/specification) standard. Each agent (planner + sub-agents) gets a consumer-scoped `activate_skill` tool. Seven pre-seeded skills cover all four consumer scopes. A six-stage `SkillExtractor` proposes new skills at task end (worthiness heuristic → LLM propose → entity blocklist → dedup → persist); frozen-library mode available for evaluation. See `src/skills/` and `configs/config_gaia_c4.py`.
+* **2026.04**: Reorganise GAIA eval into four experimental conditions (C0/C2/C3/C4). Correct misleading THINK-ACT-OBSERVE-REFLECT naming (the base loop is plain THINK-ACT-OBSERVE; structural REVIEW is introduced by C3). Extract shared `src/meta/_memory_format.py` helpers for reuse across diagnose/review components.
 * **2026.02**: Codebase cleanup — remove obsolete scripts, improve eval reporting (retry tracking, per-tool results, broader error classification), and update documentation.
 * **2026.02**: GAIA evaluation robustness — vLLM health watchdog with auto-restart, transient error retry in eval runner, token-budget-aware context pruning, and planning tool auto-ID generation.
 * **2026.02**: Add OpenAI-native Tier B tool message protocol for parallel tool call tracking.

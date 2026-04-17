@@ -133,7 +133,7 @@ task_instruction: |-
       | No existing agent fits the domain at all              | add_agent (last resort)       |
       | A dynamically-created agent became harmful/duplicate  | remove_agent                  |
 
-      Preference order (least-invasive first): instruction edit > add existing tool > set max_steps > remove tool > generate new tool > add agent > remove agent. `set_agent_max_steps` is hard-clamped to [1, 50]; recommended practical ceiling is 20. For `add_new_tool_to_agent`, the `specification` is a natural-language requirement (not code); only stdlib-ish imports are permitted (`requests, json, re, os, datetime, math, typing`) and tools needing external API keys are rejected by the validator.
+      Preference order (least-invasive first): instruction edit > add existing tool > set max_steps > remove tool > generate new tool > add agent > remove agent. `set_agent_max_steps` is hard-clamped to [1, 50]; recommended practical ceiling is 20. For `add_new_tool_to_agent`, the `specification` is a natural-language requirement (not code); generated code may only use allowlisted imports from `src.meta.tool_generator` (see `format_allowlist_for_prompt`); set `TOOL_GENERATOR_ALLOW_DATA_SCIENCE=1` to include pandas, numpy, openpyxl, and yaml. External API keys and disallowed patterns are rejected by the validator.
   * **Do NOT**:
       - Call `modify_subagent` before at least one delegation has been attempted.
       - Stack two modifications with near-identical specifications on the same agent.
@@ -187,7 +187,7 @@ task_instruction: |-
     "arguments": {
       "action": "add_new_tool_to_agent",
       "agent_name": "deep_analyzer_agent",
-      "specification": "A tool that takes a CSV file path and returns per-column mean, median, and standard deviation as JSON. Use stdlib only."
+      "specification": "A tool that takes a CSV file path and returns per-column mean, median, and standard deviation as JSON. Use only allowlisted imports; prefer pathlib/csv/json unless data-science imports are enabled."
     }
   }
   ```

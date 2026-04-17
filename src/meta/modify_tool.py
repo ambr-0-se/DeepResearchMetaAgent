@@ -8,6 +8,7 @@ This tool allows the parent agent to modify managed sub-agents by:
 - Removing agents
 """
 
+import hashlib
 from typing import TYPE_CHECKING, Any, Optional
 
 from src.tools import AsyncTool, Tool
@@ -47,7 +48,7 @@ Examples:
 - Add web search capability: action="add_existing_tool_to_agent", agent_name="deep_analyzer_agent", specification="web_searcher_tool"
 - Create calculation specialist: action="add_agent", agent_name="math_agent", specification="A specialized agent for mathematical calculations using python"
 - Add instructions: action="modify_agent_instructions", agent_name="browser_use_agent", specification="Focus on extracting specific data points, not general summaries"
-- Generate tool (NL requirement, not code): action="add_new_tool_to_agent", agent_name="deep_analyzer_agent", specification="A tool that takes a CSV file path and returns per-column mean, median, and standard deviation as JSON. Use stdlib only."
+- Generate tool (NL requirement, not code): action="add_new_tool_to_agent", agent_name="deep_analyzer_agent", specification="A tool that takes a CSV file path and returns per-column mean, median, and standard deviation as JSON. Use only allowlisted imports (pathlib/csv/json by default); set TOOL_GENERATOR_ALLOW_DATA_SCIENCE=1 for pandas/numpy."
 - Remove tool: action="remove_tool_from_agent", agent_name="browser_use_agent", specification="python_interpreter_tool"
 - Extend step budget: action="set_agent_max_steps", agent_name="deep_researcher_agent", specification="20"
 - Remove agent: action="remove_agent", agent_name="math_expert_agent", specification="superseded by python_interpreter added to deep_analyzer_agent" """
@@ -70,8 +71,9 @@ Examples:
                     "add_agent: natural-language description of the new agent (purpose, task guidance). "
                     "add_existing_tool_to_agent: exact tool name from the registry (e.g., 'python_interpreter_tool'). "
                     "add_new_tool_to_agent: natural-language requirement for the tool; code is generated automatically by ToolGenerator (do NOT write Python yourself). "
-                    "Allowed imports: requests, json, re, os, datetime, math, typing. "
-                    "Disallowed: external API keys/credentials, subprocess, eval, exec, __import__, file writes, shutil.rmtree, os.remove. "
+                    "Import allowlist is enforced in src.meta.tool_generator (see allowed_top_level_modules / format_allowlist_for_prompt). "
+                    "Optional pandas, numpy, openpyxl, yaml when TOOL_GENERATOR_ALLOW_DATA_SCIENCE is set. "
+                    "Disallowed patterns include subprocess, eval, exec, __import__, file writes, shutil.rmtree, os.remove. "
                     "remove_tool_from_agent: exact tool name to remove. "
                     "modify_agent_instructions: additional instructions (appended to existing task_instruction). "
                     "set_agent_max_steps: integer string; hard clamp [1, 50], recommended practical cap 20. "
@@ -129,7 +131,12 @@ Examples:
 
     @property
     def tool_generator(self):
-        """Lazy load ToolGenerator."""
+        """Lazy load ToolGenerator.
+
+        ``allow_data_science`` defaults to False (narrower import surface). Enable
+        pandas/numpy/openpyxl/yaml for generated tools via environment variable
+        ``TOOL_GENERATOR_ALLOW_DATA_SCIENCE`` (see ``ToolGenerator``).
+        """
         if self._tool_generator is None:
             from src.meta.tool_generator import ToolGenerator
             self._tool_generator = ToolGenerator(self.parent_agent.model)
@@ -279,7 +286,7 @@ Examples:
             available = self._get_available_agent_names()
             return f"Error: Agent '{agent_name}' not found. Available: {available}"
         
-        tool_name = self._generate_tool_name(specification)
+        tool_name = self._generate_tool_name(specification, agent)
         
         try:
             tool_code = await self.tool_generator.generate_tool_code(
@@ -287,7 +294,11 @@ Examples:
                 tool_name=tool_name
             )
             
-            success = self.parent_agent.add_new_tool_to_agent(agent_name, tool_code)
+            success = self.parent_agent.add_new_tool_to_agent(
+                agent_name,
+                tool_code,
+                expected_tool_name=tool_name,
+            )
             
             if success:
                 return f"Successfully created and added new tool '{tool_name}' to agent '{agent_name}'"
@@ -400,31 +411,37 @@ Examples:
         
         return tools
     
-    def _generate_tool_name(self, specification: str) -> str:
+    def _generate_tool_name(self, specification: str, agent: Optional[Any] = None) -> str:
         """
         Generate a tool name from specification.
-        
+
+        If the target agent already has a tool with the derived name, appends
+        a short hash suffix to avoid collisions.
+
         Args:
             specification: Natural language description
-            
+            agent: Target sub-agent (optional), used to detect name collisions
+
         Returns:
             Snake_case tool name
         """
         import re
-        
-        # Extract key words from specification
-        words = specification.lower().split()[:5]  # First 5 words
-        # Remove common words
+
+        words = specification.lower().split()[:5]
         stopwords = {'a', 'an', 'the', 'to', 'for', 'and', 'or', 'that', 'which', 'can', 'will'}
         words = [w for w in words if w not in stopwords]
-        
-        # Clean and join
+
         clean_words = [re.sub(r'[^a-z0-9]', '', w) for w in words]
         clean_words = [w for w in clean_words if w]
-        
+
         if clean_words:
-            name = '_'.join(clean_words[:3])  # Max 3 words
+            base = '_'.join(clean_words[:3])
         else:
-            name = "custom"
-        
-        return f"{name}_tool"
+            base = "custom"
+
+        name = f"{base}_tool"
+        if agent is not None and hasattr(agent, "tools") and name in agent.tools:
+            digest = hashlib.sha256(specification.encode("utf-8")).hexdigest()[:8]
+            name = f"{base}_{digest}_tool"
+
+        return name

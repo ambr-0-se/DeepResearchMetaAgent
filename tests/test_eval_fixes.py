@@ -155,7 +155,7 @@ class _MockAgent:
         del self.managed_agents[agent_name]
         return True
 
-    def add_new_tool_to_agent(self, agent_name, tool_code):
+    def add_new_tool_to_agent(self, agent_name, tool_code, **kwargs):
         return False
 
 

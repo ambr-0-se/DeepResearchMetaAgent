@@ -159,15 +159,19 @@ class AdaptiveMixin:
     def add_new_tool_to_agent(
         self: "AsyncMultiStepAgent",
         agent_name: str,
-        tool_code: str
+        tool_code: str,
+        *,
+        expected_tool_name: Optional[str] = None,
     ) -> bool:
         """
         Create a new tool from code and add it to a managed sub-agent.
-        
+
         Args:
             agent_name: Name of the managed agent to modify
             tool_code: Python code defining a Tool subclass
-            
+            expected_tool_name: If the module defines multiple Tool subclasses,
+                select the one whose class attribute `name` matches this string.
+
         Returns:
             True if successful, False otherwise
         """
@@ -180,7 +184,10 @@ class AdaptiveMixin:
         
         try:
             # Create tool from code
-            tool = Tool.from_code(tool_code)
+            tool = Tool.from_code(
+                tool_code,
+                expected_tool_name=expected_tool_name,
+            )
             
             # Wrap as async if needed
             if not isinstance(tool, AsyncTool):

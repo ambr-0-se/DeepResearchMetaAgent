@@ -9,7 +9,11 @@ new tools and agents dynamically.
 from src.meta.adaptive_mixin import AdaptiveMixin
 from src.meta.diagnose_tool import DiagnoseSubAgentTool
 from src.meta.modify_tool import ModifySubAgentTool
-from src.meta.tool_generator import ToolGenerator
+from src.meta.tool_generator import (
+    ToolGenerator,
+    allowed_top_level_modules,
+    format_allowlist_for_prompt,
+)
 from src.meta.agent_generator import AgentGenerator
 
 __all__ = [
@@ -18,4 +22,6 @@ __all__ = [
     "ModifySubAgentTool",
     "ToolGenerator",
     "AgentGenerator",
+    "allowed_top_level_modules",
+    "format_allowlist_for_prompt",
 ]

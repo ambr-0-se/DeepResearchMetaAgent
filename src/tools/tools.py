@@ -526,23 +526,44 @@ class Tool:
         return Tool.from_code(tool_code, **kwargs)
 
     @classmethod
-    def from_code(cls, tool_code: str, **kwargs):
+    def from_code(cls, tool_code: str, expected_tool_name: str | None = None, **kwargs):
         module = types.ModuleType("dynamic_tool")
 
         exec(tool_code, module.__dict__)
 
-        # Find the Tool subclass
-        tool_class = next(
-            (
-                obj
-                for _, obj in inspect.getmembers(module, inspect.isclass)
-                if issubclass(obj, Tool) and obj is not Tool
-            ),
-            None,
-        )
+        candidates = [
+            obj
+            for _, obj in inspect.getmembers(module, inspect.isclass)
+            if obj is not Tool and inspect.isclass(obj) and issubclass(obj, Tool)
+        ]
+        candidates.sort(key=lambda c: c.__name__)
 
-        if tool_class is None:
+        if not candidates:
             raise ValueError("No Tool subclass found in the code.")
+
+        if len(candidates) == 1:
+            tool_class = candidates[0]
+        elif expected_tool_name:
+            matched = [
+                c
+                for c in candidates
+                if isinstance(getattr(c, "name", None), str)
+                and getattr(c, "name") == expected_tool_name
+            ]
+            if len(matched) == 1:
+                tool_class = matched[0]
+            else:
+                names = [getattr(c, "name", c.__name__) for c in candidates]
+                raise ValueError(
+                    "Multiple Tool subclasses found and none matched uniquely "
+                    f"expected_tool_name={expected_tool_name!r}: {names}"
+                )
+        else:
+            names = [getattr(c, "name", c.__name__) for c in candidates]
+            raise ValueError(
+                "Multiple Tool subclasses found in generated code; "
+                f"pass expected_tool_name to disambiguate: {names}"
+            )
 
         if not isinstance(tool_class.inputs, dict):
             tool_class.inputs = ast.literal_eval(tool_class.inputs)

@@ -60,7 +60,16 @@ class ModelManager(metaclass=Singleton):
             logger.warning(f"Local API base {local_api_base_name} is not set, using remote API base {remote_api_base_name}")
             api_base = os.getenv(remote_api_base_name, PLACEHOLDER)
         return api_base
-    
+
+    @staticmethod
+    def _api_key_configured(api_key: str | None) -> bool:
+        """True when an API key is present (not placeholder / not whitespace-only)."""
+        if api_key is None or api_key == PLACEHOLDER:
+            return False
+        if isinstance(api_key, str) and not api_key.strip():
+            return False
+        return True
+
     def _register_openai_models(self, use_local_proxy: bool = False):
         # gpt-4o, gpt-4.1, o1, o3, gpt-4o-search-preview
         if use_local_proxy:
@@ -196,6 +205,12 @@ class ModelManager(metaclass=Singleton):
             logger.info("Using remote API for OpenAI models")
             api_key = self._check_local_api_key(local_api_key_name="OPENAI_API_KEY", 
                                                 remote_api_key_name="OPENAI_API_KEY")
+            if not self._api_key_configured(api_key):
+                logger.warning(
+                    "OPENAI_API_KEY is not set or empty, skipping OpenAI models "
+                    "(GAIA matrix on Mistral/Kimi/Qwen is unaffected)"
+                )
+                return
             api_base = self._check_local_api_base(local_api_base_name="OPENAI_API_BASE", 
                                                     remote_api_base_name="OPENAI_API_BASE")
             
@@ -474,6 +489,12 @@ class ModelManager(metaclass=Singleton):
             logger.info("Using remote API for LangChain models")
             api_key = self._check_local_api_key(local_api_key_name="OPENAI_API_KEY",
                                                 remote_api_key_name="OPENAI_API_KEY")
+            if not self._api_key_configured(api_key):
+                logger.warning(
+                    "OPENAI_API_KEY is not set or empty, skipping LangChain OpenAI wrappers "
+                    "(langchain-gpt-4o / langchain-gpt-4.1 / langchain-o3)"
+                )
+                return
             api_base = self._check_local_api_base(local_api_base_name="OPENAI_API_BASE",
                                                     remote_api_base_name="OPENAI_API_BASE")
 

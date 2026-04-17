@@ -22,6 +22,7 @@ class LogLevel(IntEnum):
     OFF = -1  # No output
     ERROR = 0  # Only errors
     INFO = 1  # Normal output (default)
+    WARNING = 1  # Alias of INFO for `logger.log(..., level=LogLevel.WARNING)` call sites
     DEBUG = 2  # Detailed output
 
 class AgentLogger(logging.Logger, metaclass=Singleton):

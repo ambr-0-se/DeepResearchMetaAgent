@@ -50,13 +50,13 @@ You receive a single delegation to review, containing:
 
 WORKFLOW
 
-Step 1 (ALWAYS). Emit a `final_answer` call whose argument is a JSON object
+Step 1 (ALWAYS). Emit a `final_answer_tool` call whose argument is a JSON object
 matching the ReviewResult schema (see below). Do this in one step whenever
 the verdict is clear from `actual_response` alone.
 
 Step 2 (ONLY IF the verdict is not obvious from the response). Call
 `diagnose_subagent` to inspect the sub-agent's execution history (reasoning,
-tool calls, observations). Then emit `final_answer`.
+tool calls, observations). Then emit `final_answer_tool`.
 
 You have at most 3 steps. If you cannot reach a confident verdict, return
 verdict="unsatisfactory" with next_action={"action": "escalate", ...}.
@@ -119,7 +119,7 @@ NEXT ACTION VARIANTS (exactly one; dispatched on `action`)
 
 CONSTRAINTS
 
-- You MUST return exactly one `final_answer` call with a valid JSON payload.
+- You MUST return exactly one `final_answer_tool` call with a valid JSON payload.
 - Do not propose modify_actions or agent names that don't exist. If unsure,
   prefer "retry" with clearer guidance over a speculative "modify_agent".
 - Be concise: `summary` is a single line, `root_cause_detail` is at most 2
@@ -135,8 +135,8 @@ AVAILABLE TOOLS
 
 
 REVIEW_AGENT_TASK_INSTRUCTION: str = """\
-Review the following sub-agent delegation. Emit exactly one `final_answer`
-whose argument is a ReviewResult JSON object.
+Review the following sub-agent delegation. Emit exactly one `final_answer_tool`
+call whose argument is a ReviewResult JSON object.
 
 {{task}}
 """
@@ -150,7 +150,7 @@ REVIEW_AGENT_USER_PROMPT: str = ""
 # agent or in any tools dict).
 REVIEW_AGENT_MANAGED_AGENT_TASK: str = (
     "You are the REVIEW agent '{{name}}'. A parent delegation unexpectedly "
-    "treated you as a managed agent. Emit final_answer with verdict=unsatisfactory, "
+    "treated you as a managed agent. Emit final_answer_tool with verdict=unsatisfactory, "
     "next_action=proceed, summary=\"review-agent-invoked-as-subagent\", and exit.\n"
     "Task: {{task}}"
 )
@@ -159,10 +159,10 @@ REVIEW_AGENT_MANAGED_AGENT_REPORT: str = (
     "Review from {{name}}:\n{{final_answer}}"
 )
 
-# Minimal final_answer block (used by AsyncMultiStepAgent when max_steps hit
-# without a final answer).
+# Minimal final_answer template block (prompt_templates key; tool is final_answer_tool).
+# Used by AsyncMultiStepAgent when max_steps hit without a final answer.
 REVIEW_AGENT_FINAL_ANSWER_PRE: str = (
-    "You reached max_steps without emitting a final_answer. "
+    "You reached max_steps without emitting final_answer_tool. "
     "Provide a ReviewResult JSON with verdict=unsatisfactory, "
     "next_action={\"action\": \"escalate\", ...} based on what you saw."
 )
@@ -230,7 +230,7 @@ class ReviewAgent(GeneralAgent):
             A fully initialised ReviewAgent instance. The returned agent is
             NOT in any registry; the caller holds the only reference.
         """
-        # Tools: DiagnoseSubAgentTool (with parent_agent) + final_answer.
+        # Tools: DiagnoseSubAgentTool (with parent_agent) + final_answer_tool.
         # Do NOT include modify_subagent or any other adaptive tool — review
         # does not mutate the world, it assesses.
         diagnose_tool = DiagnoseSubAgentTool(parent_agent=parent_agent)

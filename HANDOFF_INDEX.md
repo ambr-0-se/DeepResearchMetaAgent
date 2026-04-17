@@ -10,8 +10,10 @@ Entry point for change handoffs that still need validation on the GPU farm. Each
 |---|-------|-----|--------|-----------|---------|
 | 1 | Silent-failure fixes for browser + analyzer tools | [HANDOFF_SILENT_FAILURES.md](HANDOFF_SILENT_FAILURES.md) | Ready to validate | `ba28f21` | Yes |
 | 2 | Multi-provider integration + GAIA eval matrix (Mistral/Kimi/Qwen × C0–C4) with Qwen DashScope→OpenRouter failover | [HANDOFF_PROVIDER_MATRIX.md](HANDOFF_PROVIDER_MATRIX.md) | Ready to validate | `7632470` → `9883a3a` | Yes |
-| 3 | `modify_subagent` prompt + tool-description guidance expansion (all 7 actions covered, failure-mode→action table, condition-scoped anti-patterns for C2/C3/C4) | [HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md](HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md) | Ready to validate | `764c6bf` | Yes |
+| 3 | `modify_subagent` prompt + tool-description guidance expansion (all 7 actions covered, failure-mode→action table, condition-scoped anti-patterns for C2/C3/C4) | [HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md](HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md) | Ready to validate | `764c6bf` → `b73eb39` | Yes |
 | 4 | Core C3 / C4 implementation — structural REVIEW step + cross-task skill library (the four experimental conditions C0/C2/C3/C4 themselves) | [HANDOFF_C3_C4_IMPLEMENTATION.md](HANDOFF_C3_C4_IMPLEMENTATION.md) | Ready to validate | `60065a8` → `433c30e` → `0643089` → `d247605` | Yes |
+| 5 | RC1 premature `final_answer_tool` guard + duplicate-yield bug fix + RC2 exception-chain diagnostic hook + prompt contradictions fix | [HANDOFF_RC1_FINAL_ANSWER_GUARD.md](HANDOFF_RC1_FINAL_ANSWER_GUARD.md) | Ready to validate | `54e7707` → `a9a6985` → `c52cf91` → `912685f` → `d36f4d4` | Yes |
+| 6 | Pass 2 Qwen-4B (vLLM) tuning — sub-agent `max_steps` 3/3/5→7/7/7 and `context_prune_threshold_ratio`=0.75 on `config_gaia_adaptive_qwen.py` | [HANDOFF_PASS2_QWEN_TUNING.md](HANDOFF_PASS2_QWEN_TUNING.md) | Ready to validate (stacks on #5) | `63486ca` | **No — push pending this session** |
 
 ---
 

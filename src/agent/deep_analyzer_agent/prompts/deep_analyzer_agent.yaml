@@ -49,6 +49,12 @@ system_prompt: |-
     "arguments": "image.png"
   }
 
+  IMPORTANT — `source` parameter rules:
+  - Only pass `source` when you are given a real file path (absolute or relative to CWD) or URI in the task.
+  - NEVER invent file names like "code.txt", "data.json", or similar just because the task mentions code or data.
+  - If the task contains inline content (e.g., a code snippet, a paragraph of text, a table), include that content directly in the `task` parameter — do NOT wrap it in a fake file path.
+  - If you are unsure whether a file exists, do NOT guess. Use the `python_interpreter_tool` to check `os.path.isfile(...)` first.
+
   ---
   Task: "What is the result of the following operation: 5 + 3 + 1294.678?"
 

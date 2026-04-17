@@ -101,10 +101,27 @@ class DeepAnalyzerTool(AsyncTool):
                     }
                 )
             else:
-                try:
-                    extracted_content = self.converter.convert(source).text_content
-                except Exception as e:
-                    extracted_content = f"Failed to extract content from {source}. Error: {e}"
+                is_uri = source.startswith(("http://", "https://", "file://", "data://"))
+                if not is_uri and not os.path.isfile(source):
+                    extracted_content = (
+                        f"ERROR: source='{source}' is neither an existing file nor a URI. "
+                        f"If you intended to analyze inline content (e.g. code, text), "
+                        f"include it in the `task` parameter instead of passing a made-up file path. "
+                        f"The `source` parameter is only for real file paths or URIs."
+                    )
+                else:
+                    try:
+                        result = self.converter.convert(source)
+                        if result is None:
+                            extracted_content = (
+                                f"Failed to extract content from {source}: converter returned None "
+                                f"(file may be corrupt, unsupported format, or URI unreachable). "
+                                f"If this is inline content, pass it in `task` instead."
+                            )
+                        else:
+                            extracted_content = result.text_content
+                    except Exception as e:
+                        extracted_content = f"Failed to extract content from {source}. Error: {e}"
 
                 content.append(
                     {

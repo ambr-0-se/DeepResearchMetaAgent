@@ -87,7 +87,20 @@ class AutoBrowserUseTool(AsyncTool):
 
         history = await browser_agent.run(max_steps=50)
         contents = history.extracted_content()
-        return "\n".join(contents)
+        joined = "\n".join(c for c in contents if c)
+
+        if not joined.strip():
+            visited = getattr(history, "urls", lambda: [])() or []
+            internal_steps = len(history.history) if hasattr(history, "history") else "N"
+            raise RuntimeError(
+                "auto_browser_use_tool returned no extracted content "
+                f"after {internal_steps} internal steps. "
+                f"Visited URLs: {visited[:5]}. "
+                "Likely causes: page required login/CAPTCHA, JS-heavy content didn't render, "
+                "or the target information isn't on the pages visited. "
+                "Recommend switching to deep_researcher_agent or refining the task with specific URLs."
+            )
+        return joined
 
     async def forward(self, task: str) -> ToolResult:
         """
@@ -98,5 +111,8 @@ class AutoBrowserUseTool(AsyncTool):
         Returns:
             ToolResult with the task result
         """
-        result = await self._browser_task(task)
-        return ToolResult(output=result, error=None)
+        try:
+            result = await self._browser_task(task)
+            return ToolResult(output=result, error=None)
+        except Exception as e:
+            return ToolResult(output=None, error=str(e))

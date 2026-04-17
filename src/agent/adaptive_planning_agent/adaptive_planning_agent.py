@@ -28,6 +28,7 @@ from src.meta.modify_tool import ModifySubAgentTool
 from src.meta.review_step import ReviewStep
 from src.skills import SkillRegistry
 from src.skills._extractor import SkillExtractor
+from src.skills._seed import seed_skills_dir
 
 
 @AGENT.register_module(name="adaptive_planning_agent", force=True)
@@ -169,12 +170,22 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         if not enable_skills:
             return None
         skills_dir = getattr(self.config, "skills_dir", "src/skills")
+        skills_path = Path(skills_dir)
         logger.log(
             f"[AdaptivePlanningAgent] enable_skills=True; building SkillRegistry "
-            f"at {skills_dir} (C4)",
+            f"at {skills_path} (C4)",
             level=LogLevel.INFO,
         )
-        return SkillRegistry(Path(skills_dir))
+        # Per-run seeding: when `skills_dir` is a fresh run directory
+        # (e.g. `workdir/gaia_c4_<model>_<run_id>/skills`), the canonical
+        # seed set from `src/skills/` is copied in on first construction.
+        # A marker inside `skills_dir` makes subsequent constructions
+        # (resume, same run id) a no-op so learned skills survive.
+        # When `skills_dir` itself IS `src/skills/`, the marker-guard still
+        # protects against accidental re-seed loops; the copy never fires
+        # because every seed's destination already exists.
+        seed_skills_dir(skills_path)
+        return SkillRegistry(skills_path)
 
     def _install_skill_tools(self) -> None:
         """

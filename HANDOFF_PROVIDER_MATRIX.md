@@ -377,7 +377,12 @@ python examples/run_gaia.py --config configs/config_gaia_c4_qwen.py
 ### Known unknowns / caveats
 
 - **DashScope free-tier sizing:** the daily quota for `qwen3.6-plus` on the intl endpoint is not documented in stable form. First Qwen run will reveal it empirically — log the exact token count at which failover fires.
-- **C4 skill drift:** `enable_skill_extraction=True` in C4 configs mutates `src/skills/` in-place at task end. For frozen-library evaluation, override with `--cfg-options enable_skill_extraction=False`. **Important:** if you don't, two consecutive C4 runs are not directly comparable (the second runs against a larger library).
+- **C4 skill drift (resolved 2026-04-18):** every C4 run now writes its skill library to `workdir/gaia_c4_<model>_<DRA_RUN_ID>/skills/`, seeded fresh from `src/skills/` on first construction. Consequences for GPU-farm operators:
+    - Parallel Mistral/Kimi/Qwen C4 cells never race on a shared dir — cross-model contamination is impossible by construction.
+    - Every historical run is inspectable: `ls workdir/gaia_c4_*_<RUN_ID>/skills/` shows all three libraries after a matrix invocation; `diff -r` across RUN_IDs shows same-model skill evolution.
+    - Matrix runner auto-generates `DRA_RUN_ID=$(date +%Y%m%d_%H%M%S)` and exports it so parallel streams share the stamp. Operators resume a prior run by exporting it explicitly: `DRA_RUN_ID=<prior> bash scripts/run_eval_matrix.sh full '' c4`. The `.seeded` marker inside the skills dir makes seed-copy idempotent on resume (prior learned skills survive).
+    - Convenience: `workdir/gaia_c4_<model>_latest` is symlinked to the most recent run dir after each cell finishes.
+    - For a frozen-library evaluation (pre-trained seeds only, no online learning), still override with `--cfg-options enable_skill_extraction=False`. The per-run dir keeps results isolated; the library itself will match `src/skills/` exactly.
 - **MiniMax `<think>` pruning:** unrelated to the 3-model matrix (MiniMax not in scope here), but if MiniMax is added later, the `general_agent.py::_prune_messages_if_needed` at ≥85% context can truncate `<think>` blocks mid-string. Deferred — see "Not in either commit" above.
 - **Cost ceiling:** full matrix on test split is potentially expensive. Set a kill-switch — `pkill -f "config_gaia_.*_<model>"` will kill one stream without affecting the others.
 - **Kimi vision per-question:** `kimi-k2.5-no-thinking` claims to retain vision (only thinking is disabled, not multimodal). If a GAIA multimodal question silently produces text-only reasoning, suspect that the `extra_body={"thinking":{"type":"disabled"}}` payload also disabled vision — verify with one image-attachment task in Tier 2.

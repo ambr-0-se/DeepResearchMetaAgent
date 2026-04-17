@@ -30,8 +30,16 @@ Usage:
 
 _base_ = './config_gaia_c3.py'
 
-# Separate results directory so C0/C2/C3/C4 don't overwrite each other.
-tag = "gaia_c4"
+# Per-run isolation: every C4 invocation writes its dra.jsonl AND its
+# skill library to `workdir/gaia_c4_<RUN_ID>/`. This means re-running
+# the same model never clobbers the library a previous run evolved, and
+# parallel runs (e.g. via the matrix runner) can never race on the same
+# skills directory. Set `DRA_RUN_ID` explicitly to resume a prior run.
+import os as _os
+from datetime import datetime as _datetime
+_RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M%S")
+
+tag = f"gaia_c4_{_RUN_ID}"
 
 # Override the adaptive planning agent config for C4.
 planning_agent_config = dict(
@@ -52,7 +60,10 @@ planning_agent_config = dict(
     enable_review=True,
     enable_skills=True,
     enable_skill_extraction=True,  # TRUE = C4 training; flip to False for frozen-library eval
-    skills_dir="src/skills",
+    # Per-run skill library. Seeded from `src/skills/` on first construction
+    # (see `src/skills/_seed.py`). A `.seeded` marker prevents re-seed on
+    # resume so learned skills survive.
+    skills_dir=f"workdir/{tag}/skills",
 )
 
 # Use the C4 planning agent config as the main agent

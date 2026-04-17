@@ -132,7 +132,7 @@ PLANNING_TEMPLATES: dict[str, str] = {
             enable_review=True,
             enable_skills=True,
             enable_skill_extraction=True,
-            skills_dir="src/skills",
+            skills_dir=f"workdir/{{tag}}/skills",
         )
         '''
     ),
@@ -149,7 +149,7 @@ at the chosen model.
 Model: {model_id}
 {model_comment}
 
-Output dir: workdir/gaia_{tag}/
+Output dir: workdir/{tag_dir_comment}/
 
 Initial-run knobs (override via --cfg-options):
   - max_samples=N        # cap to first N questions; leave None for full set
@@ -159,8 +159,8 @@ Initial-run knobs (override via --cfg-options):
 """
 
 _base_ = {base_config!r}
-
-tag = "gaia_{tag}"
+{run_id_prelude}
+tag = {tag_expr}
 
 # ---- model overrides --------------------------------------------------------
 
@@ -237,18 +237,45 @@ concurrency = 4
 '''
 
 
+#: Prelude block emitted only for C4 configs. Reads DRA_RUN_ID from the
+#: environment with a fresh-timestamp fallback, so every C4 invocation
+#: lands in its own isolated output/skills directory unless the matrix
+#: runner (or the operator) explicitly reuses a run id.
+_C4_RUN_ID_PRELUDE = (
+    "\n"
+    "import os as _os\n"
+    "from datetime import datetime as _datetime\n"
+    "_RUN_ID = _os.environ.get(\"DRA_RUN_ID\") or "
+    "_datetime.now().strftime(\"%Y%m%d_%H%M%S\")\n"
+)
+
+
 def render_config(model_label: str, model_id: str, langchain_alias: str,
                   model_comment: str, condition: str, base_config: str) -> str:
-    tag = f"{condition}_{model_label}"
+    tag_prefix = f"{condition}_{model_label}"
     self_path = f"configs/config_gaia_{condition}_{model_label}.py"
     planning_block = PLANNING_TEMPLATES[condition].format(model_id=model_id)
+
+    if condition == "c4":
+        # C4 tag includes a run id so repeat runs never collide and each
+        # run's skills library is inspectable forever after.
+        run_id_prelude = _C4_RUN_ID_PRELUDE
+        tag_expr = f'f"gaia_{tag_prefix}_{{_RUN_ID}}"'
+        tag_dir_comment = f"gaia_{tag_prefix}_<run_id>"
+    else:
+        run_id_prelude = ""
+        tag_expr = f'"gaia_{tag_prefix}"'
+        tag_dir_comment = f"gaia_{tag_prefix}"
+
     return CONFIG_TEMPLATE.format(
         model_label_upper=model_label.upper(),
         condition_upper=condition.upper(),
         base_config=base_config,
         model_id=model_id,
         model_comment=model_comment,
-        tag=tag,
+        run_id_prelude=run_id_prelude,
+        tag_expr=tag_expr,
+        tag_dir_comment=tag_dir_comment,
         planning_block=planning_block.rstrip("\n"),
         langchain_alias=langchain_alias,
         self_path=self_path,

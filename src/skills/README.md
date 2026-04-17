@@ -59,7 +59,13 @@ The validator checks agentskills.io compliance (name regex, description length, 
 
 The 7 SKILL.md files shipped in this repo are **seeded** — a **small curated starter corpus** for condition C4, drafted with model assistance then **edited against the real tool and interpreter surfaces** in this repo (agent tool lists, `python_interpreter_tool` import allowlist, GAIA defaults). They all have `metadata.source: seeded`. They are not guaranteed to match every custom deployment; extend or replace seeds when your config adds tools (e.g. `archive_searcher_tool`) or extra `authorized_imports`.
 
-New skills **learned** during C4 training runs are written to this same directory by `SkillExtractor` at task end. They carry `metadata.source: success` or `metadata.source: failure` depending on whether the trajectory succeeded or revealed an actionable failure mode. Learned skills are not pre-committed — they accumulate on the branch used for the training run.
+This directory is the **canonical seed source**. It is read-only at run time — C4 runs never write back here. Instead, on first construction each C4 invocation copies every SKILL.md-bearing subdirectory of `src/skills/` into its own per-run `skills_dir=workdir/gaia_c4_<model>_<run_id>/skills/` (see `_seed.py`), writes a `.seeded` marker last, and subsequent `SkillExtractor` writes land in that per-run dir. This guarantees:
+
+- Cross-model runs in the 3×4 matrix cannot contaminate each other — each `(model, run_id)` cell has a disjoint skill library.
+- Parallel runs of the matrix never race on a shared seed dir.
+- Every historical C4 run remains inspectable after the fact: the `skills/` that produced a given `dra.jsonl` lives next to it under the same timestamped directory.
+
+Newly-extracted skills carry `metadata.source: success` or `metadata.source: failure` depending on whether the trajectory succeeded or revealed an actionable failure mode. Because they land under `workdir/` (git-ignored), learned skills never dirty the tracked tree; diff two runs with `diff -r workdir/gaia_c4_<model>_<A>/skills/ workdir/gaia_c4_<model>_<B>/skills/`.
 
 For frozen-library evaluation (measure the contribution of a pre-trained corpus without online learning), set `enable_skill_extraction=False` in the config.
 

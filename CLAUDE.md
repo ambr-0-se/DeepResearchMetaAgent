@@ -140,7 +140,14 @@ Python package (internal):
 - `_model.py` — `Skill` + `SkillMetadata` dataclasses. Parses frontmatter, validates names against the agentskills.io regex, enforces name-equals-directory-name.
 - `_registry.py` — `SkillRegistry`. Scans `skills_dir` at startup. `metadata_for(consumer)` filters skills visible to a given consumer (planner, sub-agent name, or `all`). `load_body()` reads body on demand. `render_registry_block()` produces the injection for system prompts. `add()` and `increment_verified_uses()` persist via atomic temp+rename writes.
 - `_extractor.py` — `SkillExtractor`. Six-stage pipeline at task end: worthiness heuristic → LLM propose JSON → structural validation → entity blocklist (years / currency / URLs / long numerics) → LLM-as-judge dedup → `registry.add`. Contracted never to raise.
+- `_seed.py` — `seed_skills_dir(dst, src)`. Copies the 7 canonical seed skills from `src/skills/` into a fresh per-run `skills_dir` on first construction. Writes a `.seeded` marker last so resumed runs do not re-copy and clobber learned skills. No-op when `dst == src` (legacy standalone behaviour). Only directories containing `SKILL.md` are copied — package files (`_registry.py`, `README.md`, etc.) are skipped by construction.
 - `validate.py` — CLI validator (`python -m src.skills.validate <path>`).
+
+**Per-run skill-library layout (C4 evaluation matrix).** Every C4 config derives `skills_dir=f"workdir/{tag}/skills"` where `tag` contains a `DRA_RUN_ID` timestamp (env var; fresh timestamp fallback at config load). Each evaluation run therefore writes both `dra.jsonl` and its full skill library into the same `workdir/gaia_c4_<model>_<run_id>/` directory, so:
+- Parallel runs (matrix runner launches mistral/kimi/qwen in parallel) cannot race on the shared seed dir.
+- Repeated runs of the same model never overwrite history — each run's evolved library stays inspectable forever (`diff -r workdir/gaia_c4_mistral_<A>/skills/ workdir/gaia_c4_mistral_<B>/skills/`).
+- `scripts/run_eval_matrix.sh` exports one `DRA_RUN_ID` for the whole invocation and maintains a `workdir/gaia_c4_<model>_latest` symlink pointing at the most recent run for quick inspection.
+- To resume a prior run (e.g. after Ctrl-C): `DRA_RUN_ID=<prior_id> bash scripts/run_eval_matrix.sh full '' c4` — the existing `dra.jsonl` is appended to, and the `.seeded` marker causes seed-copy to be skipped so prior learned skills survive.
 
 Pre-seeded skills (committed to the repo, 7 total covering all 4 consumer scopes):
 - Planner scope: `handling-file-attachments`, `task-decomposition-complex-queries`, `delegation-failure-recovery`

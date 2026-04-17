@@ -529,22 +529,23 @@ class GeneralAgent(AsyncMultiStepAgent):
                 import traceback
                 chain_parts: list[str] = []
                 cur: BaseException | None = e
+                label = "root"
                 depth = 0
                 while cur is not None and depth < 10:
-                    label = (
-                        "root"
-                        if depth == 0
-                        else ("__cause__" if cur is getattr(cur, "__cause__", None) else "__context__")
-                    )
                     tb_str = "".join(traceback.format_exception(type(cur), cur, cur.__traceback__))
                     chain_parts.append(
                         f"--- [{depth}] {label}: {type(cur).__name__}: {cur} ---\n{tb_str}"
                     )
-                    # Prefer explicit __cause__; fall back to __context__.
-                    nxt: BaseException | None = getattr(cur, "__cause__", None)
-                    if nxt is None:
-                        nxt = getattr(cur, "__context__", None)
-                    if nxt is cur:
+                    # Determine next link AND its label together (the label
+                    # describes HOW we got from the current exception to the
+                    # next, which is what makes the chain readable).
+                    cause = getattr(cur, "__cause__", None)
+                    context = getattr(cur, "__context__", None)
+                    if cause is not None and cause is not cur:
+                        nxt, label = cause, "__cause__"
+                    elif context is not None and context is not cur:
+                        nxt, label = context, "__context__"
+                    else:
                         break
                     cur = nxt
                     depth += 1

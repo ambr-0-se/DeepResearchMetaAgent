@@ -40,6 +40,7 @@ original problem, changes, test commands, and validation criteria.
 | `463d791` | **2026-04-19:** `smoke_validate_handoffs_234.sh` Tier-0 loads **16** matrix configs (adds Gemma); registration smoke matches `gen_eval_configs` defaults (`or-kimi-k2.5`, `or-qwen3.6-plus`, `or-gemma-4-31b-it` + langchain wrappers); `validate_handoffs.sh` greps **all four** models; `run_matrix_slurm.sh` / `run_eval_matrix.sh` comments 16-cell |
 | `5299b41` | [`scripts/run_handoff_pytest_sweep.sh`](scripts/run_handoff_pytest_sweep.sh) — one-file-at-a-time **140**-test sweep for handoff #9 / farm CI (same modules as [HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md](docs/handoffs/HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md)); auto `conda run -n dra` when `mmengine` missing |
 | `9d66808` | **2026-04-19:** S2 smoke default **3 Q/cell** + `SMOKE_CFG_OPTIONS` step caps in [`scripts/run_eval_matrix.sh`](scripts/run_eval_matrix.sh); [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md) §Full chain = **S2 → C4 train → snapshot → farm freeze smoke → S4**; output retention + parallel streams documented |
+| `44b0227` | **C4 train / S4 split correctness:** `DATASET_SPLIT=validation` + `sbatch run_matrix_slurm.sh full '' c4` trains skills on **full validation** (config default is `test`); **unset** before S4 so all 16 cells score **`test`**; frozen C4 cells still use `agent_config.*` overrides per [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md) |
 
 
 Farm operators: `git pull origin main` — follow-ups through `5299b41`+ are on `origin/main` (as of 2026-04-19).

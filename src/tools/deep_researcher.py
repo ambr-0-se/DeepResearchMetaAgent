@@ -1,3 +1,4 @@
+import asyncio
 import json
 import json5
 import re
@@ -10,6 +11,23 @@ from src.tools.web_searcher import WebSearcherTool, SearchResult
 from src.tools import AsyncTool, ToolResult
 from src.logger import logger
 from src.registry import TOOL
+
+
+# Per-LLM-call network timeout inside DeepResearchTool. Caps a single model
+# await so a silent SSE stall (observed on Moonshot AI via OpenRouter on Kimi
+# K2.5 — I2 2026-04-19: 11/12 Kimi Qs hit the outer 1200s per-Q timeout with
+# 12 min of log silence in between) surfaces as a clean empty/partial result
+# instead of a full-question wedge. Uniform across all 4 models — Mistral,
+# Qwen, Gemma normally finish in seconds, so this is a no-op for them.
+_PER_CALL_TIMEOUT_S = 60
+
+
+def _call_timeout(deadline: Optional[float]) -> float:
+    """Per-call timeout bounded by remaining research budget, if any."""
+    if deadline is None:
+        return float(_PER_CALL_TIMEOUT_S)
+    remaining = max(1.0, deadline - time.time())  # never block for <1s
+    return min(float(_PER_CALL_TIMEOUT_S), remaining)
 
 
 _DEEP_RESEARCHER_DESCRIPTION = """Performs comprehensive research on a topic through multi-level web searches and content analysis. 
@@ -323,10 +341,17 @@ class DeepResearcherTool(AsyncTool):
                 OptimizedQueryTool()
             ]
 
-            response = await self.model(
-                messages = messages,
-                tools_to_call_from=tools
-            )
+            try:
+                response = await asyncio.wait_for(
+                    self.model(messages=messages, tools_to_call_from=tools),
+                    timeout=_PER_CALL_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"DeepResearchTool _generate_optimized_query timed out after "
+                    f"{_PER_CALL_TIMEOUT_S}s — falling back to raw query."
+                )
+                return query, None
 
             # Extract the query from the tool_call response
             if response and response.tool_calls and len(response.tool_calls) > 0:
@@ -485,10 +510,17 @@ class DeepResearcherTool(AsyncTool):
         ]
 
         # Get follow-up queries from LLM using structured output
-        response = await self.model(
-            messages=messages,
-            tools_to_call_from=tools
-        )
+        try:
+            response = await asyncio.wait_for(
+                self.model(messages=messages, tools_to_call_from=tools),
+                timeout=_PER_CALL_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"DeepResearchTool _generate_follow_ups timed out after "
+                f"{_PER_CALL_TIMEOUT_S}s — skipping follow-ups for this cycle."
+            )
+            return []
 
         # Extract queries from the tool response
         queries = []
@@ -514,10 +546,17 @@ class DeepResearcherTool(AsyncTool):
             ExtractInsightsTool()
         ]
 
-        response = await self.model(
-            messages=messages,
-            tools_to_call_from=tools
-        )
+        try:
+            response = await asyncio.wait_for(
+                self.model(messages=messages, tools_to_call_from=tools),
+                timeout=_PER_CALL_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"DeepResearchTool _analyze_content timed out after "
+                f"{_PER_CALL_TIMEOUT_S}s on {url!r} — skipping content."
+            )
+            return []
 
         insights = []
 
@@ -562,10 +601,18 @@ class DeepResearcherTool(AsyncTool):
             {"role": "user", "content": query}
         ]
         messages = [ChatMessage.from_dict(m) for m in messages] # Convert to ChatMessage format
-        response = await model(
-            messages=messages,
-        )
-        content = response.content
+        try:
+            response = await asyncio.wait_for(
+                model(messages=messages),
+                timeout=_PER_CALL_TIMEOUT_S,
+            )
+            content = response.content
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"DeepResearchTool _summary timed out after {_PER_CALL_TIMEOUT_S}s "
+                "— returning reference materials only."
+            )
+            content = ""
 
         output = reference_materials + "\n" + content
 

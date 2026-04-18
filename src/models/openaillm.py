@@ -277,8 +277,19 @@ class OpenAIServerModel(ApiModel):
         for attempt in range(_RETRY_MAX_ATTEMPTS + 1):
             try:
                 response = await self.client.chat.completions.create(**completion_kwargs)
-                self._last_input_token_count = response.usage.prompt_tokens
-                self._last_output_token_count = response.usage.completion_tokens
+                # Some providers via OpenRouter (observed: Gemma-4 31B via
+                # DeepInfra) return `usage=None` intermittently even though the
+                # completion is valid. Previously we crashed here with
+                # `'NoneType' object has no attribute 'prompt_tokens'`, which
+                # surfaced as `agent_error` at question level (I2 2026-04-19:
+                # 1/48 smoke Qs). Treat a missing usage block as zero tokens
+                # rather than a hard error — accounting is approximate but the
+                # completion is still usable.
+                usage = getattr(response, "usage", None)
+                prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+                self._last_input_token_count = prompt_tokens
+                self._last_output_token_count = completion_tokens
                 # Capture reasoning_content directly from the SDK message object before
                 # dumping: include={"role","content","tool_calls"} would silently drop
                 # it, which breaks DeepSeek-reasoner (and other thinking models) on the
@@ -292,8 +303,8 @@ class OpenAIServerModel(ApiModel):
                     msg_dict,
                     raw=response,
                     token_usage=TokenUsage(
-                        input_tokens=response.usage.prompt_tokens,
-                        output_tokens=response.usage.completion_tokens,
+                        input_tokens=prompt_tokens,
+                        output_tokens=completion_tokens,
                     ),
                 )
             except openai.RateLimitError as e:

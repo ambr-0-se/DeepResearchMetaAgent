@@ -866,27 +866,71 @@ class ModelManager(metaclass=Singleton):
             {"model_name": "or-qwen3-next-80b-a3b-instruct", "model_id": "qwen/qwen3-next-80b-a3b-instruct"},
             {"model_name": "or-qwen3-coder-next", "model_id": "qwen/qwen3-coder-next"},
             # Moonshot Kimi K2.5 — fixed sampling params (temp/top_p locked)
-            {"model_name": "or-kimi-k2.5", "model_id": "moonshotai/kimi-k2.5"},
+            # extra_body: `thinking: disabled` satisfies Moonshot's constraint
+            # that `tool_choice="required"` requires thinking off (else 400).
+            # `provider.order=["Moonshot"]` pins routing to Moonshot so free-tier
+            # OR cannot silently fall back to a sub-provider with diverging
+            # thinking / sampling semantics.
+            {
+                "model_name": "or-kimi-k2.5",
+                "model_id": "moonshotai/kimi-k2.5",
+                "extra_body": {
+                    "thinking": {"type": "disabled"},
+                    "provider": {"order": ["Moonshot"]},
+                },
+            },
             # MiniMax M2.7 — preserve <think> blocks across tool turns
             {"model_name": "or-minimax-m2.7", "model_id": "minimax/minimax-m2.7"},
+            # Google Gemma 4 31B Instruct (D4, 2026-04-18). Paid only — the
+            # `:free` variant routes through Google AI Studio, which has the
+            # least reliable tool-use support. Provider pin restricts routing
+            # to DeepInfra + Together (both vLLM-backed, latest gemma4 parser)
+            # so Novita (no `tools` support) cannot be selected. Reasoning
+            # mode is disabled to prevent thinking-channel contamination of
+            # tool output (vLLM issue #39043). Concurrency cap of 4 lives in
+            # `scripts/run_eval_matrix.sh` cell_cmd (vLLM #39392 pad-bug under
+            # parallel load). Live smoke probe 2026-04-18 confirmed
+            # `tool_choice="required"` works with this provider pin
+            # (finish_reason="tool_calls", no special-token leaks), so Gemma
+            # is NOT in `MODELS_REJECTING_REQUIRED`.
+            {
+                "model_name": "or-gemma-4-31b-it",
+                "model_id": "google/gemma-4-31b-it",
+                "extra_body": {
+                    "provider": {
+                        "order": ["DeepInfra", "Together"],
+                        "allow_fallbacks": False,
+                    },
+                    "reasoning": {"enabled": False},
+                },
+            },
         ]
 
         for model in models:
             model_name = model["model_name"]
             model_id = model["model_id"]
+            extra_body = model.get("extra_body")
 
             client = AsyncOpenAI(
                 api_key=api_key,
                 base_url=api_base,
             )
-            registered_model = OpenAIServerModel(
-                model_id=model_id,
-                http_client=client,
-                custom_role_conversions=custom_role_conversions,
-            )
+            openai_kwargs: dict[str, Any] = {
+                "model_id": model_id,
+                "http_client": client,
+                "custom_role_conversions": custom_role_conversions,
+            }
+            if extra_body is not None:
+                openai_kwargs["extra_body"] = extra_body
+            registered_model = OpenAIServerModel(**openai_kwargs)
             self.registed_models[model_name] = registered_model
 
-            # LangChain wrapper required by auto_browser_use_tool
+            # LangChain wrapper required by auto_browser_use_tool.
+            # Note: ChatOpenAI does not accept `extra_body` at construction;
+            # provider-specific routing (thinking off, provider pin, etc.) is
+            # not propagated here. If a browser-use agent starts exercising
+            # those code paths under Kimi/Gemma/etc., plumb `model_kwargs`
+            # through at that call site — out of scope for this change.
             langchain_model = ChatOpenAI(
                 model=model_id,
                 api_key=api_key,

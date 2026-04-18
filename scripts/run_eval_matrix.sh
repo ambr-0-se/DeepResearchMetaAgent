@@ -22,16 +22,20 @@
 #   PYTHON     — interpreter (default: python)
 #   LIMIT      — override max_samples for `smoke` mode (default: 5)
 #   LOG_DIR    — where to tee per-cell stdout/stderr (default: workdir/run_logs)
+#   GEMMA_CONCURRENCY — per-Gemma-cell concurrency cap (default: 4). Workaround
+#                       for vLLM #39392 (gemma4 tool parser emits all-<pad>
+#                       tokens non-deterministically under parallel load).
 
 set -uo pipefail   # -e omitted on purpose: a failure in one cell shouldn't kill others
 
 MODE="${1:-smoke}"            # smoke | full
-ONLY_MODEL="${2:-}"           # mistral | kimi | qwen | '' (all)
+ONLY_MODEL="${2:-}"           # mistral | kimi | qwen | gemma | '' (all)
 ONLY_CONDITION="${3:-}"       # c0 | c2 | c3 | c4 | '' (all)
 
 PYTHON="${PYTHON:-python}"
 LIMIT="${LIMIT:-5}"
 LOG_DIR="${LOG_DIR:-workdir/run_logs}"
+GEMMA_CONCURRENCY="${GEMMA_CONCURRENCY:-4}"
 mkdir -p "$LOG_DIR"
 
 # Shared run id for every cell in this invocation. Every generated config
@@ -42,7 +46,7 @@ mkdir -p "$LOG_DIR"
 # a prior run by exporting DRA_RUN_ID before invocation.
 export DRA_RUN_ID="${DRA_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 
-ALL_MODELS=(mistral kimi qwen)
+ALL_MODELS=(mistral kimi qwen gemma)
 ALL_CONDITIONS=(c0 c2 c3 c4)
 
 [[ -n "$ONLY_MODEL" ]] && ALL_MODELS=("$ONLY_MODEL")
@@ -51,12 +55,26 @@ ALL_CONDITIONS=(c0 c2 c3 c4)
 # Build the per-cell command. In smoke mode, cap question count and use the
 # labeled validation split so we can score immediately. In full mode, no cap
 # and the test split (default in config_gaia.py).
+#
+# Per-model overrides:
+#   - gemma: concurrency capped via GEMMA_CONCURRENCY (default 4) to dodge
+#     vLLM #39392 (gemma4 tool parser pad-bug under parallel load). Other
+#     models fall through to the config file's own `concurrency` setting.
 cell_cmd() {
   local cfg="$1"
+  local model="$2"
+  local extra_cfg=""
+  if [[ "$model" == "gemma" ]]; then
+    extra_cfg=" concurrency=$GEMMA_CONCURRENCY"
+  fi
   if [[ "$MODE" == "smoke" ]]; then
-    echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options max_samples=$LIMIT dataset.split=validation"
+    echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options max_samples=$LIMIT dataset.split=validation$extra_cfg"
   else
-    echo "$PYTHON examples/run_gaia.py --config $cfg"
+    if [[ -n "$extra_cfg" ]]; then
+      echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options${extra_cfg}"
+    else
+      echo "$PYTHON examples/run_gaia.py --config $cfg"
+    fi
   fi
 }
 
@@ -75,7 +93,7 @@ run_model_stream() {
         continue
       fi
       local cmd
-      cmd="$(cell_cmd "$cfg")"
+      cmd="$(cell_cmd "$cfg" "$model")"
       echo "----"
       echo "[stream:$model] CELL=$condition CMD: $cmd"
       date

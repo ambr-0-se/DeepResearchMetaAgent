@@ -49,18 +49,33 @@ MODELS = [
     ),
     (
         "qwen",
-        "or-qwen3-next-80b-a3b-instruct",
-        "langchain-or-qwen3-next-80b-a3b-instruct",
-        "Qwen3-Next 80B A3B Instruct via OpenRouter direct (no DashScope "
-        "failover wrapper — DashScope free tier is exhausted and cannot be "
-        "paid-tier'd from this project account, and the earlier "
-        "`or-qwen3.6-plus` backup turned out to have no OpenRouter provider "
-        "that accepts `tool_choice=\"required\"`). This 80B-MoE instruct "
-        "variant is the cheapest-and-fastest live-tested Qwen model that "
-        "does accept tool_choice=required (~$0.09/$1.10 per M input/output; "
-        "sub-second latency; 262K context). Closest working analog to "
-        "the originally-proposed qwen3.5-27b which is also blocked on "
-        "tool_choice on OpenRouter.",
+        "or-qwen3.6-plus",
+        "langchain-or-qwen3.6-plus",
+        "Qwen3.6-Plus via OpenRouter (operator preference — D1, 2026-04-18). "
+        "Chosen over Qwen3-Next for its vision modality (text+image+video per "
+        "OR metadata) and 1M context. OR providers for the whole Qwen family "
+        "reject `tool_choice=\"required\"` (404/400 depending on backend); "
+        "this is handled transparently by the hybrid tool_choice dispatch in "
+        "`src/models/tool_choice.py` (D3) — the `qwen/` wire-id prefix "
+        "downgrades to `\"auto\"` and the retry guard in GeneralAgent / "
+        "ToolCallingAgent re-prompts plain-text responses back into tool "
+        "calls. $0.325 in / $1.95 out per M tokens.",
+    ),
+    (
+        "gemma",
+        "or-gemma-4-31b-it",
+        "langchain-or-gemma-4-31b-it",
+        "Gemma 4 31B Instruct via OpenRouter (D4, 2026-04-18). Dense Google "
+        "frontier slot alongside the MoE variants (Mistral, Kimi, Qwen). "
+        "Text+image+video modalities (no audio). Apache 2.0. Provider pin to "
+        "DeepInfra+Together (both vLLM-backed, latest gemma4 parser) is set "
+        "at registration in `src/models/models.py`; reasoning mode disabled "
+        "there to prevent thinking-channel contamination of tool output. "
+        "tool_choice is downgraded to `\"auto\"` via the D5 named entry in "
+        "`src/models/tool_choice.py` pending a live smoke probe. "
+        "Concurrency is capped at 4 in `scripts/run_eval_matrix.sh` for this "
+        "stream only (vLLM #39392 pad-bug under parallel load). "
+        "$0.13 in / $0.38 out per M tokens.",
     ),
 ]
 

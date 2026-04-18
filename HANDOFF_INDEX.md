@@ -4,7 +4,7 @@ Entry point for change handoffs that still need validation on the GPU farm.
 Each linked document is **self-contained** — read the specific handoff doc for
 original problem, changes, test commands, and validation criteria.
 
-> Per-topic handoff docs live in [`docs/handoffs/`](docs/handoffs/) (see the
+> Per-topic handoff docs live in `[docs/handoffs/](docs/handoffs/)` (see the
 > [directory README](docs/handoffs/README.md) for authoring conventions). This
 > index stays at the repo root because the operator is trained to open it
 > first.
@@ -13,37 +13,41 @@ original problem, changes, test commands, and validation criteria.
 
 ## Pending Handoffs
 
-| # | Title | Doc | Status | Commit(s) | Pushed? |
-|---|-------|-----|--------|-----------|---------|
-| 1 | Silent-failure fixes for browser + analyzer tools | [HANDOFF_SILENT_FAILURES.md](docs/handoffs/HANDOFF_SILENT_FAILURES.md) | Code-validated (unit + partial runtime, 2026-04-18) — awaiting GPU-farm test-split run | `ba28f21` | Yes |
-| 2 | Multi-provider integration + GAIA eval matrix (Mistral/Kimi/Qwen × C0–C4) with Qwen DashScope→OpenRouter failover | [HANDOFF_PROVIDER_MATRIX.md](docs/handoffs/HANDOFF_PROVIDER_MATRIX.md) | Code-validated (24 unit tests; failover live-fired 2026-04-18; see local-validation fixes below) — awaiting test-split accuracy | `7632470` → `9883a3a` → `a98da9a` (local fixes: Qwen thinking, Kimi→OpenRouter) | Yes |
-| 3 | `modify_subagent` prompt + tool-description guidance expansion (all 7 actions covered, failure-mode→action table, condition-scoped anti-patterns for C2/C3/C4) | [HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md](docs/handoffs/HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md) | Code-validated (93 adaptive-tool mentions in C2+ runtime logs, 2026-04-18) — awaiting test-split | `764c6bf` → `b73eb39` | Yes |
-| 4 | Core C3 / C4 implementation — structural REVIEW step + cross-task skill library (the four experimental conditions C0/C2/C3/C4 themselves) | [HANDOFF_C3_C4_IMPLEMENTATION.md](docs/handoffs/HANDOFF_C3_C4_IMPLEMENTATION.md) | Code-validated (60 unit tests: 26 review_schema + 28 skill_registry + 6 skill_seed; smoke matrix targets 4/4 C4 `SkillRegistry` banners — awaiting `[REVIEW]` marker under traffic + test-split) | `60065a8` → `433c30e` → `0643089` → `d247605` | Yes |
-| 5 | RC1 premature `final_answer_tool` guard + duplicate-yield bug fix + RC2 exception-chain diagnostic hook + prompt contradictions fix | [HANDOFF_RC1_FINAL_ANSWER_GUARD.md](docs/handoffs/HANDOFF_RC1_FINAL_ANSWER_GUARD.md) | Code-validated (18 unit tests, 2026-04-18) — awaiting guard-fire in real traffic | `54e7707` → `a9a6985` → `c52cf91` → `912685f` → `d36f4d4` | Yes |
-| 6 | Pass 2 Qwen-4B (vLLM) tuning — sub-agent `max_steps` 3/3/5→7/7/7 and `context_prune_threshold_ratio`=0.75 on `config_gaia_adaptive_qwen.py` | [HANDOFF_PASS2_QWEN_TUNING.md](docs/handoffs/HANDOFF_PASS2_QWEN_TUNING.md) | **N/A for 3-model API matrix** (Qwen-4B local-vLLM only; reinstate when returning to on-prem Qwen-4B runs) | `63486ca` | **No — push pending** |
-| 7 | ToolGenerator hardening — allowlist + AST imports, repair retry, prompt examples, `Tool.from_code(expected_tool_name)`, collision-safe dynamic tool names, unit tests | [HANDOFF_TOOLGENERATOR.md](docs/handoffs/HANDOFF_TOOLGENERATOR.md) | Code-validated (12/12 unit tests after `7ee9ae1` schema fallback fix, 2026-04-18) — awaiting test-split | `0161321` → `7ee9ae1` (Tool.from_code parameters synthesis fix) | Yes |
-| 8 | GAIA test-split execution protocol for the (now-)16-cell matrix on the HKU CS GPU farm (staged S0→S1→S2→[C4 train/freeze]→S4 + grep sweep + resume protocol) | [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md) | Ready to execute — **unblocked 2026-04-18** (#9 implemented + live-verified); **2026-04-19:** `smoke_validate_handoffs_234` + `validate_handoffs.sh` aligned to 16 cells (`463d791`) | `463d791` + prior matrix commits on `main` | Yes |
-| 9 | Kimi K2.5 vision via `extra_body.thinking=disabled + provider.order=[Moonshot]`, per-model `tool_choice` hybrid dispatch with retry guard (D1–D3), Gemma-4-31B as 4th matrix slot (D4/D5) with DeepInfra/Together provider pin | [HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md](docs/handoffs/HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md) | **IMPLEMENTED + LIVE-VERIFIED** — **140/140** unit tests (one-file sweep, 2026-04-19; `bash scripts/run_handoff_pytest_sweep.sh`), 3/3 live probes (2026-04-18); **farm:** repeat sweep + matrix smoke (S2) still to do | `fe3de8d` → `829d4d8` → `c17f24e` → `27d48e4` | Yes |
+
+| #   | Title                                                                                                                                                                                                                          | Doc                                                                                              | Status                                                                                                                                                                                                                  | Commit(s)                                                                       | Pushed?               |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------- |
+| 1   | Silent-failure fixes for browser + analyzer tools                                                                                                                                                                              | [HANDOFF_SILENT_FAILURES.md](docs/handoffs/HANDOFF_SILENT_FAILURES.md)                           | Code-validated (unit + partial runtime, 2026-04-18) — awaiting GPU-farm test-split run                                                                                                                                  | `ba28f21`                                                                       | Yes                   |
+| 2   | Multi-provider integration + GAIA eval matrix (Mistral/Kimi/Qwen × C0–C4) with Qwen DashScope→OpenRouter failover                                                                                                              | [HANDOFF_PROVIDER_MATRIX.md](docs/handoffs/HANDOFF_PROVIDER_MATRIX.md)                           | Code-validated (24 unit tests; failover live-fired 2026-04-18; see local-validation fixes below) — awaiting test-split accuracy                                                                                         | `7632470` → `9883a3a` → `a98da9a` (local fixes: Qwen thinking, Kimi→OpenRouter) | Yes                   |
+| 3   | `modify_subagent` prompt + tool-description guidance expansion (all 7 actions covered, failure-mode→action table, condition-scoped anti-patterns for C2/C3/C4)                                                                 | [HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md](docs/handoffs/HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md)         | Code-validated (93 adaptive-tool mentions in C2+ runtime logs, 2026-04-18) — awaiting test-split                                                                                                                        | `764c6bf` → `b73eb39`                                                           | Yes                   |
+| 4   | Core C3 / C4 implementation — structural REVIEW step + cross-task skill library (the four experimental conditions C0/C2/C3/C4 themselves)                                                                                      | [HANDOFF_C3_C4_IMPLEMENTATION.md](docs/handoffs/HANDOFF_C3_C4_IMPLEMENTATION.md)                 | Code-validated (60 unit tests: 26 review_schema + 28 skill_registry + 6 skill_seed; smoke matrix targets 4/4 C4 `SkillRegistry` banners — awaiting `[REVIEW]` marker under traffic + test-split)                        | `60065a8` → `433c30e` → `0643089` → `d247605`                                   | Yes                   |
+| 5   | RC1 premature `final_answer_tool` guard + duplicate-yield bug fix + RC2 exception-chain diagnostic hook + prompt contradictions fix                                                                                            | [HANDOFF_RC1_FINAL_ANSWER_GUARD.md](docs/handoffs/HANDOFF_RC1_FINAL_ANSWER_GUARD.md)             | Code-validated (18 unit tests, 2026-04-18) — awaiting guard-fire in real traffic                                                                                                                                        | `54e7707` → `a9a6985` → `c52cf91` → `912685f` → `d36f4d4`                       | Yes                   |
+| 6   | Pass 2 Qwen-4B (vLLM) tuning — sub-agent `max_steps` 3/3/5→7/7/7 and `context_prune_threshold_ratio`=0.75 on `config_gaia_adaptive_qwen.py`                                                                                    | [HANDOFF_PASS2_QWEN_TUNING.md](docs/handoffs/HANDOFF_PASS2_QWEN_TUNING.md)                       | **N/A for 3-model API matrix** (Qwen-4B local-vLLM only; reinstate when returning to on-prem Qwen-4B runs)                                                                                                              | `63486ca`                                                                       | **No — push pending** |
+| 7   | ToolGenerator hardening — allowlist + AST imports, repair retry, prompt examples, `Tool.from_code(expected_tool_name)`, collision-safe dynamic tool names, unit tests                                                          | [HANDOFF_TOOLGENERATOR.md](docs/handoffs/HANDOFF_TOOLGENERATOR.md)                               | Code-validated (12/12 unit tests after `7ee9ae1` schema fallback fix, 2026-04-18) — awaiting test-split                                                                                                                 | `0161321` → `7ee9ae1` (Tool.from_code parameters synthesis fix)                 | Yes                   |
+| 8   | GAIA test-split execution protocol for the (now-)16-cell matrix on the HKU CS GPU farm (staged S0→S1→S2→C4 train/snapshot/freeze→S4 + grep sweep + resume protocol)                                                                   | [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md)                                       | Ready to execute — **unblocked 2026-04-18**; **2026-04-19:** 16-cell smoke + `validate_handoffs` (`463d791`); **S2** default **3 Q/cell** + smoke step caps + parallel model streams (`run_eval_matrix.sh`) | `463d791` + prior matrix commits on `main`                                      | Yes                   |
+| 9   | Kimi K2.5 vision via `extra_body.thinking=disabled + provider.order=[Moonshot]`, per-model `tool_choice` hybrid dispatch with retry guard (D1–D3), Gemma-4-31B as 4th matrix slot (D4/D5) with DeepInfra/Together provider pin | [HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md](docs/handoffs/HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md) | **IMPLEMENTED + LIVE-VERIFIED** — **140/140** unit tests (one-file sweep, 2026-04-19; `bash scripts/run_handoff_pytest_sweep.sh`), 3/3 live probes (2026-04-18); **farm:** repeat sweep + matrix smoke (S2) still to do | `fe3de8d` → `829d4d8` → `c17f24e` → `27d48e4`                                   | Yes                   |
+
 
 ### Local-validation follow-ups (2026-04-18 session) — not original handoffs, but required to unblock local test-split prep
 
-| Commit | Scope |
-|--------|-------|
-| `a98da9a` | Qwen `enable_thinking=False` on base variants; Kimi matrix switched to `or-kimi-k2.5` (OpenRouter) per operator direction; `del _os, _datetime` in all 16 generated/base configs so `mmengine.Config.pretty_text` doesn't crash yapf |
-| `7ee9ae1` | MCP fence extraction rewritten to take only the first fenced block; `Tool.from_code` now synthesizes `parameters` from `inputs` when absent (fixes 3 ToolGenerator tests); `LogLevel.WARNING` added (fixes 3 skill_registry tests); `GAIADataset` gets `skip_file_attachments` + `task_ids` kwargs; `workdir/` added to `.gitignore` |
-| `905a1fa` | `AutoBrowserUseTool.max_steps` now configurable (default 50 preserved); pass `auto_browser_use_tool_config.max_steps=8` for smoke validation |
-| `4162bcc` | MCP fence extraction: unclosed opening fence now logs an explicit "missing closing ``` marker" rejection instead of exec'ing trailing junk |
-| `0e7903c` | `scripts/validate_handoffs.sh` — per-run grep sweep producing a pass/info matrix across handoffs #1/#2/#3/#4/#5/#7 |
-| `463d791` | **2026-04-19:** `smoke_validate_handoffs_234.sh` Tier-0 loads **16** matrix configs (adds Gemma); registration smoke matches `gen_eval_configs` defaults (`or-kimi-k2.5`, `or-qwen3.6-plus`, `or-gemma-4-31b-it` + langchain wrappers); `validate_handoffs.sh` greps **all four** models; `run_matrix_slurm.sh` / `run_eval_matrix.sh` comments 16-cell |
-| `5299b41` | **`scripts/run_handoff_pytest_sweep.sh`** — one-file-at-a-time **140**-test sweep for handoff #9 / farm CI (same modules as [HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md](docs/handoffs/HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md)); auto `conda run -n dra` when `mmengine` missing |
 
-Farm operators: `git pull origin main` — follow-ups through `463d791` are on **`origin/main`** (as of 2026-04-19).
+| Commit    | Scope                                                                                                                                                                                                                                                                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `a98da9a` | Qwen `enable_thinking=False` on base variants; Kimi matrix switched to `or-kimi-k2.5` (OpenRouter) per operator direction; `del _os, _datetime` in all 16 generated/base configs so `mmengine.Config.pretty_text` doesn't crash yapf                                                                                                                    |
+| `7ee9ae1` | MCP fence extraction rewritten to take only the first fenced block; `Tool.from_code` now synthesizes `parameters` from `inputs` when absent (fixes 3 ToolGenerator tests); `LogLevel.WARNING` added (fixes 3 skill_registry tests); `GAIADataset` gets `skip_file_attachments` + `task_ids` kwargs; `workdir/` added to `.gitignore`                    |
+| `905a1fa` | `AutoBrowserUseTool.max_steps` now configurable (default 50 preserved); pass `auto_browser_use_tool_config.max_steps=8` for smoke validation                                                                                                                                                                                                            |
+| `4162bcc` | MCP fence extraction: unclosed opening fence now logs an explicit "missing closing ``` marker" rejection instead of exec'ing trailing junk                                                                                                                                                                                                              |
+| `0e7903c` | `scripts/validate_handoffs.sh` — per-run grep sweep producing a pass/info matrix across handoffs #1/#2/#3/#4/#5/#7                                                                                                                                                                                                                                      |
+| `463d791` | **2026-04-19:** `smoke_validate_handoffs_234.sh` Tier-0 loads **16** matrix configs (adds Gemma); registration smoke matches `gen_eval_configs` defaults (`or-kimi-k2.5`, `or-qwen3.6-plus`, `or-gemma-4-31b-it` + langchain wrappers); `validate_handoffs.sh` greps **all four** models; `run_matrix_slurm.sh` / `run_eval_matrix.sh` comments 16-cell |
+| `5299b41` | [`scripts/run_handoff_pytest_sweep.sh`](scripts/run_handoff_pytest_sweep.sh) — one-file-at-a-time **140**-test sweep for handoff #9 / farm CI (same modules as [HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md](docs/handoffs/HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md)); auto `conda run -n dra` when `mmengine` missing |
+
+
+Farm operators: `git pull origin main` — follow-ups through `5299b41`+ are on `origin/main` (as of 2026-04-19).
 
 ---
 
 ## Completed / Archived
 
-_(none yet — move rows here once their validation pass is signed off on the GAIA test split.)_
+*(none yet — move rows here once their validation pass is signed off on the GAIA test split.)*
 
 ---
 
@@ -67,12 +71,14 @@ _(none yet — move rows here once their validation pass is signed off on the GA
 
 The **checked-in 16-cell GAIA configs** (`configs/config_gaia_c{0,2,3,4}_{mistral,kimi,qwen,gemma}.py`) are generated by `scripts/gen_eval_configs.py` with these defaults (updated 2026-04-18 per handoff #9):
 
-| Role | Default `model_id` | Required env vars | Notes |
-|------|-------------------|-------------------|-------|
-| Mistral | `mistral-small` (native La Plateforme) | `MISTRAL_API_KEY` | |
-| Kimi | `or-kimi-k2.5` (OpenRouter) | `OPENROUTER_API_KEY` | `extra_body={thinking: disabled, provider.order: [Moonshot]}` baked into OR registration — gives Kimi vision on GAIA image questions while satisfying Moonshot's `tool_choice="required"` constraint. |
-| Qwen | `or-qwen3.6-plus` (OpenRouter) | `OPENROUTER_API_KEY` | Whole Qwen family is blanket-downgraded to `tool_choice="auto"` at dispatch time (hybrid dispatch D3) + retry guard; vision + 1M context. |
-| Gemma | `or-gemma-4-31b-it` (OpenRouter, paid — **`:free` excluded**) | `OPENROUTER_API_KEY` | Provider pin `DeepInfra+Together`, `reasoning.enabled=false`, concurrency ≤ 4 (vLLM #39392). Live-probed 2026-04-18 — accepts `tool_choice="required"` directly. |
+
+| Role    | Default `model_id`                                            | Required env vars    | Notes                                                                                                                                                                                                 |
+| ------- | ------------------------------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mistral | `mistral-small` (native La Plateforme)                        | `MISTRAL_API_KEY`    |                                                                                                                                                                                                       |
+| Kimi    | `or-kimi-k2.5` (OpenRouter)                                   | `OPENROUTER_API_KEY` | `extra_body={thinking: disabled, provider.order: [Moonshot]}` baked into OR registration — gives Kimi vision on GAIA image questions while satisfying Moonshot's `tool_choice="required"` constraint. |
+| Qwen    | `or-qwen3.6-plus` (OpenRouter)                                | `OPENROUTER_API_KEY` | Whole Qwen family is blanket-downgraded to `tool_choice="auto"` at dispatch time (hybrid dispatch D3) + retry guard; vision + 1M context.                                                             |
+| Gemma   | `or-gemma-4-31b-it` (OpenRouter, paid — `:free` excluded) | `OPENROUTER_API_KEY` | Provider pin `DeepInfra+Together`, `reasoning.enabled=false`, concurrency ≤ 4 (vLLM #39392). Live-probed 2026-04-18 — accepts `tool_choice="required"` directly.                                      |
+
 
 **`OPENAI_API_KEY` is optional** for those runs: if it is unset or empty, `ModelManager` **skips** remote OpenAI + LangChain `langchain-gpt-*` wrappers (no crash). You only need it when a config selects an OpenAI model.
 
@@ -94,12 +100,14 @@ The **checked-in 16-cell GAIA configs** (`configs/config_gaia_c{0,2,3,4}_{mistra
 
 ## What counts as “full” handoff validation vs smoke
 
-| Level | What you run | What it proves |
-|-------|----------------|------------------|
-| **Smoke (minutes)** | `bash scripts/smoke_validate_handoffs_234.sh`, targeted `pytest`, `max_samples=1` GAIA, `python scripts/check_firecrawl_credits.py` | Wiring, registration, prompt render, no obvious regressions in isolated tests |
-| **Full (per handoff doc)** | Full GAIA splits, matrix `smoke`/`full`, score/grep thresholds in each `HANDOFF_*.md` | Original research / release criteria |
 
-To make **problem-solved** checks easier without full GAIA: prefer **one grep per fix** on a small run (e.g. `premature-final-answer guard` count, zero `No such file or directory: 'code.txt'`), keep **`scripts/smoke_validate_handoffs_234.sh`** green, and add **`STRICT_QWEN_FAILOVER=1`** to the smoke script when you require OpenRouter for Qwen failover registration.
+| Level                      | What you run                                                                                                                        | What it proves                                                                |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Smoke (minutes)**        | `bash scripts/smoke_validate_handoffs_234.sh`, targeted `pytest`, `max_samples=1` GAIA, `python scripts/check_firecrawl_credits.py` | Wiring, registration, prompt render, no obvious regressions in isolated tests |
+| **Full (per handoff doc)** | Full GAIA splits, matrix `smoke`/`full`, score/grep thresholds in each `HANDOFF_*.md`                                               | Original research / release criteria                                          |
+
+
+To make **problem-solved** checks easier without full GAIA: prefer **one grep per fix** on a small run (e.g. `premature-final-answer guard` count, zero `No such file or directory: 'code.txt'`), keep `scripts/smoke_validate_handoffs_234.sh` green, and add `STRICT_QWEN_FAILOVER=1` when you require OpenRouter for Qwen failover registration.
 
 ---
 
@@ -118,12 +126,12 @@ To make **problem-solved** checks easier without full GAIA: prefer **one grep pe
 
 ## Progress snapshot (2026-04-19)
 
-**Done (repo / local):** `origin/main` includes prior follow-ups (`a98da9a`, `7ee9ae1`, …) and **`463d791`** (16-cell handoff smoke + `validate_handoffs.sh` + SLURM/matrix script comments). `bash scripts/smoke_validate_handoffs_234.sh` is green with keys (Tier 0 = 16 configs, registration = 4 models + wrappers). **Handoff #9 unit sweep:** `bash scripts/run_handoff_pytest_sweep.sh` → **140/140** passed (`dra`, 2026-04-19).
+**Done (repo / local):** `origin/main` includes prior follow-ups (`a98da9a`, `7ee9ae1`, …) and `463d791` (16-cell handoff smoke + `validate_handoffs.sh` + SLURM/matrix script comments). `bash scripts/smoke_validate_handoffs_234.sh` is green with keys (Tier 0 = 16 configs, registration = 4 models + wrappers). **Handoff #9 unit sweep:** `bash scripts/run_handoff_pytest_sweep.sh` → **140/140** passed (`dra`, 2026-04-19).
 
-**Not done (GPU farm / eval):** repeat **`bash scripts/run_handoff_pytest_sweep.sh`** on the farm for CI parity, then **S0→S1→S2** (`sbatch run_matrix_slurm.sh smoke`), optional **C4 train + freeze-smoke**, then **S4** + scoring + `validate_handoffs.sh <DRA_RUN_ID>` — still required before **Completed / Archived**. Handoff **#6** remains N/A for the API matrix.
+**Not done (GPU farm / eval):** repeat `bash scripts/run_handoff_pytest_sweep.sh` (CI parity), then **S0→S1→S2** (`sbatch run_matrix_slurm.sh smoke` — default **3 Q/cell** + smoke step caps; **four models in parallel**). Before **S4**, complete **C4 training → snapshot → farm freeze smoke** when reporting **C4** on `test` (see [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md) §Full chain). Then **S4** + scoring + `validate_handoffs.sh <DRA_RUN_ID>`. **Retain** all `workdir/` run dirs and `logs/` until review. Handoff **#6** remains N/A for the API matrix.
 
 ## For the Next Session
 
 1. Read this index first.
-2. On the farm: `git pull origin main`, then `bash scripts/run_handoff_pytest_sweep.sh` (#9 CI parity) and **S0→S1→S2** per [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md); attach `validate_handoffs.sh` output for the matrix `DRA_RUN_ID`.
+2. On the farm: `git pull origin main`, then `bash scripts/run_handoff_pytest_sweep.sh` (#9 CI parity) and **S0→S1→S2** per [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md) (S2 defaults: 3 Q/cell + caps; parallel streams). Run **C4 train → snapshot → freeze smoke** before **S4** if C4 is in scope; keep all outputs for review.
 3. When the **test-split** run is signed off, update each row's Status, move to Completed, and note the validating run's tag.

@@ -14,7 +14,7 @@
 #
 # All four matrix models are API-based (no local vLLM), so this job
 # doesn't request GPUs — just CPU + RAM + network. The wall-clock cap is
-# 24h which is plenty for smoke (5 Q × 16 cells on validation) or for
+# 24h which is plenty for smoke (default 3 Q × 16 cells on validation) or for
 # orchestrating full test-split runs per scripts/run_eval_matrix.sh.
 #
 # Usage (on the HKU CS Phase-3 gateway, e.g. gpu3gate1.cs.hku.hk):
@@ -28,7 +28,7 @@
 #   # Just one condition — e.g. only C3 across all 4 models:
 #   sbatch run_matrix_slurm.sh full '' c3
 #
-#   # Validation-split smoke (5 Q/cell):
+#   # Validation-split smoke (default 3 Q/cell; override LIMIT=5):
 #   sbatch run_matrix_slurm.sh smoke
 #
 #   # One model, one condition (cheapest):
@@ -56,6 +56,10 @@ echo "Node:          ${SLURM_NODELIST:-$(hostname)}"
 echo "MODE:          $MODE"
 echo "ONLY_MODEL:    '${ONLY_MODEL}'"
 echo "ONLY_CONDITION:'${ONLY_CONDITION}'"
+if [[ "$MODE" == "smoke" ]]; then
+  echo "Smoke LIMIT:   ${LIMIT:-3}  (override: export LIMIT=5 before sbatch)"
+  echo "Smoke caps:    SMOKE_CFG_OPTIONS ${SMOKE_CFG_OPTIONS:+set}${SMOKE_CFG_OPTIONS:-unset→defaults in run_eval_matrix.sh}"
+fi
 echo "Started:       $(date)"
 echo "========================================"
 

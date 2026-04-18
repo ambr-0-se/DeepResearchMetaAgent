@@ -6,7 +6,7 @@
 # C0/C2/C3/C4 run sequentially because they share one API key per model.
 #
 # Usage:
-#   # Smoke test — 5 validation-split questions per cell, all 16 cells:
+#   # Smoke test — default 3 validation-split Q/cell, all 16 cells (4 model streams in parallel):
 #   bash scripts/run_eval_matrix.sh smoke
 #
 #   # Full test-split submission run (NO max_samples cap, default split=test):
@@ -20,11 +20,19 @@
 #
 # Env:
 #   PYTHON     — interpreter (default: python)
-#   LIMIT      — override max_samples for `smoke` mode (default: 5)
+#   LIMIT      — max_samples for `smoke` mode (default: 3). Set LIMIT=5 to match older docs.
+#   SMOKE_CFG_OPTIONS — extra mmengine keys appended in smoke mode only. If **unset**,
+#                       defaults to tight planner/browser/sub-agent caps (cost control).
+#                       Set to empty string before launch to omit caps: `export SMOKE_CFG_OPTIONS=`
+#                       (then only max_samples + validation split apply).
 #   LOG_DIR    — where to tee per-cell stdout/stderr (default: workdir/run_logs)
 #   GEMMA_CONCURRENCY — per-Gemma-cell concurrency cap (default: 4). Workaround
 #                       for vLLM #39392 (gemma4 tool parser emits all-<pad>
 #                       tokens non-deterministically under parallel load).
+#
+# Parallelism: one bash process per model (mistral / kimi / qwen / gemma) runs in the
+# background; conditions C0→C2→C3→C4 are sequential within a model. Four models ⇒ four
+# parallel streams whenever all models are selected.
 
 set -uo pipefail   # -e omitted on purpose: a failure in one cell shouldn't kill others
 
@@ -33,10 +41,15 @@ ONLY_MODEL="${2:-}"           # mistral | kimi | qwen | gemma | '' (all)
 ONLY_CONDITION="${3:-}"       # c0 | c2 | c3 | c4 | '' (all)
 
 PYTHON="${PYTHON:-python}"
-LIMIT="${LIMIT:-5}"
+LIMIT="${LIMIT:-3}"
 LOG_DIR="${LOG_DIR:-workdir/run_logs}"
 GEMMA_CONCURRENCY="${GEMMA_CONCURRENCY:-4}"
 mkdir -p "$LOG_DIR"
+
+# Smoke-only step caps (unset SMOKE_CFG_OPTIONS entirely to get these defaults).
+if [ -z "${SMOKE_CFG_OPTIONS+x}" ]; then
+  SMOKE_CFG_OPTIONS="agent_config.max_steps=10 auto_browser_use_tool_config.max_steps=8 deep_analyzer_agent_config.max_steps=2 deep_researcher_agent_config.max_steps=2 browser_use_agent_config.max_steps=3 deep_researcher_tool_config.time_limit_seconds=30"
+fi
 
 # Shared run id for every cell in this invocation. Every generated config
 # reads this env var (with a fresh-timestamp fallback at config load) to
@@ -68,7 +81,11 @@ cell_cmd() {
     extra_cfg=" concurrency=$GEMMA_CONCURRENCY"
   fi
   if [[ "$MODE" == "smoke" ]]; then
-    echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options max_samples=$LIMIT dataset.split=validation$extra_cfg"
+    local smoke_tail=""
+    if [[ -n "${SMOKE_CFG_OPTIONS}" ]]; then
+      smoke_tail=" ${SMOKE_CFG_OPTIONS}"
+    fi
+    echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options max_samples=$LIMIT dataset.split=validation${smoke_tail}$extra_cfg"
   else
     if [[ -n "$extra_cfg" ]]; then
       echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options${extra_cfg}"

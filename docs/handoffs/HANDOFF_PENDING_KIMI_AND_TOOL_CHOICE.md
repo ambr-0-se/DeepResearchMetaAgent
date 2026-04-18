@@ -443,7 +443,7 @@ No published GAIA number — we'd be among the first to publish one.
 - Budget-compatible: 31B at $0.13/$0.38 is ~13% cheaper input, ~35% cheaper output than Mistral-Small
 - No hidden server-side agent
 
-**Matrix expansion cost (if added):** 4 models × 4 conditions = **16 cells** instead of 12. Smoke (5 Q each) = 80 Q. Full test split (~300 Q each) = ~4,800 Q. Current budget estimate for full submission run: **+33% on top of the current 12-cell estimate** (+$10–$35).
+**Matrix expansion cost (if added):** 4 models × 4 conditions = **16 cells** instead of 12. Smoke (default **3 Q** each via `run_eval_matrix.sh`) = **48 Q** (set `LIMIT=5` for 80 Q). Full test split (~300 Q each) = ~4,800 Q. Current budget estimate for full submission run: **+33% on top of the current 12-cell estimate** (+$10–$35).
 
 **Caveats:**
 - `tool_choice="required"` support unconfirmed — treat Gemma 4 with the hybrid dispatch defensively (add to `MODELS_REJECTING_REQUIRED` set until a live probe confirms it works).

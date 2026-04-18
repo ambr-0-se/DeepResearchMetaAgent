@@ -48,20 +48,17 @@ include **Gemma** (16-cell grep matrix); see index **Progress snapshot**.
 ### On the farm
 
 - [ ] **S0** pre-flight: `bash scripts/smoke_validate_handoffs_234.sh`
-- [ ] **S1** 1-Q canary for one (model, condition) cell to prove the pipeline
-- [ ] **S2** smoke matrix: `sbatch run_matrix_slurm.sh smoke`
-- [ ] **C4 training pass** (see §C4 Train/Freeze below) — OPTIONAL but
-      recommended for publishable C4 numbers
-- [ ] **Post-S2 snapshot** — `cp -a` C4 `skills/` into
-      `workdir/c4_trained_libraries/{model}_skills` (see §C4 Train/Freeze,
-      lines 171–192)
-- [ ] **Farm-side freeze smoke** (recommended before S4; ~30 min, ~$0.80):
-      3-Q × 4 models with `agent_config.*` override — verifies the
-      mechanism on the farm against real learned libraries
-- [ ] **S4** test-split submission: `sbatch run_matrix_slurm.sh full`
+- [ ] **S1** single-cell canary: `sbatch run_matrix_slurm.sh smoke mistral c0`
+- [ ] **S2** smoke matrix: `sbatch run_matrix_slurm.sh smoke` (default **3 Q/cell** + smoke step caps; **4 models in parallel**)
+- [ ] **C4 training pass** (see §C4 Train/Freeze) — **required** before scored **C4** on `test`
+- [ ] **Post-S2 snapshot** — `cp -a` each C4 `skills/` into
+      `workdir/c4_trained_libraries/{model}_skills` (§C4 Train/Freeze)
+- [ ] **Farm-side freeze smoke** (~30 min): 3-Q × 4 models, `agent_config.*` freeze overrides
+- [ ] **S4** test-split submission: `sbatch run_matrix_slurm.sh full` (C4 with frozen libraries per §S4)
 - [ ] Collect `dra.jsonl` → run `scripts/analyze_results.py` per cell
 - [ ] `bash scripts/validate_handoffs.sh <DRA_RUN_ID>` → attach pass/info
       summary to this handoff when promoting to Completed
+- [ ] **Retain** all `workdir/gaia_*`, `workdir/run_logs/`, and `logs/matrix_*.out` until reviewed/archived (§Output retention)
 
 ---
 
@@ -136,6 +133,26 @@ ls data/GAIA  # should contain 2023/ with validation + test subdirs
 
 ## Execution protocol (staged; each gate must pass before the next)
 
+### Full chain through **S4** (final objective)
+
+Earlier summaries sometimes collapsed **S2 → S4**. The **complete** path for publishable, non-contaminated **C4** results is:
+
+1. **S0 → S1 → S2** — prove configs, keys, and **all 16 cells** on a **short** validation smoke (default **3 Q/cell** + smoke step caps; **four model streams in parallel** — see [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh)).
+2. **C4 training pass** — run **C4 × all four models** with skill extraction **on** on the **labelled validation split** (or the train split you fix in protocol), so libraries accumulate **before** test scoring.
+3. **Post-S2 snapshot** — copy each model’s trained `skills/` tree into `workdir/c4_trained_libraries/{mistral,kimi,qwen,gemma}_skills/` (see §C4 Train/Freeze below).
+4. **Farm-side freeze smoke** — short validation jobs with **`agent_config.*` overrides** only (`skills_dir` snapshot + `enable_skill_extraction=False` + smoke caps); confirm extractor off and snapshot pinning on **farm** hardware.
+5. **S4** — **full test-split** matrix (16 cells). **C4** cells must use the **frozen** snapshot + `enable_skill_extraction=False` overrides (§S4). This is the **final scored objective** once steps **1–4** pass.
+
+Skipping **2–4** while still running **C4 on `test`** leaves order-dependent, extraction-on scoring (the failure mode §C4 Train/Freeze explains). If you only need C0–C3 for a milestone, you can defer **2–4**, but any **C4 test-split claim** should complete **1–5**.
+
+### Output retention
+
+**Do not delete** `workdir/gaia_*_<DRA_RUN_ID>/`, `workdir/run_logs/`, `logs/matrix_*.out`, `logs/c4_*`, or `validation_report_*.txt` until results are **reviewed** and, if required, **copied to long-term storage** (`rsync`, tar, etc.). The repo does not auto-clean these paths; `*_latest` symlinks may move, but **keep run directories** for audit and handoff grep evidence.
+
+### Parallelism (built in)
+
+[`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) starts **four concurrent model workers** (Mistral, Kimi, Qwen, Gemma). Within each worker, conditions **C0 → C2 → C3 → C4** run **sequentially** (shared API identity per model). So different models always advance **in parallel** whenever the job selects all four.
+
 ### S0 — Pre-flight (free, ~30 sec)
 
 ```bash
@@ -147,7 +164,7 @@ Expected: all **16** matrix configs load (Mistral / Kimi / Qwen / Gemma × C0/C2
 ### S1 — Single-cell canary (~10 min, <$0.50)
 
 ```bash
-sbatch run_matrix_slurm.sh smoke mistral c0        # cheapest model, baseline condition, 5 Q
+sbatch run_matrix_slurm.sh smoke mistral c0        # cheapest model, baseline; default 3 Q + smoke caps
 squeue -u $USER                                    # wait for it to finish
 tail -f logs/matrix_<JOBID>.out                    # watch live
 ```
@@ -155,10 +172,15 @@ tail -f logs/matrix_<JOBID>.out                    # watch live
 Pass criterion: a non-empty `workdir/gaia_c0_mistral_<run_id>/dra.jsonl` with
 at least one row containing a non-null `prediction`.
 
-### S2 — Smoke matrix (~1-2 h, $2-5)
+### S2 — Smoke matrix (16 cells; default **3 Q/cell** + step caps; parallel streams)
 
 ```bash
-sbatch run_matrix_slurm.sh smoke                   # 5 Q × 16 cells = 80 Q, validation split
+# Default: LIMIT=3, smoke step caps (planner/browser/sub-agents) — see scripts/run_eval_matrix.sh
+sbatch run_matrix_slurm.sh smoke                   # 3 Q × 16 cells = 48 Q, validation split
+
+# Optional: restore older 5-Q smoke or tweak caps before sbatch:
+#   export LIMIT=5
+#   export SMOKE_CFG_OPTIONS=   # empty = no extra caps (only max_samples + split)
 ```
 
 Pass criteria (check `logs/matrix_<JOBID>.out` via the auto-run
@@ -175,7 +197,9 @@ Pass criteria (check `logs/matrix_<JOBID>.out` via the auto-run
 - 0 Python tracebacks in any per-cell `log.txt` (the stream-log MCP-stdio
   parse errors are known cosmetic noise — ignore)
 
-If S2 fails for any cell, **stop** and diagnose before moving to S4.
+If S2 fails for any cell, **stop** and diagnose before **C4 training** or **S4**.
+
+After S2 succeeds, proceed in order: **C4 training pass → snapshot → farm freeze smoke** (below), then **S4**.
 Typical triggers:
 - Mistral → `DeepResearchTool RetryError[ValueError]` usually means
   Firecrawl credits exhausted — run `python scripts/check_firecrawl_credits.py`.
@@ -192,7 +216,9 @@ Typical triggers:
 - Gemma → garbled content / `<|tool_call>` leak in text means a stale
   chat template on a specific provider; narrow the provider pin further.
 
-### C4 Train/Freeze pass (OPTIONAL, ~3-6 h, $5-15) — recommended for paper
+### C4 Train/Freeze pass (~3-6 h, $5-15) — **required** before scored **C4** on `test`
+
+Treat this block as **mandatory** whenever **C4** appears in the **S4** test-split submission. It is only “optional” if you are **not** reporting frozen-library C4 numbers (e.g. C0–C3-only milestone).
 
 **Why this matters.** C4's `enable_skill_extraction=True` mutates the
 `skills_dir` at the end of every task. If you run C4 on the test split with
@@ -295,7 +321,7 @@ step proves the same override also holds on the HKU CS farm environment
 a genuinely-trained library (seeds + newly-extracted skills), **before**
 committing the 8–24 h, $30–100 S4 scored run.
 
-**Inputs:** requires the Post-S2 snapshot step (lines 171–192) to have
+**Inputs:** requires the **Post-S2 snapshot** step (§C4 Train/Freeze) to have
 completed, so `workdir/c4_trained_libraries/{mistral,kimi,qwen,gemma}_skills/`
 exist and each contains the `.seeded` marker.
 

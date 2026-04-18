@@ -197,7 +197,7 @@ and launched in parallel by [`scripts/run_eval_matrix.sh`](./scripts/run_eval_ma
 # Regenerate all 16 configs (one per model × condition) from the template
 python scripts/gen_eval_configs.py
 
-# Smoke run — 5 questions × 16 cells = 80 Q, validation split, ~$2-5
+# Smoke run — default 3 Q × 16 cells = 48 Q (+ smoke step caps); LIMIT=5 → 80 Q
 bash scripts/run_eval_matrix.sh smoke
 
 # Full submission run — test split, all 16 cells

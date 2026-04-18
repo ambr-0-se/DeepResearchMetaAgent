@@ -64,6 +64,19 @@ Ran `python scripts/live_probe_tool_choice.py` in the `dra` env against OR.
 - Updated the Gemma registration comment in `src/models/models.py` to record the probe outcome.
 - `scripts/live_probe_tool_choice.py` committed alongside so future regressions can be reproduced in minutes.
 
+### Review-response edits (2026-04-19, after integration test + code review)
+
+- **Kimi OR routing — silent pin bug fixed** (`fix(providers): Kimi OR routing — correct Moonshot slug + reasoning-off param name`). The earlier pin `provider.order=["Moonshot"]` was silently ignored — OR's verbatim slug is `"Moonshot AI"` (with space). With `allow_fallbacks=True` (default), OR was free-routing across all 16 Kimi providers; the original live probes "succeeded" by accident. Enforced the pin (`allow_fallbacks=False`) and switched the reasoning-control key from the direct-API `thinking={"type":"disabled"}` to the OR-canonical `reasoning={"enabled": False}`. Verified via a 5-option probe 2026-04-19: only `reasoning.enabled=false` produces `finish_reason="tool_calls"` against the actual Moonshot AI provider.
+- **Kimi `stop` + `tool_choice="required"` production bug** (`fix(providers): Kimi stop-strip ...`). Surfaced by `scripts/integration_test_model_stack.py` (which exercises the real `OpenAIServerModel` stack, not raw OpenAI SDK). Moonshot AI halts with `finish_reason="stop"` and empty `tool_calls` when `stop` is non-empty — even for stop strings that cannot appear in the output (verified with literal `XYZZYZZY:`). `GeneralAgent._step_stream` always passes `stop=["Observation:", "Calling tools:"]`, so without the fix **every Kimi turn in real GAIA runs would have returned no tool calls.** Added `kimi-k2.5` + `kimi-k2.5-no-thinking` to `UNSUPPORTED_STOP_MODELS` in `src/models/message_manager.py`.
+- **Streaming-path retry-guard advisory.** Warn at `GeneralAgent.__init__` / `ToolCallingAgent.__init__` if `stream_outputs=True` AND the model is in the auto-dispatch set. Not a hard raise — no current matrix cell hits the combination — but a misconfiguration tripwire.
+- **DashScope wire-id invariant assertion.** Fail loudly at registration if any future DashScope `model_id` adopts the `qwen/` prefix that would collide with the hybrid-dispatch rule.
+- **Constants-drift test.** New `test_retry_constants_match_across_production_files` regex-parses `MAX_TOOL_RETRIES` + `_TOOL_CHOICE_RETRY_PROMPT` from both the async and sync guard files (they are duplicated to avoid a circular dep between `src/agent/` and `src/base/`) and asserts they agree. Empirically verified to catch drift by patching one file and observing the test fail.
+
+### Methodology caveats to cite in the paper
+
+- **`reasoning_content` is dropped on retry turns.** The retry guard echoes `ChatMessage(role="assistant", content=chat_message.content or "")` — the `reasoning_content` field (DeepSeek-reasoner, Qwen3-thinking, etc.) is not carried. For any model matched by `needs_reasoning_echo()`, the provider would 400 on the retry turn. **Current matrix is unaffected** — `or-qwen3.6-plus` runs with `enable_thinking=False` and is the only auto-dispatched model; no `*-thinking` variant is in the auto-dispatch set. This is a latent risk if the matrix is ever extended to include a thinking-mode Qwen slug.
+- **LangChain wrappers (`langchain-or-*`) inherit no `extra_body`.** The browser-use tool's LangChain wrapper is registered without Kimi's reasoning-off pin or Gemma's provider pin. All current 16 configs only reference the LangChain wrapper for `auto_browser_use_tool`, which does not use `tool_choice`, so the missing `extra_body` is inert. Explicit caveat for any future config that routes a non-browser step through the LangChain wrapper.
+
 ---
 
 ## TL;DR — two approved changes, neither yet implemented

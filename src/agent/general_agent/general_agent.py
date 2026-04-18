@@ -38,6 +38,19 @@ from src.models import (Model,
                         agglomerate_stream_deltas,
                         ChatMessage,
                         ChatMessageStreamDelta)
+from src.models.tool_choice import pick_tool_choice
+
+# Max number of corrective re-prompts when tool_choice is dispatched to "auto"
+# and the model returns plain text instead of a tool call. Each retry injects a
+# user message reminding the model that every step requires a tool call.
+# See docs/handoffs/HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md §Change 2b.
+MAX_TOOL_RETRIES = 2
+
+_TOOL_CHOICE_RETRY_PROMPT = (
+    "You replied in plain text, but every step REQUIRES a tool call. "
+    "Choose exactly one tool from the list above and call it now. "
+    "If you intended to give a final answer, call `final_answer` with your answer."
+)
 from src.utils.agent_types import (
     AgentAudio,
     AgentImage,
@@ -243,6 +256,46 @@ class GeneralAgent(AsyncMultiStepAgent):
         )
         return result
 
+    async def _retry_on_missing_tool_calls(
+        self,
+        chat_message: ChatMessage,
+        input_messages: list[ChatMessage],
+    ) -> ChatMessage:
+        """Re-prompt the model when a dispatched-to-``auto`` turn returns no tool calls.
+
+        Only fires when :func:`pick_tool_choice` resolves the current model to
+        ``"auto"``. Returns the most recent ``ChatMessage`` (either the
+        original, or one produced by a successful retry). On exhaustion falls
+        through so the caller's existing ``parse_tool_calls`` fallback + error
+        path handles the failure.
+        """
+        model_id = getattr(self.model, "model_id", None)
+        if pick_tool_choice(model_id, default="required") != "auto":
+            return chat_message
+
+        retries = 0
+        conversation = list(input_messages)
+        while (
+            (chat_message.tool_calls is None or len(chat_message.tool_calls) == 0)
+            and retries < MAX_TOOL_RETRIES
+        ):
+            retries += 1
+            logger.warning(
+                "[tool_choice retry %d/%d] %s replied in plain text; "
+                "injecting corrective prompt.",
+                retries, MAX_TOOL_RETRIES, model_id or "<unknown>",
+            )
+            conversation = conversation + [
+                ChatMessage(role="assistant", content=chat_message.content or ""),
+                ChatMessage(role="user", content=_TOOL_CHOICE_RETRY_PROMPT),
+            ]
+            chat_message = await self.model(
+                conversation,
+                stop_sequences=["Observation:", "Calling tools:"],
+                tools_to_call_from=self.tools_and_managed_agents,
+            )
+        return chat_message
+
     async def _step_stream(self, memory_step: ActionStep) -> AsyncGenerator[ChatMessageStreamDelta | ToolOutput]:
         """
         Perform one step in the ReAct framework: the agent thinks, acts, and observes the result.
@@ -285,6 +338,16 @@ class GeneralAgent(AsyncMultiStepAgent):
                     content=chat_message.content if chat_message.content else str(chat_message.raw),
                     title="Output message of the LLM:",
                     level=LogLevel.DEBUG,
+                )
+
+                # Retry guard: when tool_choice was dispatched to "auto" (see
+                # src/models/tool_choice.py) the model can legally reply in
+                # plain text with no tool_calls. Re-prompt up to
+                # MAX_TOOL_RETRIES times so the model converts its text into
+                # a tool call. Streaming path is skipped — retry semantics on
+                # a partially-consumed stream are not worth the complexity.
+                chat_message = await self._retry_on_missing_tool_calls(
+                    chat_message, input_messages,
                 )
 
             # Record model output

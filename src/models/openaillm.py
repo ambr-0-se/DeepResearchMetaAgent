@@ -12,6 +12,7 @@ from src.models.base import (ApiModel,
                              ChatMessageStreamDelta,
                              ChatMessageToolCallStreamDelta)
 from src.models.message_manager import MessageManager
+from src.models.tool_choice import log_downgrade_once, pick_tool_choice
 
 logger = logging.getLogger(__name__)
 
@@ -174,8 +175,16 @@ class OpenAIServerModel(ApiModel):
                 "tools": [self.message_manager.get_tool_json_schema(tool, model_id=self.model_id) for tool in
                           tools_to_call_from],
             }
-            if tool_choice is not None:
-                tools_config["tool_choice"] = tool_choice
+            # Hybrid tool_choice dispatch (D3/D5): downgrade "required" to
+            # "auto" for models whose OR backends reject the forced value.
+            # Wire-id keyed; see src/models/tool_choice.py. The retry guard in
+            # GeneralAgent._step_stream / ToolCallingAgent._step_stream catches
+            # plain-text replies when we end up on the "auto" path.
+            resolved_tool_choice = pick_tool_choice(self.model_id, tool_choice)
+            if resolved_tool_choice != tool_choice and resolved_tool_choice == "auto":
+                log_downgrade_once(self.model_id or "<unknown>")
+            if resolved_tool_choice is not None:
+                tools_config["tool_choice"] = resolved_tool_choice
             completion_kwargs.update(tools_config)
 
         # Finally, use the passed-in kwargs to override all settings

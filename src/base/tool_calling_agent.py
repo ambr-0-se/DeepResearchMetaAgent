@@ -54,6 +54,16 @@ from src.base.multistep_agent import (MultiStepAgent,
 from src.models import (Model,
                         agglomerate_stream_deltas,
                         parse_json_if_needed)
+from src.models.tool_choice import pick_tool_choice
+
+# Mirror of general_agent.MAX_TOOL_RETRIES / prompt. Duplicated rather than
+# imported to avoid creating a circular dep between base/ and agent/.
+MAX_TOOL_RETRIES = 2
+_TOOL_CHOICE_RETRY_PROMPT = (
+    "You replied in plain text, but every step REQUIRES a tool call. "
+    "Choose exactly one tool from the list above and call it now. "
+    "If you intended to give a final answer, call `final_answer` with your answer."
+)
 from src.utils import (
     AgentImage,
     AgentAudio,
@@ -123,6 +133,43 @@ class ToolCallingAgent(MultiStepAgent):
         )
         return system_prompt
 
+    def _retry_on_missing_tool_calls(
+        self,
+        chat_message: ChatMessage,
+        input_messages: list[ChatMessage],
+    ) -> ChatMessage:
+        """Sync mirror of ``GeneralAgent._retry_on_missing_tool_calls``.
+
+        Re-prompts up to :data:`MAX_TOOL_RETRIES` times when the current model
+        was dispatched to ``tool_choice="auto"`` and returned no tool calls.
+        """
+        model_id = getattr(self.model, "model_id", None)
+        if pick_tool_choice(model_id, default="required") != "auto":
+            return chat_message
+
+        retries = 0
+        conversation = list(input_messages)
+        while (
+            (chat_message.tool_calls is None or len(chat_message.tool_calls) == 0)
+            and retries < MAX_TOOL_RETRIES
+        ):
+            retries += 1
+            logger.warning(
+                "[tool_choice retry %d/%d] %s replied in plain text; "
+                "injecting corrective prompt.",
+                retries, MAX_TOOL_RETRIES, model_id or "<unknown>",
+            )
+            conversation = conversation + [
+                ChatMessage(role="assistant", content=chat_message.content or ""),
+                ChatMessage(role="user", content=_TOOL_CHOICE_RETRY_PROMPT),
+            ]
+            chat_message = self.model.generate(
+                conversation,
+                stop_sequences=["Observation:", "Calling tools:"],
+                tools_to_call_from=self.tools_and_managed_agents,
+            )
+        return chat_message
+
     def _step_stream(self, memory_step: ActionStep) -> Generator[ChatMessageStreamDelta | ToolOutput]:
         """
         Perform one step in the ReAct framework: the agent thinks, acts, and observes the result.
@@ -164,6 +211,10 @@ class ToolCallingAgent(MultiStepAgent):
                     content=chat_message.content if chat_message.content else str(chat_message.raw),
                     title="Output message of the LLM:",
                     level=LogLevel.DEBUG,
+                )
+
+                chat_message = self._retry_on_missing_tool_calls(
+                    chat_message, input_messages,
                 )
 
             # Record model output

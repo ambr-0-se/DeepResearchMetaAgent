@@ -39,6 +39,7 @@ original problem, changes, test commands, and validation criteria.
 | `0e7903c` | `scripts/validate_handoffs.sh` — per-run grep sweep producing a pass/info matrix across handoffs #1/#2/#3/#4/#5/#7                                                                                                                                                                                                                                      |
 | `463d791` | **2026-04-19:** `smoke_validate_handoffs_234.sh` Tier-0 loads **16** matrix configs (adds Gemma); registration smoke matches `gen_eval_configs` defaults (`or-kimi-k2.5`, `or-qwen3.6-plus`, `or-gemma-4-31b-it` + langchain wrappers); `validate_handoffs.sh` greps **all four** models; `run_matrix_slurm.sh` / `run_eval_matrix.sh` comments 16-cell |
 | `5299b41` | [`scripts/run_handoff_pytest_sweep.sh`](scripts/run_handoff_pytest_sweep.sh) — one-file-at-a-time **140**-test sweep for handoff #9 / farm CI (same modules as [HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md](docs/handoffs/HANDOFF_PENDING_KIMI_AND_TOOL_CHOICE.md)); auto `conda run -n dra` when `mmengine` missing |
+| `9d66808` | **2026-04-19:** S2 smoke default **3 Q/cell** + `SMOKE_CFG_OPTIONS` step caps in [`scripts/run_eval_matrix.sh`](scripts/run_eval_matrix.sh); [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md) §Full chain = **S2 → C4 train → snapshot → farm freeze smoke → S4**; output retention + parallel streams documented |
 
 
 Farm operators: `git pull origin main` — follow-ups through `5299b41`+ are on `origin/main` (as of 2026-04-19).
@@ -126,7 +127,7 @@ To make **problem-solved** checks easier without full GAIA: prefer **one grep pe
 
 ## Progress snapshot (2026-04-19)
 
-**Done (repo / local):** `origin/main` includes prior follow-ups (`a98da9a`, `7ee9ae1`, …) and `463d791` (16-cell handoff smoke + `validate_handoffs.sh` + SLURM/matrix script comments). `bash scripts/smoke_validate_handoffs_234.sh` is green with keys (Tier 0 = 16 configs, registration = 4 models + wrappers). **Handoff #9 unit sweep:** `bash scripts/run_handoff_pytest_sweep.sh` → **140/140** passed (`dra`, 2026-04-19).
+**Done (repo / local):** `origin/main` includes prior follow-ups (`a98da9a`, `7ee9ae1`, …), `463d791` (16-cell handoff smoke + `validate_handoffs.sh` + SLURM/matrix script comments), and **`9d66808`** (S2 = default **3 Q/cell** + smoke step caps; docs: **S2→C4 train→snapshot→freeze→S4**, retention, parallelism). `bash scripts/smoke_validate_handoffs_234.sh` is green with keys (Tier 0 = 16 configs, registration = 4 models + wrappers). **Handoff #9 unit sweep:** `bash scripts/run_handoff_pytest_sweep.sh` → **140/140** passed (`dra`, 2026-04-19).
 
 **Not done (GPU farm / eval):** repeat `bash scripts/run_handoff_pytest_sweep.sh` (CI parity), then **S0→S1→S2** (`sbatch run_matrix_slurm.sh smoke` — default **3 Q/cell** + smoke step caps; **four models in parallel**). Before **S4**, complete **C4 training → snapshot → farm freeze smoke** when reporting **C4** on `test` (see [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md) §Full chain). Then **S4** + scoring + `validate_handoffs.sh <DRA_RUN_ID>`. **Retain** all `workdir/` run dirs and `logs/` until review. Handoff **#6** remains N/A for the API matrix.
 

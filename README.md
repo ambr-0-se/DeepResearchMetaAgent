@@ -198,9 +198,13 @@ and launched in parallel by [`scripts/run_eval_matrix.sh`](./scripts/run_eval_ma
 python scripts/gen_eval_configs.py
 
 # Smoke run — default 3 Q × 16 cells = 48 Q (+ smoke step caps); LIMIT=5 → 80 Q
+# (integration track **I2**; see docs/handoffs/HANDOFF_TEST_EVAL.md)
 bash scripts/run_eval_matrix.sh smoke
 
-# Full submission run — test split, all 16 cells
+# Optional one-model C4 train→snapshot→freeze few-Q smoke (**I3**)
+# bash scripts/integration_i3_c4_pipeline.sh
+
+# Full submission run — test split, all 16 cells (evaluation track **E3**)
 bash scripts/run_eval_matrix.sh full
 
 # Single model only, e.g. just Gemma
@@ -217,8 +221,9 @@ Model slots (see [`scripts/gen_eval_configs.py`](./scripts/gen_eval_configs.py)
 | Qwen | `or-qwen3.6-plus` | OpenRouter → `qwen/qwen3.6-plus` | **Hybrid dispatch** → `"auto"` | Whole Qwen family rejects `tool_choice="required"` at OR's routing layer. [`src/models/tool_choice.py`](./src/models/tool_choice.py) downgrades any wire-id starting with `qwen/` to `"auto"` and a retry guard in `GeneralAgent._step_stream` / `ToolCallingAgent._step_stream` re-prompts plain-text replies back into tool calls (max 2 retries). |
 | Gemma | `or-gemma-4-31b-it` | OpenRouter → `google/gemma-4-31b-it` | `"required"` passes through | Dense 31B, Apache 2.0 (only non-MoE in the matrix). Provider pin `["DeepInfra","Together"]` + `reasoning.enabled=false` + concurrency cap 4 in [`scripts/run_eval_matrix.sh`](./scripts/run_eval_matrix.sh) avoids the vLLM gemma4 parser pad-bug under parallel load. `:free` variant intentionally excluded. |
 
-Extended protocol (pre-flight, smoke, C4 train/freeze, submission, resume,
-triage): see [`docs/handoffs/HANDOFF_TEST_EVAL.md`](./docs/handoffs/HANDOFF_TEST_EVAL.md).
+Extended protocol (**I0–I3** integration vs **E0–E3** evaluation: pre-flight,
+16-cell smoke, optional C4 **I3** pipeline smoke, C4 val train / snapshot /
+freeze / test submit, resume, triage): see [`docs/handoffs/HANDOFF_TEST_EVAL.md`](./docs/handoffs/HANDOFF_TEST_EVAL.md).
 Per-model provider routing is declared in
 [`src/models/models.py`](./src/models/models.py) `_register_openrouter_models`.
 Hybrid `tool_choice` dispatch and the retry guard are in

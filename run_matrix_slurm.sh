@@ -17,6 +17,10 @@
 # 24h which is plenty for smoke (default 3 Q × 16 cells on validation) or for
 # orchestrating full test-split runs per scripts/run_eval_matrix.sh.
 #
+# Track naming (see docs/handoffs/HANDOFF_TEST_EVAL.md): **I2** = `smoke` 16-cell
+# matrix on validation; **E3** = `full` test-split submission; **E0** C4 val
+# training = `full '' c4` with `DATASET_SPLIT=validation` (see eval handoff).
+#
 # Usage (on the HKU CS Phase-3 gateway, e.g. gpu3gate1.cs.hku.hk):
 #
 #   cd /userhome/cs2/ambr0se/DeepResearchMetaAgent

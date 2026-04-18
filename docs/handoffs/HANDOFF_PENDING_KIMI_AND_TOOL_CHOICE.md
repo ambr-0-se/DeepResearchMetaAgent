@@ -1,6 +1,6 @@
 # Handoff: PENDING — Kimi K2.5 vision + per-model `tool_choice` hybrid dispatch
 
-**Status:** IMPLEMENTED + LIVE-VERIFIED (2026-04-18) — **140/140** unit sweep on 2026-04-19 (`scripts/run_handoff_pytest_sweep.sh`); farm repeat + matrix smoke still to do.
+**Status:** IMPLEMENTED + LIVE-VERIFIED (2026-04-18) — **140/140** unit sweep on 2026-04-19 (`scripts/run_handoff_pytest_sweep.sh`); farm repeat + matrix smoke (**I2**) still to do.
 **Session where decisions were made:** 2026-04-18 (continues from [`HANDOFF_TEST_EVAL.md`](HANDOFF_TEST_EVAL.md))
 **Blocks:** GAIA test-split submission run (cannot start until live probes pass).
 **Pointers back:** [`HANDOFF_INDEX.md`](../../HANDOFF_INDEX.md), [`HANDOFF_PROVIDER_MATRIX.md`](HANDOFF_PROVIDER_MATRIX.md)
@@ -292,7 +292,7 @@ and pass it through `OpenAIServerModel(extra_body=extra_body, ...)`. The plumbin
 
 1. **Unit tests:**
    - `tests/test_tool_choice_dispatch.py` covers `pick_tool_choice` map semantics + retry guard (mock model returns text first, tool_call second).
-   - Existing `tests/test_failover_model.py`, `tests/test_reasoning_preservation.py`, etc. must all stay green (run the 10-file sweep documented in `HANDOFF_TEST_EVAL.md` §Pre-flight).
+   - Existing `tests/test_failover_model.py`, `tests/test_reasoning_preservation.py`, etc. must all stay green (run the 10-file sweep documented in `HANDOFF_TEST_EVAL.md` §I0 / pre-flight).
 
 2. **Live verification — Kimi vision:**
    ```python
@@ -551,7 +551,7 @@ Operator decisions confirmed: **D1 = `or-qwen3.6-plus`**, **D2 = apply to all su
   4. `feat(matrix): add Gemma-4-31B-it as 4th matrix slot (D4 + D5 defensive auto + provider pin)`
 - [ ] Push to `origin/main`
 - [ ] Annotate this handoff's "To Do" checklist as done, update `HANDOFF_INDEX.md` row #9 status to "Validated → Completed" once the live probes pass.
-- [ ] Resume the main execution protocol from `HANDOFF_TEST_EVAL.md` §S0 pre-flight
+- [ ] Resume the main execution protocol from `HANDOFF_TEST_EVAL.md` §I0 pre-flight (integration track)
 
 ---
 

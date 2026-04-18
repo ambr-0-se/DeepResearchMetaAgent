@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Parallel GAIA evaluation runner across the 4-models × 4-conditions matrix.
 #
+# Track naming (see docs/handoffs/HANDOFF_TEST_EVAL.md): **`smoke`** = integration
+# **I2** (16-cell validation matrix); **`full`** (default test split) = evaluation **E3**
+# submission when scoring the official matrix. C4 val training before E3 is **E0**
+# (`DATASET_SPLIT=validation`, `full '' c4`).
+#
 # Strategy: 4 model streams run in parallel (different API keys, no rate-limit
 # contention between streams). WITHIN each model stream, the four conditions
 # C0/C2/C3/C4 run sequentially because they share one API key per model.
@@ -27,9 +32,9 @@
 #                       (then only max_samples + validation split apply).
 #   DATASET_SPLIT — for `full` mode only: if set (e.g. `validation`), passed as
 #                   `dataset.split=...` so runs do not use the config default (`test`).
-#                   **C4 skill training:** export `DATASET_SPLIT=validation` before
+#                   **E0 — C4 val train:** export `DATASET_SPLIT=validation` before
 #                   `sbatch run_matrix_slurm.sh full '' c4` so each model trains on the
-#                   **full validation set**; omit before S4 test submission.
+#                   **full validation set**; unset before **E3** test submission.
 #   LOG_DIR    — where to tee per-cell stdout/stderr (default: workdir/run_logs)
 #   GEMMA_CONCURRENCY — per-Gemma-cell concurrency cap (default: 4). Workaround
 #                       for vLLM #39392 (gemma4 tool parser emits all-<pad>

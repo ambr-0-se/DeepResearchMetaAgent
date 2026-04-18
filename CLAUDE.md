@@ -19,6 +19,35 @@ make install
 make install-requirements
 ```
 
+### Local dev environment
+
+Use the **`dra` conda env** for all local work — it is the only env on this
+machine with the runtime deps installed (notably `crawl4ai`, which is
+imported transitively via `src.utils.url_utils` whenever `src.*` is imported;
+the base env is missing it). Invoke Python and pytest explicitly through the
+env's interpreter so there is no ambiguity with the activated shell env:
+
+```bash
+/Users/ahbo/miniconda3/envs/dra/bin/python -m pytest tests/
+```
+
+**Test-suite gotcha — per-file collection.** `tests/test_skill_seed.py`
+installs a stub `src.logger` module at import time (to avoid the real
+`src/__init__.py` side-effects). When pytest collects multiple test files
+in one process the stub leaks and breaks later files' imports of
+`src.logger`. Workaround: run the 4 skill/generator test files in their
+own process, or loop one-file-at-a-time (example from the 10-file baseline
+sweep):
+
+```bash
+for t in test_failover_model test_reasoning_preservation test_tier_b_tool_messages \
+         test_process_tool_calls_guard test_max_steps_yield_order test_rc2_diagnostic_hook \
+         test_tool_generator test_review_schema test_skill_registry test_skill_seed \
+         test_tool_choice_dispatch; do
+  /Users/ahbo/miniconda3/envs/dra/bin/python -m pytest "tests/$t.py" -q
+done
+```
+
 ### Running the Agent
 ```bash
 # Main hierarchical agent

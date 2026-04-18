@@ -1,9 +1,67 @@
 # Handoff: PENDING — Kimi K2.5 vision + per-model `tool_choice` hybrid dispatch
 
-**Status:** Drafting — code changes approved by operator, not yet implemented.
+**Status:** IMPLEMENTED + LIVE-VERIFIED (2026-04-18) — ready to merge; farm CI run still to do.
 **Session where decisions were made:** 2026-04-18 (continues from [`HANDOFF_TEST_EVAL.md`](HANDOFF_TEST_EVAL.md))
-**Blocks:** GAIA test-split submission run (cannot start until both changes land + re-verify).
+**Blocks:** GAIA test-split submission run (cannot start until live probes pass).
 **Pointers back:** [`HANDOFF_INDEX.md`](../../HANDOFF_INDEX.md), [`HANDOFF_PROVIDER_MATRIX.md`](HANDOFF_PROVIDER_MATRIX.md)
+
+---
+
+## Post-implementation addendum (2026-04-18)
+
+### Corrections relative to the design spec below
+
+1. **Lookup-table key: wire id, not alias.** The spec below (§Change 2, §Execution checklist) said to key `MODELS_REJECTING_REQUIRED` + `_QWEN_AUTO_PREFIXES` on the registered aliases (`or-qwen*`, `or-gemma-4-31b-it`, `or-kimi-k2.5`). Exploration proved `_register_openrouter_models` does *not* reassign `OpenAIServerModel.model_id` after construction, so at the agent call site `self.model.model_id` holds the **wire slug** (`qwen/qwen3.6-plus`, `google/gemma-4-31b-it`, `moonshotai/kimi-k2.5`). The shipped implementation correctly keys on wire ids — named entry `google/gemma-4-31b-it`, prefix tuple `("qwen/",)`. Unit tests assert both paths.
+2. **Dispatch lives in the model layer, not every agent call site.** The `tool_choice="required"` default was set only in `OpenAIServerModel._prepare_completion_kwargs` — no agent currently passes the value explicitly. D2 ("apply to all sub-agents") was satisfied by a single override inside `_prepare_completion_kwargs` that calls `pick_tool_choice(self.model_id, tool_choice)`. Every agent inherits the behaviour without code changes. The retry guard lives in `GeneralAgent._step_stream` + `ToolCallingAgent._step_stream` — the two points that inspect `response.tool_calls`.
+3. **New module.** Dispatch helpers live in `src/models/tool_choice.py` (separate from `src/models/models.py`) to avoid the circular import that would occur between `openaillm.py` and `models.py`.
+
+### Implemented changes (commit-group index)
+
+| Commit group | Files | Status |
+|-------------|-------|--------|
+| 1. Kimi K2.5 — thinking off + Moonshot pin | `src/models/models.py` (OR registration loop + Kimi entry) | ✅ implemented |
+| 2. Hybrid `tool_choice` dispatch + retry guard | `src/models/tool_choice.py` (new), `src/models/openaillm.py`, `src/agent/general_agent/general_agent.py`, `src/base/tool_calling_agent.py`, `tests/test_tool_choice_dispatch.py` (new, 21 tests, all green) | ✅ implemented |
+| 3. Qwen swap to `or-qwen3.6-plus` (D1) | `scripts/gen_eval_configs.py`, regen'd `configs/config_gaia_c{0,2,3,4}_qwen.py` | ✅ implemented |
+| 4. Gemma 4 31B 4th matrix slot (D4 + D5) | `src/models/models.py` (registration + provider pin + reasoning off), `scripts/gen_eval_configs.py`, `scripts/run_eval_matrix.sh` (ALL_MODELS + per-model concurrency cap), new `configs/config_gaia_c{0,2,3,4}_gemma.py` | ✅ implemented |
+
+### Test-sweep status — **139/139 pass** (dra env)
+
+Run one-file-at-a-time (pytest-multi-file collection interacts badly with the
+`src.logger` stub in `tests/test_skill_seed.py` — see
+[CLAUDE.md §Local dev environment](../../CLAUDE.md) for the documented
+workaround).
+
+| File | Pass | Notes |
+|------|------|-------|
+| `test_failover_model` | 12/12 | |
+| `test_reasoning_preservation` | 12/12 | |
+| `test_tier_b_tool_messages` | 4/4 | |
+| `test_process_tool_calls_guard` | 8/8 | |
+| `test_max_steps_yield_order` | 6/6 | |
+| `test_rc2_diagnostic_hook` | 4/4 | |
+| `test_tool_generator` | 12/12 | |
+| `test_review_schema` | 26/26 | |
+| `test_skill_registry` | 28/28 | |
+| `test_skill_seed` | 6/6 | |
+| `test_tool_choice_dispatch` (NEW) | 21/21 | |
+| **Total** | **139/139** | |
+
+### Live probe results — all green (2026-04-18)
+
+Ran `python scripts/live_probe_tool_choice.py` in the `dra` env against OR.
+
+| Probe | Result | Detail |
+|-------|--------|--------|
+| **1. Kimi K2.5** — image + `tool_choice="required"` + `extra_body={thinking: disabled, provider.order: [Moonshot]}` | ✓ pass | `finish_reason="tool_calls"`; tool `echo` called with a 1-sentence image description. No 400 on thinking/required mismatch. (First attempt at `max_tokens=200` was token-starved — the fix itself works fine; `max_tokens=1024` cleared it.) |
+| **2. Qwen3.6-Plus** — text + `tool_choice="auto"` + coercive system prompt | ✓ pass | `finish_reason="tool_calls"`; tool `echo` called with `{"message": "hello"}`. |
+| **3. Gemma 4 31B** — two-step: `"required"` first, `"auto"` fallback | ✓ pass on Step 1 | HTTP 200, `finish_reason="tool_calls"`, `echo({"message": "hi"})`, **no special-token leak** in `content`. Provider pin `DeepInfra+Together` + `reasoning.enabled=false` is sufficient for clean forced tool use. |
+
+### Follow-up edits applied after probes
+
+- Removed `"google/gemma-4-31b-it"` from `MODELS_REJECTING_REQUIRED` in `src/models/tool_choice.py` per Probe 3's positive result. Kept the set declared (now empty) as an extensibility hook for future non-Qwen entries.
+- Updated unit test `test_models_rejecting_required_is_empty_after_gemma_probe` to assert the set is empty and that Gemma resolves to `"required"`. One retry-guard test that relied on Gemma's named-entry path switched to `qwen/qwen3-coder-next` (prefix path) so the retry guard still has a deterministic auto-dispatch model to exercise.
+- Updated the Gemma registration comment in `src/models/models.py` to record the probe outcome.
+- `scripts/live_probe_tool_choice.py` committed alongside so future regressions can be reproduced in minutes.
 
 ---
 
@@ -272,8 +330,10 @@ Operator overrode my narrower recommendation (only the known-failing 400/404 slu
 # src/models/models.py
 
 MODELS_REJECTING_REQUIRED: set[str] = {
-    # Empty for now — the prefix rule below subsumes the Qwen-specific list.
-    # Keep the set as an extensibility hook for non-Qwen future cases.
+    # Named entries for models outside the Qwen prefix rule.
+    # D5 (2026-04-18): Gemma 4 31B on OR — defensive until live-probe confirms
+    # tool_choice="required" works. If Probe 1 succeeds, delete this entry.
+    "or-gemma-4-31b-it",
 }
 
 _QWEN_AUTO_PREFIXES: tuple[str, ...] = (
@@ -376,48 +436,97 @@ No published GAIA number — we'd be among the first to publish one.
 | Mistral | `mistral-small` (native) | ✅ | `"required"` works | $0.15 / $0.60 |
 | Kimi | `or-kimi-k2.5` (OR) | ✅ after Change 1 | `"required"` works after Change 1 (thinking disabled) | free tier currently |
 | Qwen | **`or-qwen3.6-plus`** (OR) — D1 | ✅ (per OR metadata) | **hybrid dispatch → "auto"** after Change 2 (D3) | $0.325 / $1.95 |
-| **Gemma 4 (PROPOSED 4th slot)** | `google/gemma-4-31b-it` | ✅ | **hybrid dispatch → defensive "auto" until live-verified** | $0.13 / $0.38 |
+| **Gemma 4** (D4 confirmed) | **`or-gemma-4-31b-it`** (OR, paid; `:free` excluded) | ✅ (text+image+video, no audio) | **hybrid dispatch → "auto" defensively (D5)** — remove from set after smoke probe succeeds; provider pin DeepInfra+Together, `reasoning.enabled=false`, concurrency ≤ 4 | $0.13 / $0.38 |
 
 ---
 
-## Open decisions after addendum
+## Decisions confirmed (D4 / D5 — 2026-04-18 late-session)
 
-### (D4) Add Gemma-4-31B-it as a 4th matrix slot?
+### (D4) Add Gemma-4-31B-it as a 4th matrix slot? → **YES**
 
-- **(yes)** 4 models × 4 conditions = 16 cells. Matrix runner + SBATCH wrapper need a Gemma stream added (trivial: extend `MODELS` in `scripts/gen_eval_configs.py` + add to `ALL_MODELS` array in `scripts/run_eval_matrix.sh`). Adds ~$10–35 to test-split run. Gains dense-model counterpoint + Google provenance + paper novelty ("first GAIA number for Gemma 4").
-- **(no)** Stay at 3 models / 12 cells. Cheaper, faster, simpler. Can always add Gemma 4 as a follow-up run.
+Operator confirmed **yes**. Matrix becomes 4 models × 4 conditions = **16 cells**. Rationale: dense-vs-MoE counterpoint vs Kimi/Qwen/Mistral MoE variants, Google provenance (no other US frontier lab in matrix without API lock-in), Apache 2.0 open weights for reproducibility, τ2-bench 86.4 for strong tool-use signal, and paper novelty (first published GAIA number for Gemma 4). Cost delta: +$10–35 on full test-split run vs current 12-cell budget.
 
-My recommendation: **yes** — the dense-vs-MoE comparison and the τ2-bench 86.4 score make Gemma 4 a stronger paper-narrative contributor than the marginal cost.
+**Picked slug: `google/gemma-4-31b-it`** (paid, NOT `:free` — see D5 research below for why `:free` is excluded).
 
-### (D5) If Gemma 4 added, does it also go into the blanket-auto list?
+### (D5) Blanket-auto treatment for Gemma 4? → **YES (defensive), paired with smoke-probe + provider pin**
 
-Recommended: yes, defensively, until a live smoke-probe confirms `tool_choice="required"` works. If the probe succeeds, remove from the list. Cheap to add/remove.
+Research dispatch 2026-04-18 (sub-agent `a0f950f0e496c8030`, consulting OpenRouter docs, Artificial Analysis provider pages, HuggingFace Welcome-Gemma-4 blog, Google AI function-calling docs, vLLM PRs #38847 / #39043 / #39392 / #39468, llama.cpp PR #21326, Zed issue #36094) returned **INCONCLUSIVE leaning YES for paid slugs, NO for `:free`**. No primary source explicitly confirms or denies `tool_choice="required"` works end-to-end on OR Gemma 4 at this time. Circumstantial evidence is favorable (7/8 paid providers advertise `tools`; all vLLM-backed providers inherit generic `"required"` support via guided decoding) but the Gemma 4 tool-calling parsers were actively being patched through 2026-04-11 — close enough to our 2026-04-18 run to warrant defensive treatment rather than optimism.
+
+**Approved implementation for Gemma 4:**
+
+1. **Add `or-gemma-4-31b-it` to `MODELS_REJECTING_REQUIRED`** at registration time (not to the Qwen prefix rule — keep the two mechanisms separate so we can audit them independently). Retry guard carries the reliability. Removal is cheap once a live probe succeeds.
+2. **Provider pin via `extra_body`** at registration:
+   ```python
+   extra_body = {
+       "provider": {"order": ["DeepInfra", "Together"], "allow_fallbacks": False},
+       "reasoning": {"enabled": False},  # avoid thinking-mode contamination of tool output (vLLM #39043)
+   }
+   ```
+   Both DeepInfra and Together are vLLM-backed and are most likely to run the latest gemma4 parser. Novita is excluded (doesn't advertise `tools`). Google AI Studio is excluded (historical non-support of `"required"`).
+3. **Exclude `:free` variants from the eval.** Google AI Studio routing is the worst case for forced tool use.
+4. **Smoke-probe before full run** (gate to the full test-split submission):
+   - Probe 1: `tool_choice="required"` via OR `google/gemma-4-31b-it` + the pinned `extra_body` above. Expected failure mode if un-supported: 404 "No endpoints found that support the provided 'tool_choice' value" — identical to the Qwen 404 class.
+   - Probe 2: `tool_choice="auto"` with explicit "must call a tool" prompt. Expected: `tool_calls` in response.
+   - If Probe 1 succeeds → remove `or-gemma-4-31b-it` from `MODELS_REJECTING_REQUIRED`, keep the provider pin.
+   - If Probe 1 fails → keep in the set; retry-guard handles the re-prompt.
+5. **Concurrency cap.** vLLM #39392 documents a Gemma 4 parser bug under parallel load that emits all-pad tokens non-deterministically. Set `max_concurrency ≤ 4` for Gemma 4 cells in `scripts/run_eval_matrix.sh` (trivial: pass through to `examples/run_gaia.py --concurrency 4` for the Gemma stream only, leave Mistral/Kimi/Qwen at current default).
+6. **Chat-template sanity check.** Gemma 4 tool-call tokens (`<|tool_call>` / `<tool_call|>`) only fire with Google's updated Jinja template (llama.cpp merge 2026-04-11). A provider on a stale template returns tool calls as plain text inside `content` — our parser sees zero `tool_calls` even when `tool_choice="required"` "succeeded". The provider pin to DeepInfra+Together mitigates this; verify once during Probe 1 by inspecting raw `response.choices[0].message` content.
+
+**Methodology caveat to add to the paper** (cross-ref the Kimi PARL caveat from §Addendum above):
+
+> Gemma 4 cells were run with the OpenRouter provider pool restricted to DeepInfra and Together (both vLLM-backed) for deterministic behaviour. Reasoning mode was disabled via `extra_body={"reasoning":{"enabled":false}}` to prevent thinking-channel contamination of tool-call output (vLLM issue #39043, open as of 2026-04-18). Concurrency was capped at 4 to avoid the `<pad>` token parser bug documented in vLLM issue #39392.
+
+### D5 research bottom line (for the paper appendix)
+
+| Aspect | Finding | Source |
+|--------|---------|--------|
+| Providers serving `google/gemma-4-31b-it` on OR | 8 total: Google AI Studio, DeepInfra, Together, Parasail, Clarifai, GMI (FP8), W&B, Novita | [Artificial Analysis — Gemma 4 31B providers](https://artificialanalysis.ai/models/gemma-4-31b/providers) |
+| Providers advertising `tools` | 7/8 (all except Novita) | same |
+| Native tool-call special tokens | `<|tool_call>` / `<tool_call|>` added at Gemma 4 | [HF Welcome-Gemma-4](https://huggingface.co/blog/gemma4) |
+| `tool_choice="required"` documented? | No explicit yes/no in Google's function-calling doc | [Google AI — Gemma 4 function calling](https://ai.google.dev/gemma/docs/capabilities/text/function-calling-gemma4) |
+| vLLM support | Generic `"required"` via guided decoding; Gemma 4 parser added in #38847 | [vLLM tool-calling docs](https://docs.vllm.ai/en/latest/features/tool_calling/) + [PR #38847](https://github.com/vllm-project/vllm/pull/38847) |
+| Known bugs ≤ 2026-04-18 | Parser crashes (vLLM #39043), all-pad under concurrency (#39392), format mis-parses (#39468); llama.cpp template fix #21326 merged 2026-04-11 | per-link |
+| OR provider filtering by `tool_choice` VALUE | Confirmed: 404s when no candidate provider advertises the value (same mechanism as Qwen failures) | [OR tool-calling guide](https://openrouter.ai/docs/guides/features/tool-calling), [Zed #36094](https://github.com/zed-industries/zed/issues/36094) |
 
 ---
 
 ## Execution checklist for the next session
 
-Operator decisions confirmed: **D1 = `or-qwen3.6-plus`**, **D2 = apply to all sub-agents**, **D3 = blanket `"auto"` for every `or-qwen*` / `qwen/*` / `langchain-or-qwen*` slug**. D4 (add Gemma 4 as 4th slot) and D5 (defensive blanket-auto for Gemma) still pending.
+Operator decisions confirmed: **D1 = `or-qwen3.6-plus`**, **D2 = apply to all sub-agents**, **D3 = blanket `"auto"` for every `or-qwen*` / `qwen/*` / `langchain-or-qwen*` slug**, **D4 = YES (add `or-gemma-4-31b-it` as 4th matrix slot)**, **D5 = YES defensively (add `or-gemma-4-31b-it` to `MODELS_REJECTING_REQUIRED` with provider pin + concurrency cap + smoke probe gate)**.
 
-- [ ] `git pull origin main` → HEAD includes `3e3cb23` or later
+- [ ] `git pull origin main` → HEAD includes `c233881` or later
 - [ ] Re-read this handoff + `HANDOFF_PROVIDER_MATRIX.md` + `HANDOFF_TEST_EVAL.md`
-- [ ] Confirm D4/D5 decisions with operator (blocker for Gemma-4 inclusion only)
 - [ ] **Change 1 — Kimi extra_body** (`src/models/models.py`, OR Kimi registration): add `extra_body={"thinking":{"type":"disabled"}, "provider":{"order":["Moonshot"]}}`.
 - [ ] **Change 2 — hybrid `tool_choice` dispatch** (`src/models/models.py` + all call sites from D2 grep list): add `MODELS_REJECTING_REQUIRED` set + `_QWEN_AUTO_PREFIXES` tuple + `pick_tool_choice` helper; replace every hard-coded `tool_choice="required"` with `pick_tool_choice(self.model.model_id)`.
 - [ ] **Change 2b — retry guard** in each tool_calling call site: re-prompt up to 2× when `"auto"`-resolved response has no `tool_calls`. INFO-log first `"auto"` resolution per (run, model); WARNING-log each retry.
 - [ ] **Config regen (D1):** edit `scripts/gen_eval_configs.py` `MODELS` qwen row from `or-qwen3-next-80b-a3b-instruct` → `or-qwen3.6-plus` (+ LangChain wrapper alias `langchain-or-qwen3.6-plus`); run `python scripts/gen_eval_configs.py`.
-- [ ] **(D4 if yes) Gemma 4 slot:** extend `MODELS` table with `("gemma", "google/gemma-4-31b-it", "langchain-google/gemma-4-31b-it", "...")`; regen configs (`4 new c{0,2,3,4}_gemma.py` files); extend `ALL_MODELS` in `scripts/run_eval_matrix.sh`; register `google/gemma-4-31b-it` alias in `_register_*` block of `src/models/models.py` if it's not already picked up by a generic OR slug pattern.
-- [ ] Add `tests/test_tool_choice_dispatch.py` — unit tests for `pick_tool_choice` table + prefix rule + retry guard (mock model alternating text/tool_call).
+- [ ] **(D4) Gemma 4 slot — registration + config:**
+  - Register `or-gemma-4-31b-it` in the `_register_openrouter_models` block of `src/models/models.py` with:
+    ```python
+    extra_body = {
+        "provider": {"order": ["DeepInfra", "Together"], "allow_fallbacks": False},
+        "reasoning": {"enabled": False},
+    }
+    ```
+  - Register LangChain wrapper alias `langchain-or-gemma-4-31b-it` mirroring existing LangChain wrapper pattern.
+  - Extend `MODELS` in `scripts/gen_eval_configs.py` with `("gemma", "or-gemma-4-31b-it", "langchain-or-gemma-4-31b-it", ...)`; regen the 4 new `config_gaia_c{0,2,3,4}_gemma.py` files (`python scripts/gen_eval_configs.py`).
+  - Extend `ALL_MODELS` in `scripts/run_eval_matrix.sh` to include `gemma`.
+  - Cap Gemma-stream concurrency at 4 (vLLM #39392 parser-under-concurrency workaround): pass `--concurrency 4` for the Gemma stream only; leave Mistral/Kimi/Qwen at the current default.
+- [ ] **(D5) Gemma 4 tool_choice defensive entry:** add `"or-gemma-4-31b-it"` to `MODELS_REJECTING_REQUIRED` (alongside any other named entries, distinct from the Qwen prefix rule). Retry guard carries reliability until the smoke probe succeeds.
+- [ ] Add `tests/test_tool_choice_dispatch.py` — unit tests for `pick_tool_choice` table + Qwen prefix rule + Gemma named entry + retry guard (mock model alternating text/tool_call).
 - [ ] Run the 10-file pytest sweep — must stay 118/118 green + new tests.
 - [ ] **Live probes (small budget, one-shot each):**
   - Kimi: base64 image + `tool_choice="required"` via OR `moonshotai/kimi-k2.5` with new extra_body. Expect no 400, `finish_reason="tool_calls"`.
   - Qwen3.6-Plus: text + `tool_choice="auto"` + strong "must call a tool" prompt. Expect `tool_calls` in response (not plain text).
-  - Gemma 4 (if D4 = yes): text + `tool_choice="required"` first (optimistic), fall back to `"auto"` if 404/400. Mark table accordingly.
+  - Gemma 4 — **two-step probe**:
+    1. `tool_choice="required"` against `or-gemma-4-31b-it` with the pinned `extra_body`. If 200 + `finish_reason="tool_calls"` → remove `or-gemma-4-31b-it` from `MODELS_REJECTING_REQUIRED`; keep provider pin.
+    2. If step 1 returns 404 "No endpoints found…" or 400 → keep `or-gemma-4-31b-it` in `MODELS_REJECTING_REQUIRED`; run step 2 with `tool_choice="auto"` + strong tool-required prompt; confirm `tool_calls` present.
+    3. In either case, inspect raw `response.choices[0].message` content to confirm chat-template fires the tool-call special tokens rather than emitting them as plain text.
 - [ ] Commit in logical groups:
   1. `fix(providers): Kimi K2.5 — thinking-disabled + Moonshot provider-pin via extra_body`
   2. `feat(tool_choice): hybrid dispatch with retry guard for Qwen family + named set`
   3. `fix(providers): switch Qwen matrix back to or-qwen3.6-plus (D1 — now unblocked by Change 2)`
-  4. *(if D4)* `feat(matrix): add Gemma-4-31B-it as 4th matrix slot`
+  4. `feat(matrix): add Gemma-4-31B-it as 4th matrix slot (D4 + D5 defensive auto + provider pin)`
 - [ ] Push to `origin/main`
 - [ ] Annotate this handoff's "To Do" checklist as done, update `HANDOFF_INDEX.md` row #9 status to "Validated → Completed" once the live probes pass.
 - [ ] Resume the main execution protocol from `HANDOFF_TEST_EVAL.md` §S0 pre-flight

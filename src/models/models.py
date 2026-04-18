@@ -876,18 +876,38 @@ class ModelManager(metaclass=Singleton):
             # required + multi-turn tool-result round-trip both succeed.
             {"model_name": "or-qwen3-next-80b-a3b-instruct", "model_id": "qwen/qwen3-next-80b-a3b-instruct"},
             {"model_name": "or-qwen3-coder-next", "model_id": "qwen/qwen3-coder-next"},
-            # Moonshot Kimi K2.5 — fixed sampling params (temp/top_p locked)
-            # extra_body: `thinking: disabled` satisfies Moonshot's constraint
-            # that `tool_choice="required"` requires thinking off (else 400).
-            # `provider.order=["Moonshot"]` pins routing to Moonshot so free-tier
-            # OR cannot silently fall back to a sub-provider with diverging
-            # thinking / sampling semantics.
+            # Moonshot Kimi K2.5 — fixed sampling params (temp/top_p locked).
+            # Provider pin + reasoning-off: both needed to make
+            # `tool_choice="required"` work deterministically.
+            #
+            # Slug is verbatim "Moonshot AI" (WITH space) — the actual
+            # provider_name returned by OR's endpoint API. An earlier value
+            # "Moonshot" (no space) was silently ignored, letting OR's default
+            # routing pick any of the 16 Kimi K2.5 providers — giving the
+            # illusion of "it works" while bypassing the pin entirely.
+            #
+            # Param is `reasoning={"enabled": false}`, not the direct-API
+            # `thinking={"type": "disabled"}`: OR translates `reasoning.enabled`
+            # to Moonshot's thinking-control on the way out; the direct-API
+            # param is not recognised on the OR-routed path and the provider
+            # 400s with "tool_choice 'required' is incompatible with thinking
+            # enabled". Verified via 5-option probe 2026-04-19: only
+            # `reasoning.enabled=false` produces `finish_reason="tool_calls"`
+            # against provider_name="Moonshot AI".
+            #
+            # `allow_fallbacks=False` enforces the pin — if Moonshot AI is
+            # unavailable the cell hard-fails rather than silently routing to
+            # a sub-provider with different sampling/thinking semantics that
+            # would contaminate the ablation.
             {
                 "model_name": "or-kimi-k2.5",
                 "model_id": "moonshotai/kimi-k2.5",
                 "extra_body": {
-                    "thinking": {"type": "disabled"},
-                    "provider": {"order": ["Moonshot"]},
+                    "reasoning": {"enabled": False},
+                    "provider": {
+                        "order": ["Moonshot AI"],
+                        "allow_fallbacks": False,
+                    },
                 },
             },
             # MiniMax M2.7 — preserve <think> blocks across tool turns

@@ -50,6 +50,12 @@ Plus the 2026-04-18 local-validation follow-ups listed in
 - [ ] **S2** smoke matrix: `sbatch run_matrix_slurm.sh smoke`
 - [ ] **C4 training pass** (see §C4 Train/Freeze below) — OPTIONAL but
       recommended for publishable C4 numbers
+- [ ] **Post-S2 snapshot** — `cp -a` C4 `skills/` into
+      `workdir/c4_trained_libraries/{model}_skills` (see §C4 Train/Freeze,
+      lines 171–192)
+- [ ] **Farm-side freeze smoke** (recommended before S4; ~30 min, ~$0.60):
+      3-Q × 3 models with `agent_config.*` override — verifies the
+      mechanism on the farm against real learned libraries
 - [ ] **S4** test-split submission: `sbatch run_matrix_slurm.sh full`
 - [ ] Collect `dra.jsonl` → run `scripts/analyze_results.py` per cell
 - [ ] `bash scripts/validate_handoffs.sh <DRA_RUN_ID>` → attach pass/info
@@ -253,6 +259,81 @@ full train-then-freeze *loop* with a genuinely trained library. The first
 farm C4 Train pass is still the first end-to-end test of real skill
 extraction + later freeze. Reserve the 1 h budget slot mentioned in
 "Known unknowns" for that.
+
+### Farm-side freeze smoke (~30 min, ~$0.60) — recommended before S4
+
+Integration test: the Mac validation above proved the *mechanism*; this
+step proves the same override also holds on the HKU CS farm environment
+(`conda activate dra` instead of the Mac `python` workaround) and against
+a genuinely-trained library (seeds + newly-extracted skills), **before**
+committing the 8–24 h, $30–100 S4 scored run.
+
+**Inputs:** requires the Post-S2 snapshot step (lines 171–192) to have
+completed, so `workdir/c4_trained_libraries/{mistral,kimi,qwen}_skills/`
+exist and each contains the `.seeded` marker.
+
+**Run** (one 3-Q cell per model, in parallel is fine):
+
+```bash
+for m in mistral kimi qwen; do
+  sbatch --job-name=gaia-c4-freeze-${m} --time=1:00:00 \
+         --output=logs/c4_freeze_smoke_${m}_%j.out \
+         --error=logs/c4_freeze_smoke_${m}_%j.err \
+         --wrap "source ~/anaconda3/etc/profile.d/conda.sh && conda activate dra \
+                 && cd /userhome/cs2/ambr0se/DeepResearchMetaAgent \
+                 && python examples/run_gaia.py \
+                      --config configs/config_gaia_c4_${m}.py \
+                      --cfg-options \
+                        max_samples=3 \
+                        dataset.split=validation \
+                        agent_config.skills_dir=workdir/c4_trained_libraries/${m}_skills \
+                        agent_config.enable_skill_extraction=False"
+done
+```
+
+**Canary (optional but recommended).** Inject a uniquely-named planner-scope
+skill into each snapshot before this run, so you can assert it appears in
+the planner's registry-injection block in the smoke log. Pattern:
+
+```bash
+for m in mistral kimi qwen; do
+  mkdir -p "workdir/c4_trained_libraries/${m}_skills/freeze-canary-farm-${m}"
+  cat > "workdir/c4_trained_libraries/${m}_skills/freeze-canary-farm-${m}/SKILL.md" <<EOF
+---
+name: freeze-canary-farm-${m}
+description: Canary — proves snapshot pinning on the farm. Safe to ignore.
+metadata:
+  consumer: planner
+  skill_type: verification_pattern
+  source: seeded
+  verified_uses: 0
+  confidence: 0.5
+---
+# freeze-canary-farm-${m}
+Canary body. Never triggers naturally.
+EOF
+done
+```
+
+**Pass criteria** (per model, mirroring the Mac validation table):
+
+| # | Check | Command | Expect |
+|---|-------|---------|--------|
+| 1 | Extractor not constructed | `grep -c "SkillExtractor active (C4 training mode)" logs/c4_freeze_smoke_${m}_*.out` | **0** |
+| 2 | No writes to snapshot | `find workdir/c4_trained_libraries/${m}_skills -name SKILL.md \| wc -l` before vs after | equal counts, same names |
+| 3 | Skill bodies unchanged | body-only `diff` of each snapshot `SKILL.md` (exclude frontmatter — `increment_verified_uses` mutates it legitimately) | all empty |
+| 4 | Library actually read | `jq -r '.intermediate_steps[]?.tool_calls[]?.name // empty' workdir/gaia_c4_${m}_<FREEZE_RUN_ID>/dra.jsonl \| grep -c activate_skill` | **> 0** |
+| 5 | Canary visible | `grep -c "freeze-canary-farm-${m}" logs/c4_freeze_smoke_${m}_*.out` | **> 0** |
+| 6 | Override banner landed | `grep "building SkillRegistry at" logs/c4_freeze_smoke_${m}_*.out` | shows the snapshot path, not `workdir/gaia_c4_${m}_<run>/skills` |
+
+**Fail → stop-gate.** If any model fails any check, do NOT submit S4 C4
+cells. Most likely culprits: shell quoting swallowing the `--cfg-options`
+args in `--wrap` (switch to a standalone `script.sh` + `sbatch script.sh`),
+or a regression in the generated configs (regenerate from
+`scripts/gen_eval_configs.py` and retry).
+
+**Pass → ready for S4.** Attach the 6-row pass table per model to this
+handoff before launching S4.
 
 ### S4 — Test-split submission (~8-24 h, $30-100)
 

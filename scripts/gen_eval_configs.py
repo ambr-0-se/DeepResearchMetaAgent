@@ -49,10 +49,18 @@ MODELS = [
     ),
     (
         "qwen",
-        "qwen3.6-plus-failover",
-        "langchain-qwen3.6-plus-failover",
-        "Qwen 3.6 Plus via DashScope-primary / OpenRouter-backup auto-failover. "
-        "Free tier consumed first; flips on quota exhaustion (one-way per process).",
+        "or-qwen3-next-80b-a3b-instruct",
+        "langchain-or-qwen3-next-80b-a3b-instruct",
+        "Qwen3-Next 80B A3B Instruct via OpenRouter direct (no DashScope "
+        "failover wrapper — DashScope free tier is exhausted and cannot be "
+        "paid-tier'd from this project account, and the earlier "
+        "`or-qwen3.6-plus` backup turned out to have no OpenRouter provider "
+        "that accepts `tool_choice=\"required\"`). This 80B-MoE instruct "
+        "variant is the cheapest-and-fastest live-tested Qwen model that "
+        "does accept tool_choice=required (~$0.09/$1.10 per M input/output; "
+        "sub-second latency; 262K context). Closest working analog to "
+        "the originally-proposed qwen3.5-27b which is also blocked on "
+        "tool_choice on OpenRouter.",
     ),
 ]
 

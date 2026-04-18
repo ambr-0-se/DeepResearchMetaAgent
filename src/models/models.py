@@ -858,6 +858,12 @@ class ModelManager(metaclass=Singleton):
             # Qwen3 family
             {"model_name": "or-qwen3-max", "model_id": "qwen/qwen3-max"},
             {"model_name": "or-qwen3.6-plus", "model_id": "qwen/qwen3.6-plus"},
+            # Qwen3-Next 80B A3B Instruct — chosen Qwen slot in the eval matrix
+            # after DashScope free tier exhausted and `or-qwen3.6-plus`'s
+            # OpenRouter providers turned out not to support
+            # `tool_choice="required"`. Live-verified 2026-04-18: tool_choice
+            # required + multi-turn tool-result round-trip both succeed.
+            {"model_name": "or-qwen3-next-80b-a3b-instruct", "model_id": "qwen/qwen3-next-80b-a3b-instruct"},
             {"model_name": "or-qwen3-coder-next", "model_id": "qwen/qwen3-coder-next"},
             # Moonshot Kimi K2.5 — fixed sampling params (temp/top_p locked)
             {"model_name": "or-kimi-k2.5", "model_id": "moonshotai/kimi-k2.5"},

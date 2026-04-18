@@ -19,19 +19,43 @@ def search(params):
         api_key=os.getenv("FIRECRAWL_API_KEY"),
     )
 
-    response = app.search(
-        query=params["q"],
-        limit= params.get("num", 10),
-        tbs= params.get("tbs", ""),
-    )
+    # Firecrawl-py 4.22+ rejects an empty `tbs=""` with ValueError. Only
+    # include the kwarg when a non-empty filter is set.
+    search_kwargs = {
+        "query": params["q"],
+        "limit": params.get("num", 10),
+    }
+    tbs = params.get("tbs")
+    if tbs:
+        search_kwargs["tbs"] = tbs
 
-    data = response.data
+    response = app.search(**search_kwargs)
+
+    # Firecrawl-py 4.22+ returns a pydantic `SearchData(web=[...], news=...,
+    # images=...)` instead of the legacy `{data: [...]}` dict-shape. Support
+    # both so this file keeps working across SDK upgrades.
+    if hasattr(response, "web"):
+        # New pydantic shape — items are SearchResultWeb models with
+        # attributes (url / title / description / category).
+        items = list(response.web or [])
+        news = getattr(response, "news", None) or []
+        items.extend(news)
+
+        def _get(item, key, default=""):
+            val = getattr(item, key, default)
+            return val if val is not None else default
+    else:
+        # Legacy shape — list of dicts.
+        items = getattr(response, "data", None) or []
+
+        def _get(item, key, default=""):
+            return item.get(key, default)
 
     results = []
-    for item in data:
-        title = item.get("title", "")
-        url = item.get("url", "")
-        description = item.get("description", "")
+    for item in items:
+        title = _get(item, "title")
+        url = _get(item, "url")
+        description = _get(item, "description")
         results.append(SearchItem(title=title,
                                   url=url,
                                   description=description))

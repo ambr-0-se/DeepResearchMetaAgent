@@ -99,9 +99,21 @@ deep_analyzer_tool_config = dict(
 
 # auto_browser_use_tool requires a LangChain ChatModel wrapper, registered
 # alongside each native model in src/models/models.py.
+#
+# max_steps=15 is the S4-time browser step cap (down from the
+# AutoBrowserUseTool class default of 50). Rationale: typical GAIA browser
+# flows need 2-12 internal steps; beyond ~15 the marginal accuracy gain is
+# dominated by stuck-loop waste (CAPTCHA retries, cookie-modal fights,
+# infinite scrolls). A single stuck 50-step invocation burns ~$0.10-1.00
+# and 8-12 min wall. Applied uniformly across all 16 cells so
+# C0/C2/C3/C4 deltas aren't contaminated by per-condition browser budget
+# differences. For local smoke tests, override via --cfg-options
+# (auto_browser_use_tool_config.max_steps=8). See
+# docs/handoffs/HANDOFF_TEST_EVAL.md "Browser step cap policy".
 auto_browser_use_tool_config = dict(
     type="auto_browser_use_tool",
     model_id='langchain-or-qwen3.6-plus',
+    max_steps=15,
 )
 
 # ---- run knobs --------------------------------------------------------------

@@ -81,6 +81,32 @@ Plus the 2026-04-18 local-validation follow-ups listed in
 | **Qwen** | `or-qwen3.6-plus` (OpenRouter, D1) | $0.325 / $1.95 | **hybrid dispatch → "auto"** (Qwen-family prefix rule, D3) | Vision + 1M context. OR providers for the whole Qwen family reject `"required"`; hybrid dispatch + retry guard coax plain-text replies back into tool calls. |
 | **Gemma** (D4) | `or-gemma-4-31b-it` (OpenRouter paid) | $0.13 / $0.38 | `"required"` works directly (verified 2026-04-18) | Dense 31B, Apache 2.0, only non-MoE in the matrix. Provider pin `DeepInfra+Together` + `reasoning.enabled=false`; `:free` variant excluded (Google AI Studio lacks reliable `tools` + `required`). Per-stream concurrency capped at 4 (vLLM #39392 pad-parser bug). |
 
+### Browser step cap policy (2026-04-19)
+
+All 16 matrix configs set `auto_browser_use_tool_config.max_steps=15`
+(down from the `AutoBrowserUseTool` class default of 50). Fixed in the
+generator template (`scripts/gen_eval_configs.py`), so any regeneration
+inherits it.
+
+**Why 15, not 50:** typical GAIA browser flows terminate in 2–12 internal
+steps; the 20+ step tail is dominated by **stuck loops** — CAPTCHA
+retries ("still seeing CAPTCHA" evals, confirmed on Mac 2026-04-18, 25+
+wasted steps in one invocation), cookie-modal fights, infinite scroll
+hunts. A single stuck 50-step invocation burns ~$0.10–1.00 depending on
+model and 8–12 min wall; cap at 15 bounds it to ~$0.05 and ≤4 min.
+
+**Why uniform across all 16 cells:** different browser budgets per
+condition would contaminate the C0/C2/C3/C4 accuracy deltas the paper is
+measuring. All cells share the same ceiling so condition differences
+reflect meta-agent capability, not browser headroom.
+
+**Local smoke override:** `--cfg-options auto_browser_use_tool_config.max_steps=8`
+for tighter smoke budgets (Farm-side freeze smoke, S1 canary, etc.).
+
+**If Gemma / Qwen accuracy turns out to be bottlenecked by the cap** on
+S2 smoke evidence, raise to 20 via generator re-run + commit; do **not**
+hand-edit per-cell configs (they will be overwritten on next regen).
+
 ---
 
 ## Prerequisites
@@ -279,7 +305,7 @@ allow 50-step browser sessions). Smoke budget per cell ≈ 3 Q × ~$0.05 =
 
 - `agent_config.max_steps=10` — plan budget (default 25)
 - `auto_browser_use_tool_config.max_steps=8` — internal browser loop cap
-  (default 50; recommended smoke value per commit `905a1fa`)
+  (S4 default now 15 per "Browser step cap policy"; smoke tightens to 8)
 - `deep_analyzer_agent_config.max_steps=2` (default 3)
 - `deep_researcher_agent_config.max_steps=2` (default 3)
 - `browser_use_agent_config.max_steps=3` (default 5)

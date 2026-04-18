@@ -70,15 +70,15 @@ GEMMA_CONCURRENCY="${GEMMA_CONCURRENCY:-4}"
 mkdir -p "$LOG_DIR"
 
 # Smoke-only step caps (unset SMOKE_CFG_OPTIONS entirely to get these defaults).
-# I-track smokes verify the pipeline wires up and runs, not accuracy. The
-# previous `agent_config.max_steps=6` was too tight — multi-hop GAIA Qs
-# thrash the planner's "max steps → retry" loop and never finish. Current
-# values balance "short enough to keep smoke cheap" against "loose enough
-# that the planner has room to actually delegate and return". Browser-tool
-# internal steps remain the largest wall-time knob (CAPTCHA loops per
-# f73a666).
+# I-track smokes verify the pipeline wires up and runs — not accuracy. Caps
+# are intentionally tight: hitting `max_steps` on every question is a
+# SUCCESS state for validation (proves the planner loop and its cap enforce
+# correctly, and the question exits in bounded time). An earlier tighter
+# pass (planner=6/browser=4) thrashed only because firecrawl-py 4.22 was
+# crashing the search path; that's fixed in 42583af. With a working
+# pipeline, tight caps just mean "run hits the ceiling, next Q starts."
 if [ -z "${SMOKE_CFG_OPTIONS+x}" ]; then
-  SMOKE_CFG_OPTIONS="agent_config.max_steps=8 auto_browser_use_tool_config.max_steps=6 deep_analyzer_agent_config.max_steps=2 deep_researcher_agent_config.max_steps=2 browser_use_agent_config.max_steps=3 deep_researcher_tool_config.time_limit_seconds=25"
+  SMOKE_CFG_OPTIONS="agent_config.max_steps=4 auto_browser_use_tool_config.max_steps=3 deep_analyzer_agent_config.max_steps=2 deep_researcher_agent_config.max_steps=2 browser_use_agent_config.max_steps=2 deep_researcher_tool_config.time_limit_seconds=20"
 fi
 
 # Shared run id for every cell in this invocation. Every generated config

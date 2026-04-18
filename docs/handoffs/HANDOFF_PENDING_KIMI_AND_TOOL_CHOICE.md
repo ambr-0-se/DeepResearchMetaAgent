@@ -1,6 +1,6 @@
 # Handoff: PENDING — Kimi K2.5 vision + per-model `tool_choice` hybrid dispatch
 
-**Status:** IMPLEMENTED + LIVE-VERIFIED (2026-04-18) — ready to merge; farm CI run still to do.
+**Status:** IMPLEMENTED + LIVE-VERIFIED (2026-04-18) — **140/140** unit sweep on 2026-04-19 (`scripts/run_handoff_pytest_sweep.sh`); farm repeat + matrix smoke still to do.
 **Session where decisions were made:** 2026-04-18 (continues from [`HANDOFF_TEST_EVAL.md`](HANDOFF_TEST_EVAL.md))
 **Blocks:** GAIA test-split submission run (cannot start until live probes pass).
 **Pointers back:** [`HANDOFF_INDEX.md`](../../HANDOFF_INDEX.md), [`HANDOFF_PROVIDER_MATRIX.md`](HANDOFF_PROVIDER_MATRIX.md)
@@ -24,12 +24,13 @@
 | 3. Qwen swap to `or-qwen3.6-plus` (D1) | `scripts/gen_eval_configs.py`, regen'd `configs/config_gaia_c{0,2,3,4}_qwen.py` | ✅ implemented |
 | 4. Gemma 4 31B 4th matrix slot (D4 + D5) | `src/models/models.py` (registration + provider pin + reasoning off), `scripts/gen_eval_configs.py`, `scripts/run_eval_matrix.sh` (ALL_MODELS + per-model concurrency cap), new `configs/config_gaia_c{0,2,3,4}_gemma.py` | ✅ implemented |
 
-### Test-sweep status — **139/139 pass** (dra env)
+### Test-sweep status — **140/140 pass** (dra env, 2026-04-19)
 
 Run one-file-at-a-time (pytest-multi-file collection interacts badly with the
 `src.logger` stub in `tests/test_skill_seed.py` — see
 [CLAUDE.md §Local dev environment](../../CLAUDE.md) for the documented
-workaround).
+workaround). **Shortcut:** `bash scripts/run_handoff_pytest_sweep.sh` (re-execs
+into `conda` env `dra` when `mmengine` is missing on default `python`).
 
 | File | Pass | Notes |
 |------|------|-------|
@@ -43,8 +44,8 @@ workaround).
 | `test_review_schema` | 26/26 | |
 | `test_skill_registry` | 28/28 | |
 | `test_skill_seed` | 6/6 | |
-| `test_tool_choice_dispatch` (NEW) | 21/21 | |
-| **Total** | **139/139** | |
+| `test_tool_choice_dispatch` | 22/22 | (+1 vs 2026-04-18 table — parametrized coverage) |
+| **Total** | **140/140** | |
 
 ### Live probe results — all green (2026-04-18)
 

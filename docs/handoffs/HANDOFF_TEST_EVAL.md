@@ -53,8 +53,8 @@ Plus the 2026-04-18 local-validation follow-ups listed in
 - [ ] **Post-S2 snapshot** — `cp -a` C4 `skills/` into
       `workdir/c4_trained_libraries/{model}_skills` (see §C4 Train/Freeze,
       lines 171–192)
-- [ ] **Farm-side freeze smoke** (recommended before S4; ~30 min, ~$0.60):
-      3-Q × 3 models with `agent_config.*` override — verifies the
+- [ ] **Farm-side freeze smoke** (recommended before S4; ~30 min, ~$0.80):
+      3-Q × 4 models with `agent_config.*` override — verifies the
       mechanism on the farm against real learned libraries
 - [ ] **S4** test-split submission: `sbatch run_matrix_slurm.sh full`
 - [ ] Collect `dra.jsonl` → run `scripts/analyze_results.py` per cell
@@ -260,7 +260,7 @@ farm C4 Train pass is still the first end-to-end test of real skill
 extraction + later freeze. Reserve the 1 h budget slot mentioned in
 "Known unknowns" for that.
 
-### Farm-side freeze smoke (~30 min, ~$0.60) — recommended before S4
+### Farm-side freeze smoke (~30 min, ~$0.80) — recommended before S4
 
 Integration test: the Mac validation above proved the *mechanism*; this
 step proves the same override also holds on the HKU CS farm environment
@@ -269,13 +269,28 @@ a genuinely-trained library (seeds + newly-extracted skills), **before**
 committing the 8–24 h, $30–100 S4 scored run.
 
 **Inputs:** requires the Post-S2 snapshot step (lines 171–192) to have
-completed, so `workdir/c4_trained_libraries/{mistral,kimi,qwen}_skills/`
+completed, so `workdir/c4_trained_libraries/{mistral,kimi,qwen,gemma}_skills/`
 exist and each contains the `.seeded` marker.
+
+**Cost caps** (applied inline via `--cfg-options` — important; the Mac
+dry run spent ~15 min on a single CAPTCHA retry loop because defaults
+allow 50-step browser sessions). Smoke budget per cell ≈ 3 Q × ~$0.05 =
+~$0.15; × 4 models = ~$0.60 + orchestration overhead.
+
+- `agent_config.max_steps=10` — plan budget (default 25)
+- `auto_browser_use_tool_config.max_steps=8` — internal browser loop cap
+  (default 50; recommended smoke value per commit `905a1fa`)
+- `deep_analyzer_agent_config.max_steps=2` (default 3)
+- `deep_researcher_agent_config.max_steps=2` (default 3)
+- `browser_use_agent_config.max_steps=3` (default 5)
+- `deep_researcher_tool_config.time_limit_seconds=30` (default 60)
+
+These caps are smoke-appropriate only — do **not** reuse them in S4.
 
 **Run** (one 3-Q cell per model, in parallel is fine):
 
 ```bash
-for m in mistral kimi qwen; do
+for m in mistral kimi qwen gemma; do
   sbatch --job-name=gaia-c4-freeze-${m} --time=1:00:00 \
          --output=logs/c4_freeze_smoke_${m}_%j.out \
          --error=logs/c4_freeze_smoke_${m}_%j.err \
@@ -287,7 +302,13 @@ for m in mistral kimi qwen; do
                         max_samples=3 \
                         dataset.split=validation \
                         agent_config.skills_dir=workdir/c4_trained_libraries/${m}_skills \
-                        agent_config.enable_skill_extraction=False"
+                        agent_config.enable_skill_extraction=False \
+                        agent_config.max_steps=10 \
+                        auto_browser_use_tool_config.max_steps=8 \
+                        deep_analyzer_agent_config.max_steps=2 \
+                        deep_researcher_agent_config.max_steps=2 \
+                        browser_use_agent_config.max_steps=3 \
+                        deep_researcher_tool_config.time_limit_seconds=30"
 done
 ```
 
@@ -296,7 +317,7 @@ skill into each snapshot before this run, so you can assert it appears in
 the planner's registry-injection block in the smoke log. Pattern:
 
 ```bash
-for m in mistral kimi qwen; do
+for m in mistral kimi qwen gemma; do
   mkdir -p "workdir/c4_trained_libraries/${m}_skills/freeze-canary-farm-${m}"
   cat > "workdir/c4_trained_libraries/${m}_skills/freeze-canary-farm-${m}/SKILL.md" <<EOF
 ---

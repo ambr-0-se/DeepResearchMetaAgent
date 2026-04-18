@@ -1,6 +1,13 @@
 # Handoff Index
 
-Entry point for change handoffs that still need validation on the GPU farm. Each linked document is **self-contained** — read the specific handoff doc for original problem, changes, test commands, and validation criteria.
+Entry point for change handoffs that still need validation on the GPU farm.
+Each linked document is **self-contained** — read the specific handoff doc for
+original problem, changes, test commands, and validation criteria.
+
+> Per-topic handoff docs live in [`docs/handoffs/`](docs/handoffs/) (see the
+> [directory README](docs/handoffs/README.md) for authoring conventions). This
+> index stays at the repo root because the operator is trained to open it
+> first.
 
 ---
 
@@ -8,13 +15,14 @@ Entry point for change handoffs that still need validation on the GPU farm. Each
 
 | # | Title | Doc | Status | Commit(s) | Pushed? |
 |---|-------|-----|--------|-----------|---------|
-| 1 | Silent-failure fixes for browser + analyzer tools | [HANDOFF_SILENT_FAILURES.md](HANDOFF_SILENT_FAILURES.md) | Code-validated (unit + partial runtime, 2026-04-18) — awaiting GPU-farm test-split run | `ba28f21` | Yes |
-| 2 | Multi-provider integration + GAIA eval matrix (Mistral/Kimi/Qwen × C0–C4) with Qwen DashScope→OpenRouter failover | [HANDOFF_PROVIDER_MATRIX.md](HANDOFF_PROVIDER_MATRIX.md) | Code-validated (24 unit tests; failover live-fired 2026-04-18; see local-validation fixes below) — awaiting test-split accuracy | `7632470` → `9883a3a` → `a98da9a` (local fixes: Qwen thinking, Kimi→OpenRouter) | Yes (orig); **No** (local fix `a98da9a` push pending) |
-| 3 | `modify_subagent` prompt + tool-description guidance expansion (all 7 actions covered, failure-mode→action table, condition-scoped anti-patterns for C2/C3/C4) | [HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md](HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md) | Code-validated (93 adaptive-tool mentions in C2+ runtime logs, 2026-04-18) — awaiting test-split | `764c6bf` → `b73eb39` | Yes |
-| 4 | Core C3 / C4 implementation — structural REVIEW step + cross-task skill library (the four experimental conditions C0/C2/C3/C4 themselves) | [HANDOFF_C3_C4_IMPLEMENTATION.md](HANDOFF_C3_C4_IMPLEMENTATION.md) | Code-validated (60 unit tests: 26 review_schema + 28 skill_registry + 6 skill_seed; SkillRegistry built 3/3, seed_skills_dir fired 24× in runtime, 2026-04-18) — awaiting `[REVIEW]` marker under traffic | `60065a8` → `433c30e` → `0643089` → `d247605` | Yes |
-| 5 | RC1 premature `final_answer_tool` guard + duplicate-yield bug fix + RC2 exception-chain diagnostic hook + prompt contradictions fix | [HANDOFF_RC1_FINAL_ANSWER_GUARD.md](HANDOFF_RC1_FINAL_ANSWER_GUARD.md) | Code-validated (18 unit tests, 2026-04-18) — awaiting guard-fire in real traffic | `54e7707` → `a9a6985` → `c52cf91` → `912685f` → `d36f4d4` | Yes |
-| 6 | Pass 2 Qwen-4B (vLLM) tuning — sub-agent `max_steps` 3/3/5→7/7/7 and `context_prune_threshold_ratio`=0.75 on `config_gaia_adaptive_qwen.py` | [HANDOFF_PASS2_QWEN_TUNING.md](HANDOFF_PASS2_QWEN_TUNING.md) | **N/A for 3-model API matrix** (Qwen-4B local-vLLM only; reinstate when returning to on-prem Qwen-4B runs) | `63486ca` | **No — push pending** |
-| 7 | ToolGenerator hardening — allowlist + AST imports, repair retry, prompt examples, `Tool.from_code(expected_tool_name)`, collision-safe dynamic tool names, unit tests | [HANDOFF_TOOLGENERATOR.md](HANDOFF_TOOLGENERATOR.md) | Code-validated (12/12 unit tests after `7ee9ae1` schema fallback fix, 2026-04-18) — awaiting test-split | `0161321` → `7ee9ae1` (Tool.from_code parameters synthesis fix) | Yes (orig); **No** (fix push pending) |
+| 1 | Silent-failure fixes for browser + analyzer tools | [HANDOFF_SILENT_FAILURES.md](docs/handoffs/HANDOFF_SILENT_FAILURES.md) | Code-validated (unit + partial runtime, 2026-04-18) — awaiting GPU-farm test-split run | `ba28f21` | Yes |
+| 2 | Multi-provider integration + GAIA eval matrix (Mistral/Kimi/Qwen × C0–C4) with Qwen DashScope→OpenRouter failover | [HANDOFF_PROVIDER_MATRIX.md](docs/handoffs/HANDOFF_PROVIDER_MATRIX.md) | Code-validated (24 unit tests; failover live-fired 2026-04-18; see local-validation fixes below) — awaiting test-split accuracy | `7632470` → `9883a3a` → `a98da9a` (local fixes: Qwen thinking, Kimi→OpenRouter) | Yes (orig); **No** (local fix `a98da9a` push pending) |
+| 3 | `modify_subagent` prompt + tool-description guidance expansion (all 7 actions covered, failure-mode→action table, condition-scoped anti-patterns for C2/C3/C4) | [HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md](docs/handoffs/HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md) | Code-validated (93 adaptive-tool mentions in C2+ runtime logs, 2026-04-18) — awaiting test-split | `764c6bf` → `b73eb39` | Yes |
+| 4 | Core C3 / C4 implementation — structural REVIEW step + cross-task skill library (the four experimental conditions C0/C2/C3/C4 themselves) | [HANDOFF_C3_C4_IMPLEMENTATION.md](docs/handoffs/HANDOFF_C3_C4_IMPLEMENTATION.md) | Code-validated (60 unit tests: 26 review_schema + 28 skill_registry + 6 skill_seed; SkillRegistry built 3/3, seed_skills_dir fired 24× in runtime, 2026-04-18) — awaiting `[REVIEW]` marker under traffic | `60065a8` → `433c30e` → `0643089` → `d247605` | Yes |
+| 5 | RC1 premature `final_answer_tool` guard + duplicate-yield bug fix + RC2 exception-chain diagnostic hook + prompt contradictions fix | [HANDOFF_RC1_FINAL_ANSWER_GUARD.md](docs/handoffs/HANDOFF_RC1_FINAL_ANSWER_GUARD.md) | Code-validated (18 unit tests, 2026-04-18) — awaiting guard-fire in real traffic | `54e7707` → `a9a6985` → `c52cf91` → `912685f` → `d36f4d4` | Yes |
+| 6 | Pass 2 Qwen-4B (vLLM) tuning — sub-agent `max_steps` 3/3/5→7/7/7 and `context_prune_threshold_ratio`=0.75 on `config_gaia_adaptive_qwen.py` | [HANDOFF_PASS2_QWEN_TUNING.md](docs/handoffs/HANDOFF_PASS2_QWEN_TUNING.md) | **N/A for 3-model API matrix** (Qwen-4B local-vLLM only; reinstate when returning to on-prem Qwen-4B runs) | `63486ca` | **No — push pending** |
+| 7 | ToolGenerator hardening — allowlist + AST imports, repair retry, prompt examples, `Tool.from_code(expected_tool_name)`, collision-safe dynamic tool names, unit tests | [HANDOFF_TOOLGENERATOR.md](docs/handoffs/HANDOFF_TOOLGENERATOR.md) | Code-validated (12/12 unit tests after `7ee9ae1` schema fallback fix, 2026-04-18) — awaiting test-split | `0161321` → `7ee9ae1` (Tool.from_code parameters synthesis fix) | Yes (orig); **No** (fix push pending) |
+| 8 | GAIA test-split execution protocol for the 12-cell matrix on the HKU CS GPU farm (staged S0→S1→S2→[C4 train/freeze]→S4 + grep sweep + resume protocol) | [HANDOFF_TEST_EVAL.md](docs/handoffs/HANDOFF_TEST_EVAL.md) | Ready to execute | (Qwen swap + docs this session) | **No — push pending** |
 
 ### Local-validation follow-ups (2026-04-18 session) — not original handoffs, but required to unblock local test-split prep
 

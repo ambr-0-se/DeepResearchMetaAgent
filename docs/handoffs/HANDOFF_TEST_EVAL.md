@@ -111,7 +111,7 @@ hand-edit per-cell configs (they will be overwritten on next regen).
 ## Prerequisites
 
 ```bash
-ssh gpu3gate1.cs.hku.hk                        # HKU CS Phase-3 gateway
+ssh gpu2gate1.cs.hku.hk                        # HKU CS Phase-2 gateway
 cd /userhome/cs2/ambr0se/DeepResearchMetaAgent
 git pull origin main                           # ensure HEAD has this handoff's commits
 
@@ -138,7 +138,7 @@ ls data/GAIA  # should contain 2023/ with validation + test subdirs
 Earlier summaries sometimes collapsed **S2 → S4**. The **complete** path for publishable, non-contaminated **C4** results is:
 
 1. **S0 → S1 → S2** — prove configs, keys, and **all 16 cells** on a **short** validation smoke (default **3 Q/cell** + smoke step caps; **four model streams in parallel** — see [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh)).
-2. **C4 training pass** — run **C4 × all four models** with skill extraction **on** on the **labelled validation split** (or the train split you fix in protocol), so libraries accumulate **before** test scoring.
+2. **C4 training pass** — run **C4 × all four models** with skill extraction **on** on the **full validation split** (`dataset.split=validation`; see commands below — **not** the config default `test` from [`configs/config_gaia.py`](../../configs/config_gaia.py)), so each model’s library learns only from **validation** before any **test** scoring.
 3. **Post-S2 snapshot** — copy each model’s trained `skills/` tree into `workdir/c4_trained_libraries/{mistral,kimi,qwen,gemma}_skills/` (see §C4 Train/Freeze below).
 4. **Farm-side freeze smoke** — short validation jobs with **`agent_config.*` overrides** only (`skills_dir` snapshot + `enable_skill_extraction=False` + smoke caps); confirm extractor off and snapshot pinning on **farm** hardware.
 5. **S4** — **full test-split** matrix (16 cells). **C4** cells must use the **frozen** snapshot + `enable_skill_extraction=False` overrides (§S4). This is the **final scored objective** once steps **1–4** pass.
@@ -231,14 +231,19 @@ extraction still enabled, then:
    *skill-library utility* (how much the seeded + learned skills help) vs.
    *online-learning dynamics* (how well the extractor adds good skills).
 
-Standard ML methodology → **train then freeze**:
+Standard ML methodology → **train on validation → freeze → evaluate on test**:
 
 ```bash
-# 1. Training: let C4 evolve skills on the labelled validation split.
-#    All 4 models in parallel; extraction stays on.
+# 1. Training: C4 × four models, **full validation split**, extraction ON.
+#    `configs/config_gaia.py` defaults to split=test — you MUST set DATASET_SPLIT
+#    so training does not leak the test set into skill extraction.
+export DATASET_SPLIT=validation
+# If your site strips the environment for sbatch, use: sbatch --export=ALL run_matrix_slurm.sh full '' c4
 sbatch run_matrix_slurm.sh full '' c4
+unset DATASET_SPLIT   # avoid accidentally scoring C0–C3 on validation during S4
 # => workdir/gaia_c4_{mistral,kimi,qwen,gemma}_<TRAIN_RUN_ID>/
 #    each ends with a `skills/` dir containing seeded + learned SKILL.md.
+#    (Implemented via `scripts/run_eval_matrix.sh`: passes dataset.split=$DATASET_SPLIT in full mode.)
 
 # 2. Snapshot the trained libraries and stage them as the starting point
 #    for the scored run. Run ONCE before S4.
@@ -411,8 +416,7 @@ handoff before launching S4.
 
 ### S4 — Test-split submission (~8-24 h, $30-100)
 
-Full matrix, test split, all 16 cells. Long job; use SLURM for
-disconnect-survival.
+Full matrix, **`dataset.split=test`** (config default in [`configs/config_gaia.py`](../../configs/config_gaia.py)) for **all 16 cells**. **Do not** leave `DATASET_SPLIT=validation` exported from the C4 training step, or C0–C3 would also run on validation instead of test. Long job; use SLURM for disconnect-survival.
 
 **Plain (no C4 training pass):**
 ```bash

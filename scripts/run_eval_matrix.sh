@@ -25,6 +25,11 @@
 #                       defaults to tight planner/browser/sub-agent caps (cost control).
 #                       Set to empty string before launch to omit caps: `export SMOKE_CFG_OPTIONS=`
 #                       (then only max_samples + validation split apply).
+#   DATASET_SPLIT — for `full` mode only: if set (e.g. `validation`), passed as
+#                   `dataset.split=...` so runs do not use the config default (`test`).
+#                   **C4 skill training:** export `DATASET_SPLIT=validation` before
+#                   `sbatch run_matrix_slurm.sh full '' c4` so each model trains on the
+#                   **full validation set**; omit before S4 test submission.
 #   LOG_DIR    — where to tee per-cell stdout/stderr (default: workdir/run_logs)
 #   GEMMA_CONCURRENCY — per-Gemma-cell concurrency cap (default: 4). Workaround
 #                       for vLLM #39392 (gemma4 tool parser emits all-<pad>
@@ -66,8 +71,9 @@ ALL_CONDITIONS=(c0 c2 c3 c4)
 [[ -n "$ONLY_CONDITION" ]] && ALL_CONDITIONS=("$ONLY_CONDITION")
 
 # Build the per-cell command. In smoke mode, cap question count and use the
-# labeled validation split so we can score immediately. In full mode, no cap
-# and the test split (default in config_gaia.py).
+# labeled validation split so we can score immediately. In full mode, no
+# `max_samples` cap; split is `test` unless `DATASET_SPLIT` is set (use
+# `DATASET_SPLIT=validation` for C4 skill training on the full validation set).
 #
 # Per-model overrides:
 #   - gemma: concurrency capped via GEMMA_CONCURRENCY (default 4) to dodge
@@ -76,19 +82,20 @@ ALL_CONDITIONS=(c0 c2 c3 c4)
 cell_cmd() {
   local cfg="$1"
   local model="$2"
-  local extra_cfg=""
-  if [[ "$model" == "gemma" ]]; then
-    extra_cfg=" concurrency=$GEMMA_CONCURRENCY"
-  fi
   if [[ "$MODE" == "smoke" ]]; then
     local smoke_tail=""
     if [[ -n "${SMOKE_CFG_OPTIONS}" ]]; then
       smoke_tail=" ${SMOKE_CFG_OPTIONS}"
     fi
-    echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options max_samples=$LIMIT dataset.split=validation${smoke_tail}$extra_cfg"
+    local gem=""
+    [[ "$model" == "gemma" ]] && gem=" concurrency=$GEMMA_CONCURRENCY"
+    echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options max_samples=$LIMIT dataset.split=validation${smoke_tail}${gem}"
   else
-    if [[ -n "$extra_cfg" ]]; then
-      echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options${extra_cfg}"
+    local opts=()
+    [[ -n "${DATASET_SPLIT:-}" ]] && opts+=("dataset.split=${DATASET_SPLIT}")
+    [[ "$model" == "gemma" ]] && opts+=("concurrency=$GEMMA_CONCURRENCY")
+    if [[ ${#opts[@]} -gt 0 ]]; then
+      echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options ${opts[*]}"
     else
       echo "$PYTHON examples/run_gaia.py --config $cfg"
     fi

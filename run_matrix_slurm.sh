@@ -59,6 +59,8 @@ echo "ONLY_CONDITION:'${ONLY_CONDITION}'"
 if [[ "$MODE" == "smoke" ]]; then
   echo "Smoke LIMIT:   ${LIMIT:-3}  (override: export LIMIT=5 before sbatch)"
   echo "Smoke caps:    SMOKE_CFG_OPTIONS ${SMOKE_CFG_OPTIONS:+set}${SMOKE_CFG_OPTIONS:-unset→defaults in run_eval_matrix.sh}"
+elif [[ "$MODE" == "full" && -n "${DATASET_SPLIT:-}" ]]; then
+  echo "DATASET_SPLIT: ${DATASET_SPLIT}  (full-mode override; empty unset=test default)"
 fi
 echo "Started:       $(date)"
 echo "========================================"

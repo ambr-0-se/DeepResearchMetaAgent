@@ -700,6 +700,17 @@ class ModelManager(metaclass=Singleton):
             # Preserve the actual model_id DashScope expects on the wire.
             # We only used model_name above so needs_reasoning_echo() sees "thinking".
             registered_model.model_id = model_id
+            # Invariant: DashScope wire ids must NOT start with the `qwen/`
+            # prefix that `src/models/tool_choice.py` uses to auto-downgrade
+            # OpenRouter Qwen slugs. If a future DashScope model id adopted
+            # that format the dispatcher would silently force the DashScope
+            # path through the retry guard. Fail loudly at registration time.
+            assert not registered_model.model_id.startswith("qwen/"), (
+                f"DashScope model_id {registered_model.model_id!r} collides "
+                f"with the OpenRouter `qwen/` prefix used by hybrid tool_choice "
+                f"dispatch. Rename the model id or update "
+                f"`_AUTO_WIRE_PREFIXES` in src/models/tool_choice.py."
+            )
             # But expose the friendly alias for echo-routing: stash on a side attr
             # that MessageManager can read if needed (it uses self.model_id by default,
             # so the approach above collides). Simpler: keep MessageManager's predicate

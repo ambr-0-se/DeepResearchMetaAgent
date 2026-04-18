@@ -104,6 +104,22 @@ class GeneralAgent(AsyncMultiStepAgent):
             raise ValueError(
                 "`stream_outputs` is set to True, but the model class implements no `generate_stream` method."
             )
+        # Retry-guard advisory: the guard only runs on the non-streaming path
+        # (see `_retry_on_missing_tool_calls`). If a model in the auto-dispatch
+        # set ever runs with streaming enabled, plain-text replies will fall
+        # straight through to the `parse_tool_calls` fallback with no retry.
+        # Warn loudly at construction so the misconfiguration is visible.
+        if self.stream_outputs:
+            model_id = getattr(self.model, "model_id", None)
+            if pick_tool_choice(model_id, default="required") == "auto":
+                logger.warning(
+                    "[tool_choice] %s resolves to \"auto\" but stream_outputs=True "
+                    "— the plain-text retry guard is inactive on the streaming "
+                    "path. Expect empty-tool-call failures if the model replies "
+                    "in text. Disable stream_outputs for this model or extend "
+                    "the retry guard to the streaming branch.",
+                    model_id or "<unknown>",
+                )
         # Tool calling setup
         self.max_tool_threads = max_tool_threads
 
@@ -268,6 +284,22 @@ class GeneralAgent(AsyncMultiStepAgent):
         original, or one produced by a successful retry). On exhaustion falls
         through so the caller's existing ``parse_tool_calls`` fallback + error
         path handles the failure.
+
+        Known caveats:
+        - **reasoning_content is dropped on the retry turn.** The injected
+          assistant echo carries only ``role`` + ``content``. For any model
+          matched by ``needs_reasoning_echo()`` (DeepSeek-reasoner,
+          Qwen3-thinking, etc.), the provider will 400 on the retry turn
+          because it requires prior ``reasoning_content`` to be echoed. The
+          intersection between the auto-dispatch set and
+          ``needs_reasoning_echo`` is currently empty (no Qwen3-thinking
+          slugs in the matrix and none auto-dispatched), so this is latent
+          rather than active. Widen this helper to copy reasoning_content
+          before adding any such model.
+        - **Streaming path is not covered.** If ``stream_outputs=True`` and
+          the model is in the auto-dispatch set, plain-text replies fall
+          through to ``parse_tool_calls`` with no retry — see the warning
+          emitted from ``GeneralAgent.__init__``.
         """
         model_id = getattr(self.model, "model_id", None)
         if pick_tool_choice(model_id, default="required") != "auto":

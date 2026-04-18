@@ -48,7 +48,16 @@ UNSUPPORTED_STOP_MODELS = [
     'claude37-sonnet',
     'o4-mini',
     'o3',
-    'langchain-o3'
+    'langchain-o3',
+    # Kimi K2.5: verified 2026-04-19 (integration test) that ANY non-empty
+    # `stop` sequence combined with `tool_choice="required"` causes finish=stop
+    # with empty tool_calls, even when the stop string cannot possibly appear
+    # in the output (tested with literal "XYZZYZZY:"). The provider halts
+    # before emitting the tool-call token. Strip `stop` to keep tool use
+    # reliable; `tool_choice="required"` already forces single-tool output,
+    # so the loss of stop-guards is moot.
+    'kimi-k2.5',
+    'kimi-k2.5-no-thinking',
 ]
 UNSUPPORTED_TOOL_CHOICE_MODELS = [
     'claude37-sonnet',

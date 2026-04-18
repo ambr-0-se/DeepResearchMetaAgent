@@ -114,6 +114,18 @@ class ToolCallingAgent(MultiStepAgent):
             raise ValueError(
                 "`stream_outputs` is set to True, but the model class implements no `generate_stream` method."
             )
+        # See GeneralAgent: the retry guard is non-streaming-only. Warn if the
+        # current model is in the auto-dispatch set AND stream_outputs=True.
+        if self.stream_outputs:
+            model_id = getattr(self.model, "model_id", None)
+            if pick_tool_choice(model_id, default="required") == "auto":
+                logger.warning(
+                    "[tool_choice] %s resolves to \"auto\" but stream_outputs=True "
+                    "— the plain-text retry guard is inactive on the streaming "
+                    "path. Disable stream_outputs for this model or extend the "
+                    "retry guard to the streaming branch.",
+                    model_id or "<unknown>",
+                )
         # Tool calling setup
         self.max_tool_threads = max_tool_threads
 
@@ -142,6 +154,9 @@ class ToolCallingAgent(MultiStepAgent):
 
         Re-prompts up to :data:`MAX_TOOL_RETRIES` times when the current model
         was dispatched to ``tool_choice="auto"`` and returned no tool calls.
+
+        See the async counterpart for caveats (reasoning_content is dropped
+        on retry; streaming path is uncovered).
         """
         model_id = getattr(self.model, "model_id", None)
         if pick_tool_choice(model_id, default="required") != "auto":

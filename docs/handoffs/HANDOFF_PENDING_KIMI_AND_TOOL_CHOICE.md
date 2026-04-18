@@ -67,6 +67,14 @@ Ran `python scripts/live_probe_tool_choice.py` in the `dra` env against OR.
 
 ## TL;DR — two approved changes, neither yet implemented
 
+> **[SUPERSEDED for implementation detail]** The design pseudocode below
+> (especially the alias-keyed ``MODELS_REJECTING_REQUIRED`` set and
+> ``or-qwen*`` / ``or-gemma-4-31b-it`` literals) reflects the pre-exploration
+> spec. The shipped code keys on **wire ids** (``qwen/`` prefix,
+> ``google/gemma-4-31b-it`` → removed after the D5 probe passed). See the
+> [post-implementation addendum](#post-implementation-addendum-2026-04-18)
+> at the top for the canonical current state.
+
 ### Change 1 — Kimi swap: enable vision via `extra_body`
 
 The matrix currently routes Kimi through `or-kimi-k2.5` → OpenRouter slug `moonshotai/kimi-k2.5` but without extra routing hints. Research dispatch on 2026-04-18 (see §Research findings below) found:
@@ -164,7 +172,20 @@ Option 3 wins on risk/reward for a paper-submission run. Option 5 is reserved fo
 
 ---
 
-## Code change specification (for the implementation session)
+## [SUPERSEDED — historical spec only] Code change specification
+
+> **The shipped code does NOT match the spec in this section.** It was written
+> before the codebase exploration on 2026-04-18 that proved
+> ``OpenAIServerModel.model_id`` holds the **wire id** at the agent call site,
+> not the registration alias. The shipped implementation therefore keys the
+> lookup on wire ids (``qwen/`` prefix, named entries like
+> ``google/gemma-4-31b-it``), not aliases (``or-qwen*``, ``or-gemma-4-31b-it``,
+> ``or-kimi-k2.5``). The spec below is kept as historical context for the
+> research trail — do NOT use it as an implementation reference.
+>
+> Canonical post-implementation summary lives in the
+> [post-implementation addendum](#post-implementation-addendum-2026-04-18)
+> at the top of this document.
 
 ### Files to touch
 

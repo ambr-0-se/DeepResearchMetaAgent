@@ -5,7 +5,7 @@ instead. Inherits from ./config_gaia_c4.py and overrides every model_id to point
 at the chosen model.
 
 Model: or-gemma-4-31b-it
-Gemma 4 31B Instruct via OpenRouter (D4, 2026-04-18). Dense Google frontier slot alongside the MoE variants (Mistral, Kimi, Qwen). Text+image+video modalities (no audio). Apache 2.0. Provider pin to DeepInfra+Together (both vLLM-backed, latest gemma4 parser) is set at registration in `src/models/models.py`; reasoning mode disabled there to prevent thinking-channel contamination of tool output. tool_choice is downgraded to `"auto"` via the D5 named entry in `src/models/tool_choice.py` pending a live smoke probe. Concurrency is capped at 4 in `scripts/run_eval_matrix.sh` for this stream only (vLLM #39392 pad-bug under parallel load). $0.13 in / $0.38 out per M tokens.
+Gemma 4 31B Instruct via OpenRouter (D4, 2026-04-18). Dense Google frontier slot alongside the MoE variants (Mistral, Kimi, Qwen). Text+image+video modalities (no audio). Apache 2.0. Provider pin to DeepInfra+Together (both vLLM-backed, latest gemma4 parser) is set at registration in `src/models/models.py`; reasoning mode disabled there to prevent thinking-channel contamination of tool output. Live smoke probe 2026-04-18 confirmed `tool_choice="required"` works directly with this provider pin (finish_reason="tool_calls", no special-token leaks), so Gemma is NOT in `MODELS_REJECTING_REQUIRED` — the dispatcher passes `"required"` through unchanged. Concurrency is capped at 4 in `scripts/run_eval_matrix.sh` for this stream only (vLLM #39392 pad-bug under parallel load). $0.13 in / $0.38 out per M tokens.
 
 Output dir: workdir/gaia_c4_gemma_<run_id>/
 

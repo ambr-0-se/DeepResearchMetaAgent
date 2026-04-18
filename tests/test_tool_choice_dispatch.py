@@ -326,6 +326,49 @@ def test_retry_guard_sync_recovers_on_retry():
 # -- production code still has a ChatMessage-shaped retry payload -------------
 
 
+def _extract_constant(path: Path, name: str) -> str:
+    """Parse a module-level string/int constant from a production file.
+
+    Avoids importing the module (which pulls in heavy deps). Matches a single
+    top-level ``NAME = "..."`` or ``NAME = N`` declaration; raises if absent.
+    """
+    import re
+    text = path.read_text()
+    m = re.search(
+        rf'^{re.escape(name)}\s*=\s*(?P<val>\d+|\([\s\S]*?\)|"(?:[^"\\]|\\.)*")',
+        text, flags=re.MULTILINE,
+    )
+    assert m is not None, f"{name} not found in {path}"
+    return m.group("val").strip()
+
+
+def test_retry_constants_match_across_production_files():
+    """Regression guard: the retry prompt + MAX_TOOL_RETRIES are duplicated in
+    ``general_agent.py`` (async path) and ``tool_calling_agent.py`` (sync path)
+    because a shared import would create a circular dep between ``src/base/``
+    and ``src/agent/``. If they ever drift, one path will re-prompt with a
+    different string than the other — this test catches that drift at
+    collection time.
+    """
+    general = ROOT / "src/agent/general_agent/general_agent.py"
+    toolcalling = ROOT / "src/base/tool_calling_agent.py"
+
+    max_a = _extract_constant(general, "MAX_TOOL_RETRIES")
+    max_b = _extract_constant(toolcalling, "MAX_TOOL_RETRIES")
+    assert max_a == max_b, f"MAX_TOOL_RETRIES drift: {max_a!r} vs {max_b!r}"
+
+    # The prompt spans multiple lines via implicit string concatenation; match
+    # the opening ``(`` group so we catch the whole tuple value. Compare the
+    # two prompts as raw text — any whitespace / phrasing change fails here.
+    prompt_a = _extract_constant(general, "_TOOL_CHOICE_RETRY_PROMPT")
+    prompt_b = _extract_constant(toolcalling, "_TOOL_CHOICE_RETRY_PROMPT")
+    assert prompt_a == prompt_b, (
+        f"_TOOL_CHOICE_RETRY_PROMPT drift between async and sync guards.\n"
+        f"general_agent.py: {prompt_a!r}\n"
+        f"tool_calling_agent.py: {prompt_b!r}"
+    )
+
+
 def test_production_chat_message_shape_matches_retry_assumptions():
     """Regression: the async + sync guards both construct fresh ChatMessage
     objects with only ``role`` + ``content``. Ensure the production ChatMessage

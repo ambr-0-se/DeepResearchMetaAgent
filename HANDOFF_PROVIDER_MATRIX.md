@@ -135,7 +135,7 @@ cp .env.template .env
 | `OPENROUTER_API_KEY` | https://openrouter.ai/keys | Qwen failover backup |
 | `FIRECRAWL_API_KEY` | https://www.firecrawl.dev → API Keys | `web_searcher_tool` (used by all sub-agents) |
 
-Also keep a valid `OPENAI_API_KEY` populated — `model_manager.init_models()` may probe it during registration of OpenAI models even if no config selects them.
+`OPENAI_API_KEY` is **optional** for matrix-only work: if unset or empty, `ModelManager` skips remote OpenAI and LangChain `langchain-gpt-*` wrappers. Set it only when a config actually uses an OpenAI model.
 
 ### Endpoints — leave defaults unless region-specific
 
@@ -327,7 +327,7 @@ python -m pytest tests/test_failover_model.py tests/test_reasoning_preservation.
 | **Kimi** | `400 — response_format with thinking` | Wrong variant chosen | Confirm config uses `kimi-k2.5-no-thinking`, not `kimi-k2.5` |
 | **Qwen** | `404 model not found` | Wrong endpoint region | Switch `DASHSCOPE_API_BASE` to CN endpoint |
 | **Qwen** | `[FailoverModel] primary quota exhausted` | Free tier already consumed | Expected — confirms failover working |
-| **All** | `OPENAI_API_KEY` errors at init | OpenAI registration probes the key | Set OpenAI key to any valid value |
+| **All** | `OPENAI_API_KEY` errors at init | Legacy / older branches always registered OpenAI | Current `main`: leave unset to skip, or set a valid key if you use OpenAI models |
 | **C3 silent fallback** | `ReviewStep falling back` warnings | Model can't comply with `response_format` | Review degrades to C2 — log it, but eval still completes |
 | **All** | `crawl4ai` import error | Conda env missing browser-use deps | `pip install crawl4ai` in the `dra` env |
 

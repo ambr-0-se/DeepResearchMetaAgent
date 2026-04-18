@@ -147,8 +147,16 @@ condition would contaminate the C0/C2/C3/C4 accuracy deltas the paper is
 measuring. All cells share the same ceiling so condition differences
 reflect meta-agent capability, not browser headroom.
 
-**Local smoke override:** `--cfg-options auto_browser_use_tool_config.max_steps=8`
-for tighter smoke budgets (Farm-side freeze smoke **E2**, I1 canary, I2/I3 smokes, etc.).
+**Local smoke override:** I-track (`SMOKE_CFG_OPTIONS` default in both
+[`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) and
+[`scripts/integration_i3_c4_pipeline.sh`](../../scripts/integration_i3_c4_pipeline.sh))
+now ships `auto_browser_use_tool_config.max_steps=4` plus tighter planner
+(`agent_config.max_steps=6`) and browser sub-agent (`browser_use_agent_config.max_steps=2`)
+caps — per-cell wall drops from ~5-10 min to ~1-3 min on stuck-browser
+questions. Smoke is "does it run?" not "is it accurate?", so the tighter
+ceiling is fine. Override via `export SMOKE_CFG_OPTIONS="..."` before invoking.
+Farm-side freeze smoke (**E2**) uses the per-model sbatch wrapper with its
+own explicit overrides.
 
 **If Gemma / Qwen accuracy turns out to be bottlenecked by the cap** on
 **I2** smoke evidence, raise to 20 via generator re-run + commit; do **not**

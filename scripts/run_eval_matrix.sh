@@ -191,6 +191,12 @@ cell_cmd() {
 }
 
 # Per-model worker — runs all selected conditions sequentially for one model.
+# Called as a backgrounded function in the launch loop below (`foo &`); do NOT
+# background anything inside — the caller owns the child PID via `$!` and must
+# be able to `wait` on it. An earlier version tried to capture the PID via
+# `$(run_model_stream "$model")`, which put the function (and its background
+# child) in a subshell the parent can't wait on — breaking both PID handling
+# and the exit-code roll-up.
 run_model_stream() {
   local model="$1"
   local stream_log="$LOG_DIR/${MODE}_${model}.log"
@@ -228,8 +234,7 @@ run_model_stream() {
     done
     date
     echo "=== stream:$model DONE ==="
-  } >>"$stream_log" 2>&1 &
-  echo "$!"
+  } >>"$stream_log" 2>&1
 }
 
 # Launch the model streams in parallel and wait for all.
@@ -246,8 +251,8 @@ echo ""
 
 pids=()
 for model in "${ALL_MODELS[@]}"; do
-  pid="$(run_model_stream "$model")"
-  pids+=("$pid")
+  run_model_stream "$model" &
+  pids+=("$!")
 done
 
 # Wait for all streams; collect exit codes.

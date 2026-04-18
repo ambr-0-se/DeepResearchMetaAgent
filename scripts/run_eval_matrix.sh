@@ -70,8 +70,12 @@ GEMMA_CONCURRENCY="${GEMMA_CONCURRENCY:-4}"
 mkdir -p "$LOG_DIR"
 
 # Smoke-only step caps (unset SMOKE_CFG_OPTIONS entirely to get these defaults).
+# These are intentionally aggressive: I-track smokes verify the pipeline
+# wires up and runs, not accuracy. Browser-tool internal steps are the
+# dominant wall-time sink (CAPTCHA loops, scroll waste — see commit f73a666),
+# so `auto_browser_use_tool_config.max_steps` is the most-cut knob.
 if [ -z "${SMOKE_CFG_OPTIONS+x}" ]; then
-  SMOKE_CFG_OPTIONS="agent_config.max_steps=10 auto_browser_use_tool_config.max_steps=8 deep_analyzer_agent_config.max_steps=2 deep_researcher_agent_config.max_steps=2 browser_use_agent_config.max_steps=3 deep_researcher_tool_config.time_limit_seconds=30"
+  SMOKE_CFG_OPTIONS="agent_config.max_steps=6 auto_browser_use_tool_config.max_steps=4 deep_analyzer_agent_config.max_steps=2 deep_researcher_agent_config.max_steps=2 browser_use_agent_config.max_steps=2 deep_researcher_tool_config.time_limit_seconds=20"
 fi
 
 # Shared run id for every cell in this invocation. Every generated config

@@ -22,6 +22,8 @@ needed to harden the skill library before the scored evaluation.
 Plus the 2026-04-18 local-validation follow-ups listed in
 [`HANDOFF_INDEX.md`](../../HANDOFF_INDEX.md): `a98da9a`, `7ee9ae1`, `905a1fa`,
 `4162bcc`, `0e7903c`, `c2fd507`, `6f5ddd1`, and this session's Qwen-swap commit.
+**2026-04-19:** `463d791` — `smoke_validate_handoffs_234.sh` and `validate_handoffs.sh`
+include **Gemma** (16-cell grep matrix); see index **Progress snapshot**.
 
 ---
 
@@ -140,8 +142,7 @@ ls data/GAIA  # should contain 2023/ with validation + test subdirs
 bash scripts/smoke_validate_handoffs_234.sh
 ```
 
-Expected: all 12 configs load, model registration reports `Missing: []`, C3
-schema + C4 skill parser unit tests green.
+Expected: all **16** matrix configs load (Mistral / Kimi / Qwen / Gemma × C0/C2/C3/C4), model registration covers the four matrix `model_id`s + langchain wrappers, C3 schema + C4 skill parser unit tests green.
 
 ### S1 — Single-cell canary (~10 min, <$0.50)
 
@@ -169,8 +170,8 @@ Pass criteria (check `logs/matrix_<JOBID>.out` via the auto-run
   C2 / C3 / C4 cell logs
 - `Handoff #4 C3`: ≥1 `enable_review=True; building ReviewStep` banner per
   C3 cell; ≥1 `[REVIEW]` marker once the planner delegates
-- `Handoff #4 C4`: 3 `SkillRegistry built at workdir/.../skills (C4)` banners;
-  `[seed_skills_dir] seeded ...` fires ≥ 7× per C4 cell
+- `Handoff #4 C4`: **4** `SkillRegistry built at workdir/.../skills (C4)` banners (one per model);
+  `[seed_skills_dir] seeded ...` fires ≥ 7× per C4 cell (seed pack size; unchanged)
 - 0 Python tracebacks in any per-cell `log.txt` (the stream-log MCP-stdio
   parse errors are known cosmetic noise — ignore)
 

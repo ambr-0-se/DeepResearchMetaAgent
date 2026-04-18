@@ -35,20 +35,21 @@ async def register_tool_from_script(script_info):
     # produced SyntaxError at runtime. Extract strictly the FIRST fenced
     # ``` ```python ... ``` ``` block (or, if none, use the raw string).
     stripped = script_content.lstrip()
-    if stripped.startswith("```python"):
-        body = stripped[len("```python"):]
+    if stripped.startswith("```python") or stripped.startswith("```"):
+        fence = "```python" if stripped.startswith("```python") else "```"
+        body = stripped[len(fence):]
         end = body.find("```")
-        if end != -1:
-            script_content = body[:end]
-        else:
-            script_content = body
-    elif stripped.startswith("```"):
-        body = stripped[len("```"):]
-        end = body.find("```")
-        if end != -1:
-            script_content = body[:end]
-        else:
-            script_content = body
+        if end == -1:
+            # Opening fence without a matching close: the body likely trails into
+            # example invocations or prose that isn't valid Python. Reject the
+            # registration rather than exec() the junk — the existing
+            # `tool_function is None` guard below would still fire, but emitting
+            # a clearer error here surfaces the real cause (malformed registry).
+            logger.error(
+                f"Tool '{name}' skipped — fenced script missing closing ``` marker."
+            )
+            return
+        script_content = body[:end]
     # Else: raw, non-fenced source — exec as-is.
 
     try:

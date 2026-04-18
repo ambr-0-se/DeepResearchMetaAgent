@@ -26,17 +26,27 @@
 #   cd /userhome/cs2/ambr0se/DeepResearchMetaAgent
 #   git pull origin main
 #
-#   # Full matrix (all 16 cells, test split):
-#   sbatch run_matrix_slurm.sh full
+#   # Full mode requires an explicit DATASET_SPLIT (enforced by the matrix
+#   # runner — no implicit default). Use --export=ALL if your site strips env.
 #
-#   # Just one condition — e.g. only C3 across all 4 models:
-#   sbatch run_matrix_slurm.sh full '' c3
+#   # E0 — C4 val training (4 models, full validation split):
+#   DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c4
 #
-#   # Validation-split smoke (default 3 Q/cell; override LIMIT=5):
+#   # E3 — C0/C2/C3 test-split submission (run each condition separately so C4
+#   # cannot silently tag along and train on test — the matrix runner refuses
+#   # the all-4-conditions shape on test by design):
+#   DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c0
+#   DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c2
+#   DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c3
+#   # Frozen C4 test eval is a separate path — examples/run_gaia.py direct with
+#   # agent_config.enable_skill_extraction=False — see HANDOFF_TEST_EVAL.md §E2/§E3.
+#
+#   # Validation-split smoke (default 3 Q/cell; override LIMIT=5). Smoke mode
+#   # ignores DATASET_SPLIT (always validation + capped via max_samples).
 #   sbatch run_matrix_slurm.sh smoke
 #
-#   # One model, one condition (cheapest):
-#   sbatch run_matrix_slurm.sh full mistral c3
+#   # One model, one condition (cheapest, e.g. Mistral C3 on test):
+#   DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full mistral c3
 #
 # Job survives SSH disconnect by construction. Check progress with:
 #
@@ -63,8 +73,11 @@ echo "ONLY_CONDITION:'${ONLY_CONDITION}'"
 if [[ "$MODE" == "smoke" ]]; then
   echo "Smoke LIMIT:   ${LIMIT:-3}  (override: export LIMIT=5 before sbatch)"
   echo "Smoke caps:    SMOKE_CFG_OPTIONS ${SMOKE_CFG_OPTIONS:+set}${SMOKE_CFG_OPTIONS:-unset→defaults in run_eval_matrix.sh}"
-elif [[ "$MODE" == "full" && -n "${DATASET_SPLIT:-}" ]]; then
-  echo "DATASET_SPLIT: ${DATASET_SPLIT}  (full-mode override; empty unset=test default)"
+elif [[ "$MODE" == "full" ]]; then
+  # DATASET_SPLIT is mandatory in full mode — the matrix runner aborts if
+  # unset or inconsistent with the condition selection. Echo what was
+  # received so a dropped `--export=ALL` is obvious in the job header.
+  echo "DATASET_SPLIT: ${DATASET_SPLIT:-<unset — run_eval_matrix.sh will refuse>}"
 fi
 echo "Started:       $(date)"
 echo "========================================"

@@ -33,7 +33,7 @@ include **Gemma** (16-cell grep matrix); see index **Progress snapshot**.
 |------|---------|
 | **Integration track (I0–I3)** | “Does it run?” — cheap gates on validation smoke, configs, keys, and (optionally) the C4 train→snapshot→freeze *mechanism* for one model. |
 | **Evaluation track (E0–E3)** | “What is the GAIA **test** score?” — full validation C4 training for four models, snapshot, farm freeze check, then **test-split** 16-cell submission. |
-| **`dataset.split`** | **`validation`** for I-track smokes and for **E0** C4 training; **`test`** (config default) for **E3** scored submission. Always `unset DATASET_SPLIT` after E0 before launching E3 so C0–C3 are not scored on validation by accident. |
+| **`dataset.split`** | In **full mode** `DATASET_SPLIT` is **required** and enforced by [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) — no implicit default, no escape hatch. Rules: **C4 in conditions ⇒ `validation`** (C4 trains here; test would be train-on-test leakage); **C0/C2/C3 alone ⇒ `test`** (reported scores are always on test). Both catastrophic misconfigs (`full '' c4` on test, `full '' c0` on validation) refuse to launch. Smoke mode is unaffected — always validation with `max_samples` cap. |
 | **Official paper score** | Accuracy from **E3** `dra.jsonl` on the **test** split, after **E0–E2** for any reported frozen-library C4 numbers. |
 | **C4 extraction ON** | Default in generated C4 configs; **I3a**, **I2** C4 cell, **E0** training. Mutates `skills_dir` during the run. |
 | **C4 extraction OFF** | Achieved via `--cfg-options agent_config.enable_skill_extraction=False` plus a pinned `agent_config.skills_dir` (snapshot). **I3c**, **E2**, **E3** C4 cells. |
@@ -67,10 +67,10 @@ flowchart LR
 | **I1** | Single-cell canary | `sbatch run_matrix_slurm.sh smoke mistral c0` |
 | **I2** | 16-cell integration smoke | `sbatch run_matrix_slurm.sh smoke` |
 | **I3** | C4 E2E integration (subset → snapshot → few Q, **one model**, default Mistral) | `bash scripts/integration_i3_c4_pipeline.sh` |
-| **E0** | C4 val train (full val, **four** models) | `DATASET_SPLIT=validation` + `sbatch run_matrix_slurm.sh full '' c4` |
+| **E0** | C4 val train (full val, **four** models) | `DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c4` |
 | **E1** | Snapshot trained `skills/` after E0 | `cp -a` loop → `workdir/c4_trained_libraries/{model}_skills` |
 | **E2** | Farm freeze smoke (four models, real libraries) | per-model `sbatch` loop with `agent_config.*` overrides |
-| **E3** | Test-split submission (16 cells) | `run_matrix_slurm.sh full` + per-model frozen C4 `run_gaia.py` |
+| **E3** | Test-split submission (16 cells) | `DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' {c0,c2,c3}` (one per condition — matrix runner refuses the all-4-conditions shape on test to prevent C4 train-on-test) + per-model frozen C4 via `examples/run_gaia.py` with `agent_config.enable_skill_extraction=False` |
 
 ---
 
@@ -102,7 +102,7 @@ flowchart LR
 - [ ] **E1 — snapshot after E0** — `cp -a` each C4 `skills/` into
       `workdir/c4_trained_libraries/{model}_skills` (§E0 / §E1)
 - [ ] **E2** farm-side freeze smoke (~30 min): 3-Q × 4 models, `agent_config.*` freeze overrides
-- [ ] **E3** test-split submission: `sbatch run_matrix_slurm.sh full` (C4 with frozen libraries per §E3)
+- [ ] **E3** test-split submission: one `DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' <cN>` per C0/C2/C3, plus per-model frozen C4 via `examples/run_gaia.py` (see §E3). The matrix runner refuses the all-4-conditions shape on test by design.
 - [ ] Collect `dra.jsonl` → run `scripts/analyze_results.py` per cell
 - [ ] `bash scripts/validate_handoffs.sh <DRA_RUN_ID>` → attach pass/info
       summary to this handoff when promoting to Completed
@@ -306,15 +306,17 @@ Standard ML methodology → **train on validation → freeze → evaluate on tes
 **E0 — train (four models, full validation split, extraction ON):**
 
 ```bash
-# `configs/config_gaia.py` defaults to split=test — you MUST set DATASET_SPLIT
-# so training does not leak the test set into skill extraction.
-export DATASET_SPLIT=validation
-# If your site strips the environment for sbatch, use: sbatch --export=ALL run_matrix_slurm.sh full '' c4
-sbatch run_matrix_slurm.sh full '' c4
-unset DATASET_SPLIT   # avoid accidentally scoring C0–C3 on validation during E3
+# Full mode requires DATASET_SPLIT to be explicit (enforced by
+# scripts/run_eval_matrix.sh). For C4 training it must be `validation` —
+# the matrix runner refuses `test` with C4 in the conditions to prevent
+# train-on-test leakage. Use --export=ALL so sbatch forwards the var.
+DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c4
 # => workdir/gaia_c4_{mistral,kimi,qwen,gemma}_<TRAIN_RUN_ID>/
 #    each ends with a `skills/` dir containing seeded + learned SKILL.md.
-#    (Implemented via `scripts/run_eval_matrix.sh`: passes dataset.split=$DATASET_SPLIT in full mode.)
+#
+# For the E3 submission below, export DATASET_SPLIT=test fresh per sbatch
+# rather than relying on "unset DATASET_SPLIT after E0" — the runner now
+# refuses unset-in-full-mode explicitly, so the operator cannot forget.
 ```
 
 **E1 — snapshot after E0** (run **once** per `TRAIN_RUN_ID` before **E2/E3**):
@@ -489,22 +491,19 @@ handoff before launching **E3**.
 
 ### E3 — Test-split submission (formerly S4; ~8-24 h, $30-100)
 
-Full matrix, **`dataset.split=test`** (config default in [`configs/config_gaia.py`](../../configs/config_gaia.py)) for **all 16 cells**. **Do not** leave `DATASET_SPLIT=validation` exported from the C4 training step, or C0–C3 would also run on validation instead of test. Long job; use SLURM for disconnect-survival.
-
-**Plain — `full` matrix only (no per-model frozen C4 overrides from E1; not for methodology-clean C4 claims):**
-```bash
-sbatch run_matrix_slurm.sh full
-```
+Full matrix, **`dataset.split=test`** for **all 16 cells**. `DATASET_SPLIT=test` must be **explicitly** exported per sbatch — the matrix runner refuses full mode with `DATASET_SPLIT` unset. Additionally, the runner refuses the all-4-conditions shape (`ONLY_CONDITION=""`) on test because that would silently train C4 on test; submit C0/C2/C3 per-condition as shown below. Long job; use SLURM for disconnect-survival.
 
 **With frozen trained libraries (recommended for C4 paper numbers):**
 Override the **four** C4 cells' skill config via `--cfg-options`. Easiest path is a
 thin wrapper; submit each model's C4 cell individually:
 
 ```bash
-# C0/C2/C3 for all four models → normal
-sbatch run_matrix_slurm.sh full '' c0
-sbatch run_matrix_slurm.sh full '' c2
-sbatch run_matrix_slurm.sh full '' c3
+# C0/C2/C3 for all four models → normal. DATASET_SPLIT=test is required
+# (matrix runner refuses full mode without it). --export=ALL so sbatch
+# forwards the env var into the job.
+DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c0
+DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c2
+DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c3
 
 # C4 × {mistral, kimi, qwen, gemma} → one-off each, with the trained library pinned
 #
@@ -598,9 +597,9 @@ startup and skips already-answered questions. To resume a killed cell:
 
 ```bash
 # Get the DRA_RUN_ID of the interrupted run (from workdir/run_logs/matrix_runid.txt)
-DRA_RUN_ID=<prior_id> bash scripts/run_eval_matrix.sh full '' <cond>
+DATASET_SPLIT=<validation|test> DRA_RUN_ID=<prior_id> bash scripts/run_eval_matrix.sh full '' <cond>
 # or re-submit the whole SLURM job pinning the run id:
-DRA_RUN_ID=<prior_id> sbatch run_matrix_slurm.sh full
+DATASET_SPLIT=<validation|test> DRA_RUN_ID=<prior_id> sbatch --export=ALL run_matrix_slurm.sh full '' <cond>
 ```
 
 For C4 cells specifically: resuming preserves the evolved `skills_dir` (the

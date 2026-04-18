@@ -90,6 +90,26 @@ if [[ ! -d "$TRAIN_SKILLS" ]]; then
   exit 1
 fi
 
+# Skill-count summary — distinguishes "extractor ran and emitted N learned
+# skills" from "seed-only library, plumbing smoke only". Learned skills are
+# the ones without `source: seeded` in their frontmatter. With a small
+# I3_TRAIN_SAMPLES (default 5), zero learned is plausible and not an error —
+# I3c still exercises the frozen-library reload path — but the operator
+# should know before reading I3c results.
+SKILL_TOTAL=$(find "$TRAIN_SKILLS" -mindepth 2 -name SKILL.md -type f 2>/dev/null | wc -l | tr -d ' ')
+# `source:` lives under the `metadata:` block (indented). Match leading
+# whitespace so indented YAML is counted correctly.
+SKILL_SEEDED=$(grep -rlE --include=SKILL.md '^[[:space:]]+source:[[:space:]]+seeded[[:space:]]*$' "$TRAIN_SKILLS" 2>/dev/null | wc -l | tr -d ' ')
+SKILL_LEARNED=$(( SKILL_TOTAL - SKILL_SEEDED ))
+echo ""
+echo "I3a skill count: ${SKILL_TOTAL} total (${SKILL_SEEDED} seeded, ${SKILL_LEARNED} learned)"
+if [[ "$SKILL_LEARNED" -eq 0 ]]; then
+  echo "NOTE: extractor emitted 0 learned skills on the ${I3_TRAIN_SAMPLES}-sample subset."
+  echo "      I3c will freeze-eval against a seed-only library — valid smoke of the"
+  echo "      frozen-reload path, but does not exercise learned-skill activation."
+  echo "      Raise I3_TRAIN_SAMPLES if I3 needs to cover the learned path too."
+fi
+
 # --- I3b: snapshot into isolated staging (never touches c4_trained_libraries/) ---
 STAGING="workdir/c4_i3_${I3_RUN_ID}/${I3_MODEL}_skills"
 echo ""

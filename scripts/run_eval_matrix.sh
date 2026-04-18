@@ -30,11 +30,24 @@
 #                       defaults to tight planner/browser/sub-agent caps (cost control).
 #                       Set to empty string before launch to omit caps: `export SMOKE_CFG_OPTIONS=`
 #                       (then only max_samples + validation split apply).
-#   DATASET_SPLIT — for `full` mode only: if set (e.g. `validation`), passed as
-#                   `dataset.split=...` so runs do not use the config default (`test`).
-#                   **E0 — C4 val train:** export `DATASET_SPLIT=validation` before
-#                   `sbatch run_matrix_slurm.sh full '' c4` so each model trains on the
-#                   **full validation set**; unset before **E3** test submission.
+#   DATASET_SPLIT — **REQUIRED** in `full` mode. Must be explicitly set to one of
+#                   {`validation`, `test`}; no implicit default. The script refuses
+#                   to launch otherwise. Rules (enforced, not advisory):
+#                     - If C4 is among the selected conditions → must be
+#                       `validation` (C4 runs in extraction-on / training mode here;
+#                       training on `test` would leak the test set into the learned
+#                       skill library and invalidate every downstream test score).
+#                       Frozen-C4 test evaluation does not go through this runner —
+#                       see `docs/handoffs/HANDOFF_TEST_EVAL.md` §E2/E3.
+#                     - If C4 is NOT among the selected conditions (`c0` | `c2` | `c3`
+#                       alone) → must be `test` (all reported evaluation scores live
+#                       on the test split).
+#                   Rationale: the two catastrophic misconfigurations ("train C4 on
+#                   test" and "score C0–C3 on validation") are structurally
+#                   indistinguishable from valid invocations except for this env
+#                   var, so the operator must commit to a split before the job
+#                   starts spending money. Smoke mode is unaffected — it always
+#                   uses `validation` with a `max_samples` cap.
 #   LOG_DIR    — where to tee per-cell stdout/stderr (default: workdir/run_logs)
 #   GEMMA_CONCURRENCY — per-Gemma-cell concurrency cap (default: 4). Workaround
 #                       for vLLM #39392 (gemma4 tool parser emits all-<pad>
@@ -75,10 +88,80 @@ ALL_CONDITIONS=(c0 c2 c3 c4)
 [[ -n "$ONLY_MODEL" ]] && ALL_MODELS=("$ONLY_MODEL")
 [[ -n "$ONLY_CONDITION" ]] && ALL_CONDITIONS=("$ONLY_CONDITION")
 
+# --- Full-mode split mandate -------------------------------------------------
+# `DATASET_SPLIT` is required and must match the condition set. This block
+# enforces the two invariants the eval protocol depends on:
+#   (1) never train on test   — C4 (extraction-on here) ⇒ split must be validation
+#   (2) always score on test  — c0 | c2 | c3           ⇒ split must be test
+# There is intentionally NO escape hatch: both misconfigurations silently
+# invalidate the entire experimental matrix, and neither is recoverable after
+# the run has spent compute. Smoke mode is exempt (always validation + capped
+# via max_samples).
+if [[ "$MODE" == "full" ]]; then
+  c4_in_run=0
+  for _c in "${ALL_CONDITIONS[@]}"; do
+    [[ "$_c" == "c4" ]] && c4_in_run=1
+  done
+
+  if [[ -z "${DATASET_SPLIT:-}" ]]; then
+    {
+      echo "ERROR: DATASET_SPLIT is not set."
+      echo ""
+      echo "Full-mode runs must commit to a split explicitly. Required values:"
+      echo "  - C4 in conditions (training)  → export DATASET_SPLIT=validation"
+      echo "  - C0/C2/C3 alone (evaluation)  → export DATASET_SPLIT=test"
+      echo ""
+      echo "Selected conditions: ${ALL_CONDITIONS[*]}"
+      echo "See docs/handoffs/HANDOFF_TEST_EVAL.md §E0 / §E3."
+    } >&2
+    exit 2
+  fi
+
+  case "$DATASET_SPLIT" in
+    validation|test) ;;
+    *)
+      echo "ERROR: DATASET_SPLIT must be 'validation' or 'test' (got: '$DATASET_SPLIT')." >&2
+      exit 2
+      ;;
+  esac
+
+  if [[ "$c4_in_run" == "1" && "$DATASET_SPLIT" != "validation" ]]; then
+    {
+      echo "ERROR: C4 is in the selected conditions (${ALL_CONDITIONS[*]}) but DATASET_SPLIT=$DATASET_SPLIT."
+      echo ""
+      echo "C4 runs with skill extraction ON via this matrix runner (training mode)."
+      echo "Training on the test split leaks test content into the learned skill"
+      echo "library and invalidates every downstream test score."
+      echo ""
+      echo "Fix one of:"
+      echo "  (a) export DATASET_SPLIT=validation  # if this is an E0 C4 training run"
+      echo "  (b) drop c4 from the conditions and rerun C0/C2/C3 on test"
+      echo "      (frozen C4 test evaluation goes through examples/run_gaia.py"
+      echo "       with agent_config.enable_skill_extraction=False overrides —"
+      echo "       see HANDOFF_TEST_EVAL.md §E2/§E3, not this script)"
+    } >&2
+    exit 2
+  fi
+
+  if [[ "$c4_in_run" == "0" && "$DATASET_SPLIT" != "test" ]]; then
+    {
+      echo "ERROR: Conditions ${ALL_CONDITIONS[*]} do not include C4 but DATASET_SPLIT=$DATASET_SPLIT."
+      echo ""
+      echo "Reported evaluation scores are on the test split only. Running C0/C2/C3"
+      echo "at full scale on validation burns budget without producing a submittable"
+      echo "number."
+      echo ""
+      echo "Fix: export DATASET_SPLIT=test"
+    } >&2
+    exit 2
+  fi
+fi
+# ---------------------------------------------------------------------------
+
 # Build the per-cell command. In smoke mode, cap question count and use the
-# labeled validation split so we can score immediately. In full mode, no
-# `max_samples` cap; split is `test` unless `DATASET_SPLIT` is set (use
-# `DATASET_SPLIT=validation` for C4 skill training on the full validation set).
+# labeled validation split so we can score immediately. In full mode,
+# `DATASET_SPLIT` is already validated above (required, and matches the
+# conditions), so we can pass it through unconditionally.
 #
 # Per-model overrides:
 #   - gemma: concurrency capped via GEMMA_CONCURRENCY (default 4) to dodge
@@ -96,14 +179,10 @@ cell_cmd() {
     [[ "$model" == "gemma" ]] && gem=" concurrency=$GEMMA_CONCURRENCY"
     echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options max_samples=$LIMIT dataset.split=validation${smoke_tail}${gem}"
   else
-    local opts=()
-    [[ -n "${DATASET_SPLIT:-}" ]] && opts+=("dataset.split=${DATASET_SPLIT}")
+    # Full mode: DATASET_SPLIT is mandatory (enforced earlier).
+    local opts=("dataset.split=${DATASET_SPLIT}")
     [[ "$model" == "gemma" ]] && opts+=("concurrency=$GEMMA_CONCURRENCY")
-    if [[ ${#opts[@]} -gt 0 ]]; then
-      echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options ${opts[*]}"
-    else
-      echo "$PYTHON examples/run_gaia.py --config $cfg"
-    fi
+    echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options ${opts[*]}"
   fi
 }
 
@@ -152,7 +231,11 @@ run_model_stream() {
 # Launch the model streams in parallel and wait for all.
 echo "Launching ${#ALL_MODELS[@]} parallel model streams: ${ALL_MODELS[*]}"
 echo "Conditions per stream: ${ALL_CONDITIONS[*]}"
-echo "Mode: $MODE  (smoke=cap $LIMIT on validation; full=no cap on test)"
+if [[ "$MODE" == "smoke" ]]; then
+  echo "Mode: smoke  (cap $LIMIT on validation)"
+else
+  echo "Mode: full   (no cap on ${DATASET_SPLIT})"
+fi
 echo "Logs: $LOG_DIR/${MODE}_<model>.log"
 echo "DRA_RUN_ID: $DRA_RUN_ID  (every cell writes into workdir/gaia_<cond>_<model>_\$DRA_RUN_ID/)"
 echo ""

@@ -1,11 +1,15 @@
-# Handoff: GAIA test-split evaluation — 12-cell matrix on the HKU CS GPU farm
+# Handoff: GAIA test-split evaluation — 16-cell matrix on the HKU CS GPU farm
 
 **Session date:** 2026-04-18
-**Branch / HEAD push:** `main` at `6f5ddd1` (+ whatever this session adds on top)
+**Branch / HEAD push:** `main` at `27d48e4` (post-handoff-#9 implementation)
 **Scope:** Executes the GAIA submission run for the APAI4799 meta-agent paper.
-Produces **3 models × 4 conditions = 12 `dra.jsonl` files** on the GAIA test
-split (~300 questions each; ~3,600 Q total), plus the C4 training pass
+Produces **4 models × 4 conditions = 16 `dra.jsonl` files** on the GAIA test
+split (~300 questions each; ~4,800 Q total), plus the C4 training pass
 needed to harden the skill library before the scored evaluation.
+
+> **Matrix-size update (2026-04-18):** expanded from 12 cells to 16 after
+> handoff #9 landed (D4 added Gemma-4-31B as the 4th model slot). Cost +~$10-35
+> on the full test-split run vs the old 12-cell budget.
 
 **Dependencies:**
 - [`HANDOFF_SILENT_FAILURES.md`](HANDOFF_SILENT_FAILURES.md) (`ba28f21`) — browser/analyzer silent-fail fixes
@@ -29,8 +33,13 @@ Plus the 2026-04-18 local-validation follow-ups listed in
 - [ ] `.env` populated on farm with: `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`,
       `FIRECRAWL_API_KEY`, **`HF_TOKEN`** (required — GAIA is a gated dataset)
 - [ ] `DASHSCOPE_API_KEY` / `MOONSHOT_API_KEY` can be placeholders —
-      **Kimi uses `or-kimi-k2.5`** (OpenRouter) and **Qwen uses
-      `or-qwen3-next-80b-a3b-instruct`** (OpenRouter direct, no failover)
+      **Kimi uses `or-kimi-k2.5`** (OpenRouter, with
+      `extra_body.thinking=disabled + provider.order=[Moonshot]`),
+      **Qwen uses `or-qwen3.6-plus`** (OpenRouter; hybrid `tool_choice`
+      dispatch resolves to `"auto"` per the Qwen-family prefix rule),
+      **Gemma uses `or-gemma-4-31b-it`** (OpenRouter paid; provider pin
+      `DeepInfra+Together`, `reasoning.enabled=false`, per-stream
+      concurrency capped at 4)
 - [ ] `OPENAI_API_KEY` optional — `ModelManager` short-circuits on empty
 - [ ] Pull the GAIA dataset once into `data/GAIA/` (see "Prerequisites" below)
 
@@ -50,7 +59,7 @@ Plus the 2026-04-18 local-validation follow-ups listed in
 
 ## Matrix definition
 
-12 cells = 3 models × 4 conditions:
+16 cells = 4 models × 4 conditions:
 
 | Condition | Meta-agent capability added | Configs / model slot |
 |-----------|------------------------------|----------------------|
@@ -59,11 +68,12 @@ Plus the 2026-04-18 local-validation follow-ups listed in
 | **C3** | C2 + structural REVIEW step | `configs/config_gaia_c3_<model>.py` |
 | **C4** | C3 + cross-task skill library (pre-seeded + learned) | `configs/config_gaia_c4_<model>.py` |
 
-| Model slot | Real slug (model_id) | Rationale |
-|------------|----------------------|-----------|
-| **Mistral** | `mistral-small` (native La Plateforme) | `MISTRAL_API_KEY` |
-| **Kimi** | `or-kimi-k2.5` (OpenRouter) | Native Moonshot path kept as placeholder per operator direction |
-| **Qwen** | `or-qwen3-next-80b-a3b-instruct` (OpenRouter direct) | DashScope free tier exhausted; `or-qwen3.6-plus` rejects `tool_choice="required"`; `qwen3-next-80b-a3b-instruct` is the cheapest + fastest tool-call-compatible Qwen variant (~$0.09 / $1.10 per M input/output; 0.7s latency; 262K context). **NB:** failover wrapper `qwen3.6-plus-failover` is still registered but no config uses it now. |
+| Model slot | Real slug (model_id) | Cost (in/out /M) | tool_choice handling | Rationale / caveats |
+|------------|----------------------|-------------------|-----------------------|---------------------|
+| **Mistral** | `mistral-small` (native La Plateforme) | $0.15 / $0.60 | `"required"` works | Dense ~24B; uses `MISTRAL_API_KEY`. |
+| **Kimi** | `or-kimi-k2.5` (OpenRouter) | free tier | `"required"` works after extra_body fix (thinking off) | `extra_body={thinking: disabled, provider.order: [Moonshot]}` pins routing so free-tier OR can't silently fall back to a sub-provider with diverging thinking semantics. Enables vision on GAIA image questions. |
+| **Qwen** | `or-qwen3.6-plus` (OpenRouter, D1) | $0.325 / $1.95 | **hybrid dispatch → "auto"** (Qwen-family prefix rule, D3) | Vision + 1M context. OR providers for the whole Qwen family reject `"required"`; hybrid dispatch + retry guard coax plain-text replies back into tool calls. |
+| **Gemma** (D4) | `or-gemma-4-31b-it` (OpenRouter paid) | $0.13 / $0.38 | `"required"` works directly (verified 2026-04-18) | Dense 31B, Apache 2.0, only non-MoE in the matrix. Provider pin `DeepInfra+Together` + `reasoning.enabled=false`; `:free` variant excluded (Google AI Studio lacks reliable `tools` + `required`). Per-stream concurrency capped at 4 (vLLM #39392 pad-parser bug). |
 
 ---
 
@@ -115,13 +125,13 @@ at least one row containing a non-null `prediction`.
 ### S2 — Smoke matrix (~1-2 h, $2-5)
 
 ```bash
-sbatch run_matrix_slurm.sh smoke                   # 5 Q × 12 cells = 60 Q, validation split
+sbatch run_matrix_slurm.sh smoke                   # 5 Q × 16 cells = 80 Q, validation split
 ```
 
 Pass criteria (check `logs/matrix_<JOBID>.out` via the auto-run
 `validate_handoffs.sh` summary at the bottom):
 
-- 12 `dra.jsonl` files written (one per cell)
+- 16 `dra.jsonl` files written (one per cell)
 - `Handoff #2`: 0 Kimi sampling-lock 400s, 0 Qwen thinking-mode 400s
 - `Handoff #3`: >0 `modify_subagent` / `diagnose_subagent` mentions in
   C2 / C3 / C4 cell logs
@@ -138,9 +148,16 @@ Typical triggers:
   Firecrawl credits exhausted — run `python scripts/check_firecrawl_credits.py`.
 - Kimi → 401 from OpenRouter means `OPENROUTER_API_KEY` is wrong for that
   model scope.
-- Qwen → 404 "no endpoints support tool_choice" means the matrix config is
-  on an older slug (should be `or-qwen3-next-80b-a3b-instruct`, see
-  `scripts/gen_eval_configs.py` `MODELS` table).
+- Qwen → 404 "no endpoints support tool_choice" means either (a) the matrix
+  config is on an older slug — should be `or-qwen3.6-plus` (see
+  `scripts/gen_eval_configs.py` `MODELS` table), or (b) hybrid dispatch
+  didn't fire — confirm the once-per-run `[tool_choice] qwen/... -> auto`
+  INFO log is present and that `src/models/tool_choice.py` exists.
+- Gemma → 404 on `tool_choice` means the provider pin expired or a new OR
+  backend entered the pool; restrict to `DeepInfra+Together` via the
+  registration `extra_body` in `src/models/models.py`.
+- Gemma → garbled content / `<|tool_call>` leak in text means a stale
+  chat template on a specific provider; narrow the provider pin further.
 
 ### C4 Train/Freeze pass (OPTIONAL, ~3-6 h, $5-15) — recommended for paper
 
@@ -159,16 +176,16 @@ Standard ML methodology → **train then freeze**:
 
 ```bash
 # 1. Training: let C4 evolve skills on the labelled validation split.
-#    All 3 models in parallel; extraction stays on.
+#    All 4 models in parallel; extraction stays on.
 sbatch run_matrix_slurm.sh full '' c4
-# => workdir/gaia_c4_{mistral,kimi,qwen}_<TRAIN_RUN_ID>/
+# => workdir/gaia_c4_{mistral,kimi,qwen,gemma}_<TRAIN_RUN_ID>/
 #    each ends with a `skills/` dir containing seeded + learned SKILL.md.
 
 # 2. Snapshot the trained libraries and stage them as the starting point
 #    for the scored run. Run ONCE before S4.
 TRAIN_RUN_ID=<copy from step 1 logs>
 mkdir -p workdir/c4_trained_libraries
-for m in mistral kimi qwen; do
+for m in mistral kimi qwen gemma; do
   cp -r workdir/gaia_c4_${m}_${TRAIN_RUN_ID}/skills \
         workdir/c4_trained_libraries/${m}_skills
 done
@@ -179,7 +196,7 @@ library and **do not** extract further (see S4 below).
 
 ### S4 — Test-split submission (~8-24 h, $30-100)
 
-Full matrix, test split, all 12 cells. Long job; use SLURM for
+Full matrix, test split, all 16 cells. Long job; use SLURM for
 disconnect-survival.
 
 **Plain (no C4 training pass):**
@@ -258,9 +275,9 @@ bash scripts/validate_handoffs.sh <SUBMIT_RUN_ID> > validation_report_<SUBMIT_RU
   credits. Credit use is per-scrape, not per-token, so a full matrix with
   heavy browser use can burn through fast. A low balance manifests as
   `DeepResearchTool RetryError[ValueError]` in cell logs.
-- **OpenRouter rate limiting** — Kimi and Qwen both route through
-  OpenRouter. Concurrent requests (3 parallel streams × 4 conditions) on
-  one key can throttle. If you see clustered 429s, run the 3 streams
+- **OpenRouter rate limiting** — Kimi, Qwen, and Gemma all route through
+  OpenRouter. Concurrent requests (4 parallel streams × 4 conditions) on
+  one key can throttle. If you see clustered 429s, run the streams
   sequentially instead of parallel by editing
   `scripts/run_eval_matrix.sh` `run_model_stream` to not background.
 - **HKU CS Phase-3 gateway disconnect** — SBATCH handles this; interactive
@@ -298,9 +315,10 @@ before resubmitting.
   - 0 Handoff #1 red flags
   - 0 Handoff #2 sampling / thinking-mode 400s
   - >0 Handoff #3 adaptive-tool mentions
-  - 3 / 3 `SkillRegistry built` (Handoff #4 C4)
+  - 4 / 4 `SkillRegistry built` (Handoff #4 C4 — one per model's C4 cell)
   - ≥1 `[REVIEW]` marker per C3 / C4 cell (Handoff #4 C3)
-  - All 12 cells produce a non-empty `dra.jsonl`
+  - 1+ `[tool_choice] qwen/qwen3.6-plus -> auto` INFO line per Qwen cell (Handoff #9 hybrid dispatch verification)
+  - All 16 cells produce a non-empty `dra.jsonl`
 - Per-cell accuracy numbers computed via `scripts/analyze_results.py`
 - Move each `HANDOFF_INDEX.md` row to **Completed / Archived** with the
   submission run id and the `validation_report_*.txt` path.
@@ -310,12 +328,16 @@ before resubmitting.
 
 ## Known unknowns at hand-off time
 
-- **OpenRouter Qwen3-Next stability** — this is a newer model slug; a
-  provider-health issue on the OpenRouter side during the ~8-24 h submission
-  run would silently degrade Qwen cells. Mitigate by running Qwen cells
-  **first** and spot-checking after ~30 min; if the latency or error rate
-  spikes, `scancel` that job and swap to `or-qwen3-max` (also verified live,
-  same day) as a fallback before relaunching.
+- **OpenRouter Qwen3.6-Plus stability** — provider-health issues on the
+  OpenRouter side during the ~8-24 h submission run would silently degrade
+  Qwen cells. Mitigate by running Qwen cells **first** and spot-checking
+  after ~30 min; if the latency or error rate spikes, `scancel` that job
+  and swap to `or-qwen3-max` (also verified live) as a fallback before
+  relaunching.
+- **Gemma 4 31B provider drift** — only DeepInfra + Together are pinned.
+  If both have outages or degrade simultaneously, Gemma cells will start
+  401/404/429-ing. Either widen the provider list (add Parasail or GMI)
+  in `src/models/models.py` or accept partial matrix coverage.
 - **Local `browser-use` asyncio cancellation** — confirmed broken on macOS,
   probably fine on Linux. If Mistral cells show 20+ min runtimes past the
   configured `per_question_timeout_secs`, it's the same bug — raise the
@@ -325,23 +347,30 @@ before resubmitting.
   First farm run is the first real test of the train-then-freeze loop.
   Reserve a 1 h budget slot to diagnose if it misbehaves.
 - **GPU farm wall-clock limits** — `run_matrix_slurm.sh` requests 24 h. Full
-  matrix on test split with 3 parallel streams typically fits, but a
-  browser-heavy condition on slow providers can blow the wall. If SLURM
-  kills the job mid-run, resubmit with the same `DRA_RUN_ID` (see
-  "Resume protocol").
+  matrix on test split with 4 parallel streams typically fits, but a
+  browser-heavy condition on slow providers (plus Gemma's concurrency cap
+  of 4) can blow the wall. If SLURM kills the job mid-run, resubmit with
+  the same `DRA_RUN_ID` (see "Resume protocol").
 
 ---
 
 ## Files touched in this handoff (none — docs + configs only)
 
 This handoff does not itself change source code — it documents the
-execution protocol for the work in handoffs #1-#7. The Qwen matrix swap
-(`or-qwen3.6-plus-failover` → `or-qwen3-next-80b-a3b-instruct`) is
-tracked in this session's dedicated commit.
+execution protocol for the work in handoffs #1-#9. The runtime changes
+that enabled this 16-cell matrix (Kimi extra_body, hybrid `tool_choice`
+dispatch with retry guard, Qwen swap to `or-qwen3.6-plus`, and Gemma-4-31B
+addition) are tracked in handoff #9 (commits `fe3de8d` → `829d4d8` →
+`c17f24e` → `27d48e4`).
 
-| File | Change |
-|------|--------|
-| `scripts/gen_eval_configs.py` | Kimi → `or-kimi-k2.5`, Qwen → `or-qwen3-next-80b-a3b-instruct` in `MODELS` table |
-| `configs/config_gaia_{c0,c2,c3,c4}_qwen.py` | Regenerated — all agent / tool slots now pin `or-qwen3-next-80b-a3b-instruct` |
-| `src/models/models.py` | New OR alias registration for `or-qwen3-next-80b-a3b-instruct` |
+Current matrix-defining files (post-handoff-#9):
+
+| File | Role |
+|------|------|
+| `scripts/gen_eval_configs.py` | MODELS rows: mistral → `mistral-small`; kimi → `or-kimi-k2.5`; qwen → `or-qwen3.6-plus`; gemma → `or-gemma-4-31b-it` |
+| `configs/config_gaia_{c0,c2,c3,c4}_{mistral,kimi,qwen,gemma}.py` | 16 regenerated cell configs |
+| `scripts/run_eval_matrix.sh` | `ALL_MODELS=(mistral kimi qwen gemma)` with `GEMMA_CONCURRENCY` cap (default 4) |
+| `src/models/models.py` | OR registrations: Kimi (thinking off + Moonshot pin), Gemma (DeepInfra/Together pin + reasoning off) |
+| `src/models/tool_choice.py` | Hybrid dispatch for the Qwen family |
+| `src/agent/general_agent/general_agent.py` + `src/base/tool_calling_agent.py` | Retry guard for the "auto" path |
 | `docs/handoffs/HANDOFF_TEST_EVAL.md` | This document |

@@ -30,7 +30,7 @@
 - [ ] Populate `.env` with `MISTRAL_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `OPENROUTER_API_KEY`, `FIRECRAWL_API_KEY` (see "How to set up `.env`" below)
 - [ ] Tier 0–2 pre-flight (config sanity, model registration smoke, single-question per model)
 - [ ] Tier 3 — C3/C4 JSON-output validation per model (catches `response_format` conflicts early)
-- [ ] Tier 5 — `bash scripts/run_eval_matrix.sh smoke` (5 questions × 12 cells = 60 questions on validation split)
+- [ ] Tier 5 — `bash scripts/run_eval_matrix.sh smoke` (5 questions × 16 cells = 80 questions on validation split — see handoff #9 for the D4 matrix expansion to 4 models)
 - [ ] Inspect Qwen failover trigger (look for `[FailoverModel:qwen3.6-plus-failover] primary ... quota exhausted` line)
 - [ ] If smoke passes, kick off `bash scripts/run_eval_matrix.sh full` for the test-split submission run
 - [ ] Score every cell with `scripts/analyze_results.py` and stash the per-cell numbers in this doc before promoting to Completed
@@ -61,7 +61,7 @@ DashScope accepts `enable_thinking=true` as a top-level request field on the Ope
 
 ### Problem C — Single-model eval constraint requires per-(model, condition) configs
 
-The user wants single-model GAIA runs (no mixed-model setups). With 3 models × 4 conditions (C0/C2/C3/C4), that's 12 distinct configs, each pinning one `model_id` across the planner + 3 sub-agents + 3 tools + LangChain wrapper. mmengine config inheritance replaces dicts wholesale rather than deep-merging, so each file must redeclare every agent/tool config — too repetitive to hand-maintain, especially as model IDs change.
+The user wants single-model GAIA runs (no mixed-model setups). With 4 models × 4 conditions (C0/C2/C3/C4) — post-handoff-#9 D4 expansion — that's 16 distinct configs, each pinning one `model_id` across the planner + 3 sub-agents + 3 tools + LangChain wrapper. mmengine config inheritance replaces dicts wholesale rather than deep-merging, so each file must redeclare every agent/tool config — too repetitive to hand-maintain, especially as model IDs change.
 
 ### Problem D — Qwen on free DashScope tier needs auto-failover to OpenRouter
 

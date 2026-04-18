@@ -8,8 +8,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 if [[ "${_DRA_SWEEP_REEXEC:-}" != "1" ]] && command -v conda >/dev/null 2>&1; then
-  if ! python -c "import mmengine" 2>/dev/null; then
-    if conda run -n dra python -c "import mmengine" 2>/dev/null; then
+  # Probe both mmengine AND crawl4ai because a bare base env may lack only
+  # one of them. In particular, the local mac's base conda has mmengine but
+  # not crawl4ai (crawl4ai is dra-only per CLAUDE.md), so probing just
+  # mmengine would falsely skip the re-exec and fail later on
+  # `src/__init__.py` → `src/utils/url_utils.py` → `from crawl4ai import ...`.
+  if ! python -c "import mmengine, crawl4ai" 2>/dev/null; then
+    if conda run -n dra python -c "import mmengine, crawl4ai" 2>/dev/null; then
       export _DRA_SWEEP_REEXEC=1
       exec conda run -n dra --no-capture-output bash "$0" "$@"
     fi

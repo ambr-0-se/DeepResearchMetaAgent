@@ -23,8 +23,11 @@
 set -euo pipefail
 
 if [[ "${_DRA_I3_REEXEC:-}" != "1" ]] && command -v conda >/dev/null 2>&1; then
-  if ! python -c "import mmengine" 2>/dev/null; then
-    if conda run -n dra python -c "import mmengine" 2>/dev/null; then
+  # Probe both mmengine AND crawl4ai (a bare base env may lack only one).
+  # crawl4ai is the dra-only canary per CLAUDE.md; mmengine alone is
+  # insufficient on machines where base conda has it pre-installed.
+  if ! python -c "import mmengine, crawl4ai" 2>/dev/null; then
+    if conda run -n dra python -c "import mmengine, crawl4ai" 2>/dev/null; then
       export _DRA_I3_REEXEC=1
       exec conda run -n dra --no-capture-output bash "$0" "$@"
     fi

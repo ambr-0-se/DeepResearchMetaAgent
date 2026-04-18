@@ -1,7 +1,7 @@
 # Handoff: GAIA test-split evaluation — 16-cell matrix on the HKU CS GPU farm
 
-**Session date:** 2026-04-18
-**Branch / HEAD push:** `main` at `27d48e4` (post-handoff-#9 implementation)
+**Session date:** 2026-04-18 (matrix protocol); **doc refresh:** 2026-04-19
+**Branch / HEAD push:** `main` at `e94f571` (includes `463d791` 16-cell smoke / `validate_handoffs` + handoff doc sync)
 **Scope:** Executes the GAIA submission run for the APAI4799 meta-agent paper.
 Produces **4 models × 4 conditions = 16 `dra.jsonl` files** on the GAIA test
 split (~300 questions each; ~4,800 Q total), plus the C4 training pass
@@ -394,16 +394,16 @@ sbatch run_matrix_slurm.sh full
 ```
 
 **With frozen trained libraries (recommended for C4 paper numbers):**
-Override the 3 C4 cells' skill config via `--cfg-options`. Easiest path is a
+Override the **four** C4 cells' skill config via `--cfg-options`. Easiest path is a
 thin wrapper; submit each model's C4 cell individually:
 
 ```bash
-# C0/C2/C3 for all three models → normal
+# C0/C2/C3 for all four models → normal
 sbatch run_matrix_slurm.sh full '' c0
 sbatch run_matrix_slurm.sh full '' c2
 sbatch run_matrix_slurm.sh full '' c3
 
-# C4 × {mistral, kimi, qwen} → one-off each, with the trained library pinned
+# C4 × {mistral, kimi, qwen, gemma} → one-off each, with the trained library pinned
 #
 # IMPORTANT — override namespace is `agent_config.*`, NOT `planning_agent_config.*`.
 # The config file aliases `agent_config = planning_agent_config` but mmengine's
@@ -413,7 +413,7 @@ sbatch run_matrix_slurm.sh full '' c3
 # is silently ignored by the agent, leaving C4 running in training mode
 # (extraction ON, fresh skills_dir). Validated locally on Mac 2026-04-18 —
 # see "Freeze-smoke validation" subsection below.
-for m in mistral kimi qwen; do
+for m in mistral kimi qwen gemma; do
   sbatch --job-name=gaia-c4-$m --time=24:00:00 \
          --output=logs/c4_${m}_%j.out --error=logs/c4_${m}_%j.err \
          --wrap "source ~/anaconda3/etc/profile.d/conda.sh && conda activate dra \

@@ -117,7 +117,7 @@ To make **problem-solved** checks easier without full GAIA: prefer **one grep pe
 
 ## Progress snapshot (2026-04-19)
 
-**Done (repo / local):** `origin/main` includes prior follow-ups (`a98da9a`, `7ee9ae1`, …) and **`463d791`** (16-cell handoff smoke + `validate_handoffs.sh` + SLURM/matrix script comments). `bash scripts/smoke_validate_handoffs_234.sh` is green on a dev box with keys (Tier 0 = 16 configs, registration = 4 models + wrappers).
+**Done (repo / local):** `origin/main` includes prior follow-ups (`a98da9a`, `7ee9ae1`, …) and **`463d791`** (16-cell handoff smoke + `validate_handoffs.sh` + SLURM/matrix script comments). `bash scripts/smoke_validate_handoffs_234.sh` is green with keys (Tier 0 = 16 configs, registration = 4 models + wrappers). Spot-check: `pytest tests/test_tool_choice_dispatch.py tests/test_failover_model.py` → **34 passed** (`dra` env, 2026-04-19).
 
 **Not done (GPU farm / eval):** pytest sweep on farm (#9), **S0→S1→S2** smoke matrix (`sbatch run_matrix_slurm.sh smoke`), optional **C4 train + freeze-smoke**, then **S4** test-split + scoring + `validate_handoffs.sh <DRA_RUN_ID>` report — still required before moving rows to **Completed / Archived**. Handoff **#6** remains N/A for the API matrix.
 

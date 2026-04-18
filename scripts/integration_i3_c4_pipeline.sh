@@ -44,9 +44,11 @@ I3_TRAIN_SAMPLES="${I3_TRAIN_SAMPLES:-5}"
 I3_EVAL_SAMPLES="${I3_EVAL_SAMPLES:-2}"
 
 if [ -z "${SMOKE_CFG_OPTIONS+x}" ]; then
-  # Match scripts/run_eval_matrix.sh smoke defaults — aggressive I-track caps
-  # that verify plumbing without paying for browser CAPTCHA loops.
-  SMOKE_CFG_OPTIONS="agent_config.max_steps=6 auto_browser_use_tool_config.max_steps=4 deep_analyzer_agent_config.max_steps=2 deep_researcher_agent_config.max_steps=2 browser_use_agent_config.max_steps=2 deep_researcher_tool_config.time_limit_seconds=20"
+  # Match scripts/run_eval_matrix.sh smoke defaults. Earlier tighter values
+  # (planner=6, browser_tool=4) caused the planner to thrash on multi-hop
+  # GAIA Qs — the internal "max steps → retry" loop spun without progress.
+  # Current values are loose enough for plumbing to run to completion.
+  SMOKE_CFG_OPTIONS="agent_config.max_steps=8 auto_browser_use_tool_config.max_steps=6 deep_analyzer_agent_config.max_steps=2 deep_researcher_agent_config.max_steps=2 browser_use_agent_config.max_steps=3 deep_researcher_tool_config.time_limit_seconds=25"
 fi
 
 case "$I3_MODEL" in

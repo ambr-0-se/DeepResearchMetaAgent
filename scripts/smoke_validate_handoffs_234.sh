@@ -15,8 +15,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export REPO_ROOT="$ROOT"
 
-echo "== Tier 0: mmengine load for 12 matrix configs =="
-for cfg in configs/config_gaia_c{0,2,3,4}_{mistral,kimi,qwen}.py; do
+echo "== Tier 0: mmengine load for 16 matrix configs (4 models × C0/C2/C3/C4) =="
+for cfg in configs/config_gaia_c{0,2,3,4}_{mistral,kimi,qwen,gemma}.py; do
   python -c "from mmengine.config import Config; Config.fromfile('${cfg}'); print('OK', '${cfg}')"
 done
 
@@ -87,24 +87,37 @@ from src.models.models import ModelManager
 
 m = ModelManager()
 m.init_models(use_local_proxy=False)
-core = ["mistral-small", "kimi-k2.5-no-thinking", "qwen3.6-plus"]
+# Wire ids must match scripts/gen_eval_configs.py matrix defaults.
+core = [
+    "mistral-small",
+    "or-kimi-k2.5",
+    "or-qwen3.6-plus",
+    "or-gemma-4-31b-it",
+]
 missing_core = [n for n in core if n not in m.registed_models]
 if missing_core:
-    print("MISSING native matrix models:", missing_core)
+    print("MISSING matrix models:", missing_core)
     raise SystemExit(1)
+for n in (
+    "langchain-mistral-small",
+    "langchain-or-kimi-k2.5",
+    "langchain-or-qwen3.6-plus",
+    "langchain-or-gemma-4-31b-it",
+):
+    if n not in m.registed_models:
+        print("MISSING langchain wrapper:", n)
+        raise SystemExit(1)
+print("OK: 4 matrix models + OpenRouter langchain aliases")
 if "qwen3.6-plus-failover" in m.registed_models:
-    for n in ("langchain-qwen3.6-plus-failover",):
-        if n not in m.registed_models:
-            print("MISSING (unexpected):", n)
-            raise SystemExit(1)
-    print("OK: core + qwen3.6-plus-failover (+ langchain alias)")
+    print("INFO: qwen3.6-plus-failover also registered (optional)")
 else:
     print(
-        "WARN: qwen3.6-plus-failover not registered — the generated matrix Qwen "
-        "configs expect it. Set OPENROUTER_API_KEY (and keep DASHSCOPE_API_KEY) or "
-        "regenerate configs to pin model_id to qwen3.6-plus only."
+        "INFO: qwen3.6-plus-failover not registered — matrix Qwen uses "
+        "or-qwen3.6-plus directly; set STRICT_QWEN_FAILOVER=1 only if you "
+        "require failover registration for a different config."
     )
     import os
+
     if os.environ.get("STRICT_QWEN_FAILOVER") == "1":
         raise SystemExit(1)
 PY

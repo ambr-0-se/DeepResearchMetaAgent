@@ -9,23 +9,23 @@
 #SBATCH --output=logs/matrix_%j.out
 #SBATCH --error=logs/matrix_%j.err
 #
-# SLURM wrapper for the API-only 12-cell GAIA eval matrix
-# (Mistral / Kimi / Qwen × C0 / C2 / C3 / C4).
+# SLURM wrapper for the API-only 16-cell GAIA eval matrix
+# (Mistral / Kimi / Qwen / Gemma × C0 / C2 / C3 / C4).
 #
-# The three matrix models are all API-based (no local vLLM), so this job
+# All four matrix models are API-based (no local vLLM), so this job
 # doesn't request GPUs — just CPU + RAM + network. The wall-clock cap is
-# 24h which is plenty for either the validation split (165 Q × 12 cells)
-# or a single condition on the test split (300 Q × 3 models).
+# 24h which is plenty for smoke (5 Q × 16 cells on validation) or for
+# orchestrating full test-split runs per scripts/run_eval_matrix.sh.
 #
 # Usage (on the HKU CS Phase-3 gateway, e.g. gpu3gate1.cs.hku.hk):
 #
 #   cd /userhome/cs2/ambr0se/DeepResearchMetaAgent
 #   git pull origin main
 #
-#   # Full matrix (all 12 cells, test split):
+#   # Full matrix (all 16 cells, test split):
 #   sbatch run_matrix_slurm.sh full
 #
-#   # Just one condition — e.g. only C3 across all 3 models:
+#   # Just one condition — e.g. only C3 across all 4 models:
 #   sbatch run_matrix_slurm.sh full '' c3
 #
 #   # Validation-split smoke (5 Q/cell):
@@ -47,7 +47,7 @@
 set -u
 
 MODE="${1:-full}"            # smoke | full
-ONLY_MODEL="${2:-}"          # mistral | kimi | qwen | '' (all)
+ONLY_MODEL="${2:-}"          # mistral | kimi | qwen | gemma | '' (all)
 ONLY_CONDITION="${3:-}"      # c0 | c2 | c3 | c4 | '' (all)
 
 echo "========================================"
@@ -69,7 +69,7 @@ conda activate dra
 
 mkdir -p logs workdir workdir/run_logs
 
-# Pin a single DRA_RUN_ID for the whole matrix so all 12 cells land under
+# Pin a single DRA_RUN_ID for the whole matrix so all 16 cells land under
 # the same workdir/gaia_<cond>_<model>_<run_id>/ tree — easy to compare.
 RUN_ID="${DRA_RUN_ID:-matrix_${SLURM_JOB_ID:-local}_$(date +%Y%m%d_%H%M%S)}"
 export DRA_RUN_ID="$RUN_ID"

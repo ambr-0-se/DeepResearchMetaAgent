@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Parallel GAIA evaluation runner across the 3-models × 4-conditions matrix.
+# Parallel GAIA evaluation runner across the 4-models × 4-conditions matrix.
 #
-# Strategy: 3 model streams run in parallel (different API keys, no rate-limit
+# Strategy: 4 model streams run in parallel (different API keys, no rate-limit
 # contention between streams). WITHIN each model stream, the four conditions
 # C0/C2/C3/C4 run sequentially because they share one API key per model.
 #
 # Usage:
-#   # Smoke test — 5 validation-split questions per cell, all 12 cells:
+#   # Smoke test — 5 validation-split questions per cell, all 16 cells:
 #   bash scripts/run_eval_matrix.sh smoke
 #
 #   # Full test-split submission run (NO max_samples cap, default split=test):
@@ -40,7 +40,7 @@ mkdir -p "$LOG_DIR"
 
 # Shared run id for every cell in this invocation. Every generated config
 # reads this env var (with a fresh-timestamp fallback at config load) to
-# stamp its output directory. Exporting it here guarantees all 12 cells of
+# stamp its output directory. Exporting it here guarantees all 16 cells of
 # one matrix invocation share a single RUN_ID so results correlate cleanly.
 # Without it each cell would generate its own timestamp. Operators resume
 # a prior run by exporting DRA_RUN_ID before invocation.

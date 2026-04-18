@@ -194,6 +194,66 @@ done
 For the S4 scored run, pass an override so C4 cells load the trained
 library and **do not** extract further (see S4 below).
 
+### Freeze-smoke validation (2026-04-18, Mac — Mistral × 1 Q)
+
+The train/freeze override mechanism was validated end-to-end locally before
+committing to any farm training pass, using a **synthetic "trained library"**
+(the 7 canonical seeds from `src/skills/` + a uniquely-named canary
+`freeze-canary-mistral`) pinned via `--cfg-options`. This caught a latent
+bug in the override target.
+
+**Bug found.** The config file contains `agent_config = planning_agent_config`
+at its tail ([`configs/config_gaia_c4_mistral.py:84`](../../configs/config_gaia_c4_mistral.py)),
+but `mmengine.Config.fromfile` materialises the two names as **independent
+`ConfigDict` instances** (different `id()`). `merge_from_dict` with a
+dotted key mutates only the keyed dict, so
+`planning_agent_config.skills_dir=<snapshot>` updates `planning_agent_config`
+while `agent_config` retains the file-load default
+`workdir/gaia_c4_<model>_<run_id>/skills`. `create_agent()` at
+[`src/agent/agent.py:108`](../../src/agent/agent.py) then reads
+`config.agent_config`, so the override is silently ignored. Result: the
+"frozen" run actually runs in **C4 training mode** (extraction ON, fresh
+per-run `skills_dir` that re-seeds from `src/skills/`). Without this local
+validation, the farm C4 S4 run would have produced order-dependent,
+extraction-contaminated numbers — exactly the failure mode the train/freeze
+protocol exists to prevent.
+
+**Fix.** Override `agent_config.*` instead of `planning_agent_config.*`.
+The corrected commands above (lines 207–229) reflect this.
+
+**Verification results** (run id `freeze_smoke_mac_20260418_221849`, full log at
+`logs/c4_freeze_smoke_mistral.log`):
+
+| # | Check | Command / site | Result |
+|---|-------|---------------|--------|
+| 1 | `SkillExtractor active (C4 training mode)` banner suppressed | `grep -c "SkillExtractor active" logs/c4_freeze_smoke_mistral.log` | **0** ✓ |
+| 2 | Snapshot skill dir count unchanged | `ls workdir/c4_trained_libraries/mistral_skills/ \| wc -l` | **8 / 8** ✓ (7 seeds + canary; identical pre/post) |
+| 3 | No writes to snapshot | implicit — `SkillExtractor` not constructed (line 120 gate) | ✓ |
+| 4 | Library was actually consumed | `grep -c "Calling tool: 'activate_skill'"` | **1** ✓ (`handling-file-attachments`) |
+| 5 | Canary visible in registry injection (proves snapshot pinning) | `grep -n "freeze-canary-mistral" logs/c4_freeze_smoke_mistral.log` | **line 541** ✓ |
+
+Additional positive signals in the log head:
+
+- `[AdaptivePlanningAgent] enable_skills=True; building SkillRegistry at workdir/c4_trained_libraries/mistral_skills (C4)` — override path honoured
+- `[seed_skills_dir] workdir/c4_trained_libraries/mistral_skills already seeded (marker present); skipping.` — `.seeded` correctly prevents re-seed over a pre-built snapshot
+- `[AdaptivePlanningAgent] Initialized with 5 tools, 3 managed agents, review_step=on, skill_registry=on`
+
+**Local-only gotcha (not needed on the farm).** On the Mac dev box, the MCP
+server subprocess is spawned with `command='python'` and inherits PATH, not
+the parent's interpreter. The default shell `python` resolves to base
+miniconda (no `fastmcp`), causing `ModuleNotFoundError: No module named
+'fastmcp'` → `Connection closed`. Fix locally with an extra cfg-option:
+`mcp_tools_config.mcpServers.LocalMCP.command=/Users/.../miniconda3/envs/dra/bin/python`.
+On the farm this is a non-issue because `conda activate dra` in the SBATCH
+wrapper puts the right `python` in PATH before the subprocess spawns.
+
+**What's NOT yet validated.** The synthetic library contained only seed
+skills + canary, so this run proves the override *mechanism* but not the
+full train-then-freeze *loop* with a genuinely trained library. The first
+farm C4 Train pass is still the first end-to-end test of real skill
+extraction + later freeze. Reserve the 1 h budget slot mentioned in
+"Known unknowns" for that.
+
 ### S4 — Test-split submission (~8-24 h, $30-100)
 
 Full matrix, test split, all 16 cells. Long job; use SLURM for
@@ -215,6 +275,15 @@ sbatch run_matrix_slurm.sh full '' c2
 sbatch run_matrix_slurm.sh full '' c3
 
 # C4 × {mistral, kimi, qwen} → one-off each, with the trained library pinned
+#
+# IMPORTANT — override namespace is `agent_config.*`, NOT `planning_agent_config.*`.
+# The config file aliases `agent_config = planning_agent_config` but mmengine's
+# Config.fromfile materialises the two names as independent dicts, and
+# create_agent() in src/agent/agent.py reads `config.agent_config`. A
+# `planning_agent_config.*` override merges successfully at the top level but
+# is silently ignored by the agent, leaving C4 running in training mode
+# (extraction ON, fresh skills_dir). Validated locally on Mac 2026-04-18 —
+# see "Freeze-smoke validation" subsection below.
 for m in mistral kimi qwen; do
   sbatch --job-name=gaia-c4-$m --time=24:00:00 \
          --output=logs/c4_${m}_%j.out --error=logs/c4_${m}_%j.err \
@@ -223,8 +292,8 @@ for m in mistral kimi qwen; do
                  && python examples/run_gaia.py \
                       --config configs/config_gaia_c4_${m}.py \
                       --cfg-options \
-                        planning_agent_config.skills_dir=workdir/c4_trained_libraries/${m}_skills \
-                        planning_agent_config.enable_skill_extraction=False"
+                        agent_config.skills_dir=workdir/c4_trained_libraries/${m}_skills \
+                        agent_config.enable_skill_extraction=False"
 done
 ```
 

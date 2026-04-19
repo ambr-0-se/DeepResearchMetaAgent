@@ -18,6 +18,20 @@ logger = logging.getLogger(__name__)
 
 _RETRY_MAX_ATTEMPTS = 5
 _RETRY_BASE_DELAY = 1.0   # seconds
+
+# Single-request read timeout enforced on every async chat-completion call.
+# Guards against silent SSE / HTTP-read stalls on OpenAI-compatible providers
+# (observed on Moonshot AI via OpenRouter for Kimi K2.5: an otherwise-valid
+# completion can wedge mid-stream with no bytes, no TCP close, no error
+# from the SDK. Previously this consumed the outer per-question 1200s
+# timeout in run_gaia.py — I2 2026-04-19 saw 11/12 Kimi Qs hit that wall
+# with 12+ min of log silence.)
+#
+# 120s is generous enough for long legitimate generations (GAIA Qs with
+# large context) while still turning a true hang into a retryable error
+# ~10x faster than the per-Q timeout. Surfaces as asyncio.TimeoutError
+# which the tenacity retry loop below converts to a new attempt.
+_CHAT_COMPLETION_TIMEOUT_S = 120.0
 _RETRY_MAX_DELAY = 60.0   # seconds
 
 
@@ -276,7 +290,10 @@ class OpenAIServerModel(ApiModel):
         last_exc: Exception | None = None
         for attempt in range(_RETRY_MAX_ATTEMPTS + 1):
             try:
-                response = await self.client.chat.completions.create(**completion_kwargs)
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(**completion_kwargs),
+                    timeout=_CHAT_COMPLETION_TIMEOUT_S,
+                )
                 # Some providers via OpenRouter (observed: Gemma-4 31B via
                 # DeepInfra) return `usage=None` intermittently even though the
                 # completion is valid. Previously we crashed here with
@@ -337,6 +354,22 @@ class OpenAIServerModel(ApiModel):
                 logger.warning(
                     f"Connection error for model '{self.model_id}', "
                     f"retrying in {delay:.1f}s (attempt {attempt + 1}/{_RETRY_MAX_ATTEMPTS})"
+                )
+                await asyncio.sleep(delay)
+            except asyncio.TimeoutError as e:
+                # The `asyncio.wait_for` wrapper bounded a single chat
+                # completion at _CHAT_COMPLETION_TIMEOUT_S. This catches silent
+                # SSE/HTTP-read stalls (Moonshot AI via OpenRouter, observed
+                # I2 2026-04-19) and converts them into a normal retry — one
+                # hung request no longer wedges an entire question.
+                last_exc = e
+                if attempt == _RETRY_MAX_ATTEMPTS:
+                    break
+                delay = _backoff(attempt)
+                logger.warning(
+                    f"Chat completion timed out after {_CHAT_COMPLETION_TIMEOUT_S:.0f}s "
+                    f"for model '{self.model_id}', retrying in {delay:.1f}s "
+                    f"(attempt {attempt + 1}/{_RETRY_MAX_ATTEMPTS})"
                 )
                 await asyncio.sleep(delay)
 

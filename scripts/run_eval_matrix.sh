@@ -57,6 +57,11 @@
 #                   var, so the operator must commit to a split before the job
 #                   starts spending money. Smoke mode is unaffected — it always
 #                   uses `validation` with a `max_samples` cap.
+#   FULL_CFG_OPTIONS — extra mmengine keys appended in `full` mode only. Unset
+#                      by default (no overrides). Same syntax as SMOKE_CFG_OPTIONS.
+#                      Intended for one-off cap tightening at launch time
+#                      without regenerating checked-in configs (e.g. shorten
+#                      E0 per-Q wall by reducing planner max_steps).
 #   LOG_DIR    — where to tee per-cell stdout/stderr (default: workdir/run_logs)
 #   GEMMA_CONCURRENCY — per-Gemma-cell concurrency cap (default: 4). Workaround
 #                       for vLLM #39392 (gemma4 tool parser emits all-<pad>
@@ -207,6 +212,15 @@ cell_cmd() {
     # Full mode: DATASET_SPLIT is mandatory (enforced earlier).
     local opts=("dataset.split=${DATASET_SPLIT}")
     [[ "$model" == "gemma" ]] && opts+=("concurrency=$GEMMA_CONCURRENCY")
+    # Optional `FULL_CFG_OPTIONS` env lets the operator tighten max_steps
+    # etc. without regenerating checked-in configs. Used 2026-04-19 to
+    # shorten E0 resume's per-Q wall from ~20 min (hitting the 1200s
+    # per-Q safety timeout) to ~10 min (hitting max_steps cleanly, which
+    # writes a valid row instead of `agent_error`).
+    if [[ -n "${FULL_CFG_OPTIONS:-}" ]]; then
+      # shellcheck disable=SC2206
+      opts+=(${FULL_CFG_OPTIONS})
+    fi
     echo "$PYTHON examples/run_gaia.py --config $cfg --cfg-options ${opts[*]}"
   fi
 }

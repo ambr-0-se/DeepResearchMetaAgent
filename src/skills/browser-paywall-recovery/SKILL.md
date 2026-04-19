@@ -1,6 +1,6 @@
 ---
 name: browser-paywall-recovery
-description: Recovery workflow when `auto_browser_use_tool` hits a paywall, cookie banner, login wall, or 403/429 error. Try archive.org, Google cache, and site-specific alternatives before giving up. Use whenever the browser cannot access a page that looked reachable from the search results.
+description: Recovery workflow when `auto_browser_use_tool` hits a paywall, cookie banner, login wall, CAPTCHA challenge, or 403/429 error. Try archive.org, Google cache, and site-specific alternatives before giving up. Use whenever the browser cannot access a page that looked reachable from the search results.
 metadata:
   consumer: browser_use_agent
   skill_type: failure_avoidance
@@ -13,8 +13,17 @@ metadata:
 
 ## When to activate
 - Page shows paywall / "subscribe to continue" / login wall, OR
+- **Page shows a CAPTCHA challenge** (reCAPTCHA, hCaptcha, Cloudflare "verify you are human", Google "I'm not a robot"), OR
 - HTTP 403 (forbidden) or 429 (rate-limited), OR
 - Cookie-consent modal blocks interaction and you cannot dismiss it.
+
+## CAPTCHA handling — do not retry the same URL
+
+CAPTCHAs are bot-defense walls the browser agent cannot pass. Retrying the same
+URL just burns `auto_browser_use_tool.max_steps` (capped; observed 25+ wasted
+CAPTCHA-retry iterations under the old default of 50 steps). **On the FIRST
+CAPTCHA sighting, switch source** — do not try a second CAPTCHA-gated page from
+the same site, and do not try to solve the challenge.
 
 ## Recovery order
 
@@ -29,6 +38,7 @@ metadata:
 ## Avoid
 - Dismissing cookie modals with "Agree" as a default tactic — it often still leaves the article behind a paywall and burns steps.
 - Repeatedly retrying the same URL after a 429 — rate limits don't clear instantly.
+- Attempting to solve a CAPTCHA via clicks, scrolls, or text input — the browser agent cannot pass these, and trying wastes steps. Switch source immediately.
 - Using `python_interpreter_tool` to send HTTP requests bypassing the browser (`requests` is not on the default interpreter allowlist anyway). Even where raw HTTP works, it lacks full browser cookie/JS behavior and can trigger bot defenses.
 
 ## Example

@@ -123,3 +123,7 @@ auto_browser_use_tool_config = dict(
 #     --cfg-options max_samples=10 dataset.split=validation
 max_samples = None
 concurrency = 4
+
+# Per-question wall clock timeout (secs). Pinned 2026-04-20 for fairness
+# with E0 v3 C4 training (1800s).
+per_question_timeout_secs = 1800

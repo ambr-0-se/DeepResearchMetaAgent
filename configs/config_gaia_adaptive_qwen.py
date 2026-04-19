@@ -106,6 +106,6 @@ planning_agent_config = dict(
 
 # Hard wall-clock limit per question (seconds). Prevents any single question from
 # stalling indefinitely. 20 min is generous for a 4B model with max_steps=25.
-per_question_timeout_secs = 1200
+per_question_timeout_secs = 1800
 
 agent_config = planning_agent_config

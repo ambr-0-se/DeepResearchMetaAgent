@@ -30,3 +30,9 @@ _RUN_ID = _os.environ.get("DRA_RUN_ID") or _datetime.now().strftime("%Y%m%d_%H%M
 del _os, _datetime
 
 tag = f"gaia_c0_{_RUN_ID}"
+
+# Per-question wall clock timeout (secs). Pinned 2026-04-20 for fairness
+# with E0 v3 C4 training (which used 1800s). Previously inherited
+# run_gaia.py default 1200, creating a training/test asymmetry that
+# could bias the C0-C3 vs C4 ablation at test time.
+per_question_timeout_secs = 1800

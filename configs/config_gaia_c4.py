@@ -71,3 +71,9 @@ planning_agent_config = dict(
 
 # Use the C4 planning agent config as the main agent
 agent_config = planning_agent_config
+
+# Per-question wall clock timeout (secs). Pinned 2026-04-20 for fairness
+# with E0 v3 C4 training (which used 1800s). Previously inherited
+# run_gaia.py default 1200, creating a training/test asymmetry that
+# could bias the C0-C3 vs C4 ablation at test time.
+per_question_timeout_secs = 1800

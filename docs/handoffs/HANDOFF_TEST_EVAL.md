@@ -709,6 +709,22 @@ before resubmitting.
   probably fine on Linux. If Mistral cells show 20+ min runtimes past the
   configured `per_question_timeout_secs`, it's the same bug — raise the
   timeout or accept the limitation.
+
+### Per-Q timeout policy (2026-04-20, updated)
+
+- **Every matrix config (C0/C2/C3/C4 × mistral/qwen/kimi/gemma) pins
+  `per_question_timeout_secs = 1800`.** Same cap at training (E0) and
+  test (E3) so the ablation between conditions isn't confounded by a
+  wall-clock budget asymmetry.
+- The `run_gaia.py` in-code default was also raised from 1200 → 1800,
+  so any new config that forgets to set the attribute still gets 1800
+  (previously got 1200 silently).
+- `scripts/gen_eval_configs.py` template emits the pin, so regenerating
+  the 16 configs from the template preserves the policy.
+- Pre-2026-04-20 dra.jsonl rows have mixed caps: early E0 v1/v2 rows
+  ran under 1200s, E0 v3 rows under 1800s. Any `Per-question timeout
+  (1200s) exceeded` error signature is from a pre-2026-04-20 row and
+  is expected; newer rows should only show the 1800s signature.
 - **C4 train/freeze protocol is the intended methodology**, but it was not
   exercised end-to-end locally because the local path has other issues.
   First farm run is the first real test of the train-then-freeze loop.

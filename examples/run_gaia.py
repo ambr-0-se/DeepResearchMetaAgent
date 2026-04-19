@@ -148,7 +148,7 @@ async def answer_single_question(config, example):
 
     augmented_question = example["question"]
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    per_question_timeout = getattr(config, "per_question_timeout_secs", 1200)
+    per_question_timeout = getattr(config, "per_question_timeout_secs", 1800)
 
     if example["file_name"]:
         prompt_use_files = "\n\nTo solve the task above, you will have to use these attached files:\n"

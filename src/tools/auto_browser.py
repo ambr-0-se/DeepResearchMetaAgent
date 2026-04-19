@@ -1,3 +1,4 @@
+import asyncio
 import os
 import subprocess
 import atexit
@@ -12,6 +13,18 @@ from src.tools.browser import Controller
 from src.utils import assemble_project_path
 from src.registry import TOOL
 from src.models import model_manager
+
+
+# Per-internal-step budget for the browser-use Agent. Used to cap
+# `browser_agent.run(max_steps=N)` at `N * _PER_STEP_TIMEOUT_S`. Needed
+# because the LangChain `langchain-or-*` wrappers do NOT inherit the
+# native-route `extra_body` (Kimi's reasoning-off pin, Gemma's provider
+# pin) — observed on Kimi C0 during I2 2026-04-19: internal browser
+# iterations stalled 200-650s on LangChain-routed Moonshot calls,
+# consuming the full 1200s per-Q timeout despite `max_steps=3`. This cap
+# surfaces a stuck iteration as a clean `TimeoutError` → tool reports
+# "no extracted content" via the existing fallback path.
+_PER_STEP_TIMEOUT_S = 60
 
 @TOOL.register_module(name="auto_browser_use_tool", force=True)
 class AutoBrowserUseTool(AsyncTool):
@@ -102,7 +115,25 @@ class AutoBrowserUseTool(AsyncTool):
             page_extraction_llm=model,
         )
 
-        history = await browser_agent.run(max_steps=self.max_steps)
+        # Cap the browser_agent run so a silent LangChain-wrapper LLM hang
+        # can't wedge the whole planner step beyond `max_steps * _PER_STEP_TIMEOUT_S`.
+        # Uniform across all models; Mistral/Qwen/Gemma iterations normally
+        # finish in seconds so this is a no-op for them.
+        overall_budget = max(1, self.max_steps) * _PER_STEP_TIMEOUT_S
+        try:
+            history = await asyncio.wait_for(
+                browser_agent.run(max_steps=self.max_steps),
+                timeout=overall_budget,
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                f"auto_browser_use_tool timed out after {overall_budget}s "
+                f"(max_steps={self.max_steps}, per-step cap {_PER_STEP_TIMEOUT_S}s). "
+                "Likely a hung LLM call inside the browser-use agent — the "
+                "LangChain wrappers (`langchain-or-*`) do not inherit native "
+                "provider-pin `extra_body`, which can stall on some OR sub-providers. "
+                "Recommend switching to deep_researcher_agent or refining the task with specific URLs."
+            )
         contents = history.extracted_content()
         joined = "\n".join(c for c in contents if c)
 

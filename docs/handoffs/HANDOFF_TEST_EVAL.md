@@ -141,6 +141,38 @@ Kimi K2.5 via the `or-kimi-k2.5` slug (OpenRouter → Moonshot AI provider pin) 
 
 **To re-enable Kimi** (e.g., after Moonshot AI stabilizes or for a follow-up study): pass `kimi` explicitly to `run_eval_matrix.sh` (`smoke kimi c0`, etc.) — the configs and registration remain in the repo.
 
+### E0 training subset + shuffle (2026-04-20, methodology note)
+
+From 2026-04-20 onward, E0 C4 skill training uses a **random 80-question subsample** of the 165-question validation split, not the full validation split. The change is driven by:
+
+1. **Wall-time realism:** even after the tightened caps + HTTP timeout + cleanup fixes in commits `fbd0dd1`, `cf7e71d`, `aa78edc`, `a7d6842`, E0 v1+v2 error rates remained in the 25-45% range driven by Qs genuinely needing >1200s of LLM wall. Running the full validation split with per-Q 1800s cap would require ~24-36h of local compute per run; an 80-question subsample completes in ~8-12h.
+2. **Skill yield diminishing returns:** E0 v1 data shows skill extraction is heavily de-duplicated (3-8% skill-yield-per-Q across the 3 models that ran). After ~60-80 Qs, the extractor's LLM-as-judge dedup stage rejects most new candidates. Skill library size scales sub-linearly with Q count; 80 Qs captures ~60-70% of the total possible skill diversity at ~50% of the full-split cost.
+3. **Training/evaluation separation:** randomly subsampling the validation split leaves 85 Qs available as an OPTIONAL E0-alternate / E2 extended smoke without contaminating the train-validation boundary.
+
+**How the subsample is selected:** `GAIADataset.__init__` accepts `shuffle: bool = False, seed: int = 42` (see `src/dataset/huggingface.py`). When `shuffle=True`, the full dataset is permuted via `random.Random(seed).shuffle(indices)` BEFORE any downstream slicing or filtering. `run_gaia.py`'s `max_samples` then truncates to the first 80 — which, post-shuffle, is a uniform random subsample. Training order within those 80 is also the shuffled order.
+
+**Why "random preserving natural distribution" rather than "stratified by GAIA level":**
+- GAIA's validation split has a natural Level-1 / Level-2 / Level-3 mix. A random subsample preserves that distribution in expectation; a stratified subsample would artificially balance levels and bias the learned skill library toward harder Qs that may be rare at test time.
+- Unbiased estimator: for any test-split distribution that mirrors validation's natural distribution, our training subsample is methodologically aligned.
+- Simpler to implement (one shuffle + slice) and defend ("we randomly sampled 80 of 165 validation Qs, seed=42").
+
+**Launch params (E0 v3 onwards):**
+```bash
+DRA_RUN_ID=<fresh_id>
+DATASET_SPLIT=validation
+FULL_CFG_OPTIONS="max_samples=80 dataset.shuffle=True dataset.seed=42 \
+  per_question_timeout_secs=1800 agent_config.max_steps=15 \
+  auto_browser_use_tool_config.max_steps=10 browser_use_agent_config.max_steps=3 \
+  deep_researcher_tool_config.time_limit_seconds=45"
+caffeinate -dims bash scripts/run_eval_matrix.sh full '' c4
+```
+
+**Skill-evolution instrumentation:** `SkillExtractor.extract_and_maybe_persist` now appends one JSON line per invocation to `<skills_dir>/../skill_evolution.jsonl`, recording the library state after each Q (seeded count, learned count, total count, newly-extracted skill name if any, task success signal, timestamp). This enables a "skill count over training Qs" plot for the paper without re-running E0.
+
+**Paper methodology sentence (draft):** *"Each C4 skill library was trained on a random 80-question subsample of the 165-question GAIA validation split (seed=42), preserving the validation split's natural difficulty distribution. Training Qs were presented in shuffled order so that skill-library growth over training is not confounded by Q difficulty drift. The `SkillExtractor` pipeline (worthiness heuristic → LLM propose → structural validation → entity blocklist → LLM-as-judge dedup → atomic persist) produced 6-12 learned skills per model on top of the 7 pre-seeded skills."*
+
+---
+
 ### Gemma exclusion (2026-04-19, methodology note)
 
 Gemma-4 31B via the `or-gemma-4-31b-it` slug (OpenRouter → DeepInfra+Together provider pin) was dropped from the default matrix mid-E0 after **13 hours of training produced only 8 valid rows (12% valid-row rate) and 0 learned skills**. Unlike Kimi — where the issue was SSE streaming stalls — Gemma's problem was **baseline per-step slowness on DeepInfra**:

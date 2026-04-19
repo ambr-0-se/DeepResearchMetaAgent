@@ -1,4 +1,5 @@
 import os
+import random
 import pandas as pd
 import datasets
 import base64
@@ -9,7 +10,16 @@ from src.registry import DATASET
 
 @DATASET.register_module(name="gaia_dataset", force=True)
 class GAIADataset():
-    def __init__(self, path, name, split, task_ids=None, skip_file_attachments=False):
+    def __init__(
+        self,
+        path,
+        name,
+        split,
+        task_ids=None,
+        skip_file_attachments=False,
+        shuffle: bool = False,
+        seed: int = 42,
+    ):
         """
         Args:
             path: filesystem path to the downloaded GAIA dataset
@@ -23,10 +33,22 @@ class GAIADataset():
                       environments where attachment handling is broken
                       (e.g. local dev path contains spaces; browser-use's
                       pdf download truncates at the first space).
+            shuffle: when True, randomly permute the dataset with `seed`
+                     BEFORE any filters (task_ids, skip_file_attachments)
+                     or downstream slicing (e.g. run_gaia.py's max_samples).
+                     Purpose: enable E0 random-subsample training that
+                     preserves validation's natural difficulty distribution
+                     (vs. the biased first-N order of the raw dataset).
+                     See HANDOFF_TEST_EVAL.md §E0 methodology note.
+            seed: random seed for shuffle; default 42 so runs are
+                  reproducible. Different seeds produce different but
+                  equally-valid subsamples.
         """
         self.path = path
         self.name = name
         self.split = split
+        self.shuffle = shuffle
+        self.seed = seed
 
         path = assemble_project_path(path)
         ds = datasets.load_dataset(path, name, trust_remote_code=True)[split]
@@ -34,6 +56,18 @@ class GAIADataset():
         ds = ds.map(self.preprocess_file_paths, load_from_cache_file=False, fn_kwargs={"split": split, "path": path})
 
         data = pd.DataFrame(ds)
+
+        if shuffle:
+            # Deterministic shuffle via random.Random(seed) so the same seed
+            # always produces the same order. Applied BEFORE filters so that
+            # max_samples slicing downstream in run_gaia.py produces a
+            # uniform random subsample (not biased by file order).
+            indices = list(range(len(data)))
+            random.Random(seed).shuffle(indices)
+            data = data.iloc[indices].reset_index(drop=True)
+            logger.info(
+                f"[GAIADataset] shuffled {len(data)} questions with seed={seed}"
+            )
 
         if skip_file_attachments:
             before = len(data)

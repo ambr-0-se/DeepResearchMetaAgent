@@ -208,9 +208,16 @@ class SkillExtractor:
                 skill is extractable.
 
         Never raises. Any failure is caught, logged, and returns None.
+
+        Side effect: appends one JSON line to
+        `<skills_dir>/../skill_evolution.jsonl` recording the outcome of
+        this extraction attempt (skill added or None) alongside the current
+        library size. Enables the "skill count over training Qs" paper plot
+        without needing to re-run training.
         """
+        result: Optional[Skill] = None
         try:
-            return await self._run_pipeline(
+            result = await self._run_pipeline(
                 task=task,
                 final_answer=final_answer,
                 task_success=task_success,
@@ -223,7 +230,73 @@ class SkillExtractor:
                 f"no skill extracted",
                 level=LogLevel.ERROR,
             )
-            return None
+        # Evolution logging is best-effort; never allow it to break extraction.
+        try:
+            self._log_evolution(task=task, task_success=task_success, extracted=result)
+        except Exception as e:
+            logger.log(
+                f"[SkillExtractor] evolution log append failed "
+                f"({type(e).__name__}: {e})",
+                level=LogLevel.WARNING,
+            )
+        return result
+
+    def _log_evolution(
+        self,
+        *,
+        task: str,
+        task_success: Optional[bool],
+        extracted: Optional[Skill],
+    ) -> None:
+        """
+        Append one JSON line to `skill_evolution.jsonl` adjacent to the
+        registry's `skills_dir`. Captures the library state AFTER this
+        extraction attempt completes (so the `*_count` fields reflect
+        post-add, including the newly-persisted skill if any).
+
+        File lives next to (not inside) `skills_dir` to avoid the
+        skill-body scanner picking it up as a malformed SKILL.md.
+
+        Schema (one JSON object per line):
+          - timestamp: UTC ISO-8601
+          - task_preview: first 120 chars of the task text, for debugging
+          - task_success: caller-supplied success signal (may be None)
+          - extracted_skill: name of the newly-added skill (None if pipeline
+                             vetoed at any stage)
+          - seeded_count / learned_count / total_skills_after: library
+                             snapshot counts by `metadata.source`
+        """
+        import json as _json
+        from datetime import datetime as _datetime, timezone as _timezone
+
+        skills_dir = self.registry.skills_dir
+        log_path = skills_dir.parent / "skill_evolution.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Count by source — iterate the registry's in-memory snapshot rather
+        # than re-scanning the filesystem.
+        seeded = 0
+        learned = 0
+        for name in self.registry.names():
+            s = self.registry.get(name)
+            if s is None:
+                continue
+            if s.metadata.source == "seeded":
+                seeded += 1
+            else:
+                learned += 1
+
+        row = {
+            "timestamp": _datetime.now(_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "task_preview": task[:120] if isinstance(task, str) else str(task)[:120],
+            "task_success": task_success,
+            "extracted_skill": extracted.metadata.name if extracted else None,
+            "seeded_count": seeded,
+            "learned_count": learned,
+            "total_skills_after": seeded + learned,
+        }
+        with open(log_path, "a") as f:
+            f.write(_json.dumps(row) + "\n")
 
     # -- pipeline stages -----------------------------------------------------
 

@@ -126,3 +126,8 @@ auto_browser_use_tool_config = dict(
 #     --cfg-options max_samples=10 dataset.split=validation
 max_samples = None
 concurrency = 4
+
+# Per-question wall clock timeout (secs). User set 1800s on 2026-04-20
+# (was falling back to run_gaia.py default 1200). Applies to fresh launches;
+# in-flight rows keep whatever cap was in effect when they started.
+per_question_timeout_secs = 1800

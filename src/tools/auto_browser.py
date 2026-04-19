@@ -119,21 +119,45 @@ class AutoBrowserUseTool(AsyncTool):
         # can't wedge the whole planner step beyond `max_steps * _PER_STEP_TIMEOUT_S`.
         # Uniform across all models; Mistral/Qwen/Gemma iterations normally
         # finish in seconds so this is a no-op for them.
+        #
+        # CRITICAL: the try/finally around browser_agent.close() is what
+        # prevents the cleanup-deadlock observed on Kimi during E0 2026-04-19.
+        # When the OUTER per-question 1200s timeout in run_gaia.py cancels
+        # agent.run() while this coroutine is inside browser_agent.run(),
+        # asyncio raises CancelledError — Playwright driver subprocess and
+        # chromium children DO NOT auto-close on cancel. The parent process
+        # then deadlocks at ~0% CPU waiting for the Playwright event loop to
+        # drain (observed: 58-min wedge on Kimi PID 28788 after a per-Q
+        # timeout on a browser question). Force-closing via
+        # `browser_agent.close()` in a finally block drops the browser
+        # resources synchronously so the async loop can resume and proceed
+        # to the next question.
         overall_budget = max(1, self.max_steps) * _PER_STEP_TIMEOUT_S
+        history = None
         try:
-            history = await asyncio.wait_for(
-                browser_agent.run(max_steps=self.max_steps),
-                timeout=overall_budget,
-            )
-        except asyncio.TimeoutError:
-            raise RuntimeError(
-                f"auto_browser_use_tool timed out after {overall_budget}s "
-                f"(max_steps={self.max_steps}, per-step cap {_PER_STEP_TIMEOUT_S}s). "
-                "Likely a hung LLM call inside the browser-use agent — the "
-                "LangChain wrappers (`langchain-or-*`) do not inherit native "
-                "provider-pin `extra_body`, which can stall on some OR sub-providers. "
-                "Recommend switching to deep_researcher_agent or refining the task with specific URLs."
-            )
+            try:
+                history = await asyncio.wait_for(
+                    browser_agent.run(max_steps=self.max_steps),
+                    timeout=overall_budget,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    f"auto_browser_use_tool timed out after {overall_budget}s "
+                    f"(max_steps={self.max_steps}, per-step cap {_PER_STEP_TIMEOUT_S}s). "
+                    "Likely a hung LLM call inside the browser-use agent — the "
+                    "LangChain wrappers (`langchain-or-*`) do not inherit native "
+                    "provider-pin `extra_body`, which can stall on some OR sub-providers. "
+                    "Recommend switching to deep_researcher_agent or refining the task with specific URLs."
+                )
+        finally:
+            # Always close. `browser_agent.close()` is idempotent-safe: it
+            # silently skips injected contexts and no-ops if browser is
+            # already closed. Bound the close itself in case Playwright
+            # itself hangs during teardown (extra defense).
+            try:
+                await asyncio.wait_for(browser_agent.close(), timeout=15)
+            except Exception:
+                pass
         contents = history.extracted_content()
         joined = "\n".join(c for c in contents if c)
 

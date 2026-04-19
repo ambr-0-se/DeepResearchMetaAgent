@@ -9,20 +9,21 @@
 #SBATCH --output=logs/matrix_%j.out
 #SBATCH --error=logs/matrix_%j.err
 #
-# SLURM wrapper for the API-only 12-cell GAIA eval matrix
-# (Mistral / Qwen / Gemma × C0 / C2 / C3 / C4).
+# SLURM wrapper for the API-only 8-cell GAIA eval matrix
+# (Mistral / Qwen × C0 / C2 / C3 / C4).
 #
-# Kimi K2.5 was dropped from the default matrix 2026-04-19 due to persistent
-# OpenRouter→Moonshot AI SSE streaming stalls (see HANDOFF_TEST_EVAL.md
-# methodology note). Kimi configs remain in the repo; run explicitly with
-# `full kimi <cond>` if the provider-side stability improves.
+# Kimi K2.5 and Gemma 4 31B were dropped 2026-04-19 due to provider-side
+# reliability issues (Moonshot AI SSE stalls + DeepInfra per-step latency
+# respectively). See HANDOFF_TEST_EVAL.md methodology notes. Both configs
+# remain in the repo; run explicitly with `full kimi <cond>` or
+# `full gemma <cond>` to re-enable.
 #
-# All three default matrix models are API-based (no local vLLM), so this job
+# Both default matrix models are API-based (no local vLLM), so this job
 # doesn't request GPUs — just CPU + RAM + network. The wall-clock cap is
-# 24h which is plenty for smoke (default 3 Q × 12 cells on validation) or for
+# 24h which is plenty for smoke (default 3 Q × 8 cells on validation) or for
 # orchestrating full test-split runs per scripts/run_eval_matrix.sh.
 #
-# Track naming (see docs/handoffs/HANDOFF_TEST_EVAL.md): **I2** = `smoke` 12-cell
+# Track naming (see docs/handoffs/HANDOFF_TEST_EVAL.md): **I2** = `smoke` 8-cell
 # matrix on validation; **E3** = `full` test-split submission; **E0** C4 val
 # training = `full '' c4` with `DATASET_SPLIT=validation` (see eval handoff).
 #

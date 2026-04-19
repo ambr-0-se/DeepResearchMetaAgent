@@ -16,7 +16,7 @@ from src.models.tool_choice import log_downgrade_once, pick_tool_choice
 
 logger = logging.getLogger(__name__)
 
-_RETRY_MAX_ATTEMPTS = 5
+_RETRY_MAX_ATTEMPTS = 3
 _RETRY_BASE_DELAY = 1.0   # seconds
 
 # Single-request read timeout enforced on every async chat-completion call.
@@ -307,11 +307,33 @@ class OpenAIServerModel(ApiModel):
                 completion_tokens = getattr(usage, "completion_tokens", 0) or 0
                 self._last_input_token_count = prompt_tokens
                 self._last_output_token_count = completion_tokens
+                # Defensive guard on `response.choices`. Observed 2026-04-19
+                # during E0 training: some OR providers (notably Qwen/Gemma
+                # on certain DeepInfra routes) return `choices=None` or
+                # `choices=[]` intermittently on otherwise-valid completions,
+                # which crashed here with `'NoneType' object is not
+                # subscriptable` (or `'list' object has no attribute` when
+                # downstream code expected a dict at [0]). That bubbled up
+                # as `AgentGenerationError` at question level and lost the
+                # whole Q. Converting this to a retryable `APIStatusError`
+                # routes it through the existing retry loop instead.
+                choices = getattr(response, "choices", None)
+                if not choices:
+                    # Raise as APIConnectionError so the existing retry
+                    # branch (see except below) picks it up and retries
+                    # with backoff rather than surfacing as a Q-level error.
+                    raise openai.APIConnectionError(
+                        message=(
+                            f"Provider returned no choices (response.choices="
+                            f"{choices!r}) for model '{self.model_id}'"
+                        ),
+                        request=None,  # type: ignore[arg-type]
+                    )
                 # Capture reasoning_content directly from the SDK message object before
                 # dumping: include={"role","content","tool_calls"} would silently drop
                 # it, which breaks DeepSeek-reasoner (and other thinking models) on the
                 # next tool-loop turn since the provider requires it to be echoed back.
-                msg_obj = response.choices[0].message
+                msg_obj = choices[0].message
                 msg_dict = msg_obj.model_dump(include={"role", "content", "tool_calls"})
                 reasoning = getattr(msg_obj, "reasoning_content", None)
                 if reasoning:

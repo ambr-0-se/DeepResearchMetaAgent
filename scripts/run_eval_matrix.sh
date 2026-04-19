@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Parallel GAIA evaluation runner.
 #
-# DEFAULT MATRIX (2026-04-19 onward): 3 models × 4 conditions = **12 cells**
-# (mistral / qwen / gemma × C0/C2/C3/C4). Kimi K2.5 was dropped from the
-# default set after persistent OpenRouter→Moonshot AI SSE streaming stalls
-# during E0 validation training made its data unreliable. Kimi configs
-# remain in the repo — pass `model=kimi` explicitly to re-enable.
+# DEFAULT MATRIX (2026-04-19 onward): **2 models × 4 conditions = 8 cells**
+# (mistral / qwen × C0/C2/C3/C4). Kimi K2.5 dropped first (Moonshot AI
+# SSE streaming stalls), then Gemma-4 31B (DeepInfra p95 per-step wall
+# 4-5× slower than Mistral/Qwen → 12% valid-row rate in E0). Both configs
+# remain in the repo — pass `model=kimi` or `model=gemma` explicitly to
+# re-enable.
 #
 # Track naming (see docs/handoffs/HANDOFF_TEST_EVAL.md): **`smoke`** = integration
 # **I2** (12-cell default validation matrix); **`full`** (default test split) =
@@ -108,11 +109,18 @@ export DRA_RUN_ID="${DRA_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 # during E0 training (58-min post-timeout cleanup deadlocks, 9% effective
 # throughput across 5.8h). Provider-side reliability issues — outside our
 # code's control — would have carried into E3 test scoring and contaminated
-# the C0/C2/C3/C4 ablation deltas. Kimi configs remain in the repo and can
-# be re-enabled by passing model=kimi explicitly (e.g., `smoke kimi c0`);
-# they are just not run by default. See `docs/handoffs/HANDOFF_TEST_EVAL.md`
-# methodology note and HANDOFF_INDEX.md commit row for full rationale.
-ALL_MODELS=(mistral qwen gemma)
+# the C0/C2/C3/C4 ablation deltas.
+#
+# Gemma-4 31B via OpenRouter → DeepInfra excluded 2026-04-19 as well.
+# Same class of provider-side issue: p95 per-step wall 660s (vs. Mistral
+# 155s / Qwen 350s), 12% valid-row rate in E0 (vs. Mistral 55% / Qwen 37%),
+# 0 learned skills across 13h. Tighter caps didn't help — Gemma's LLM
+# calls are fundamentally slow on its OR sub-provider. See
+# `docs/handoffs/HANDOFF_TEST_EVAL.md` methodology note for both drops.
+#
+# Configs for both excluded models remain in the repo; opt in via
+# explicit `model=kimi` or `model=gemma` arguments.
+ALL_MODELS=(mistral qwen)
 ALL_CONDITIONS=(c0 c2 c3 c4)
 
 [[ -n "$ONLY_MODEL" ]] && ALL_MODELS=("$ONLY_MODEL")

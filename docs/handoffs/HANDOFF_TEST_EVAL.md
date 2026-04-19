@@ -112,7 +112,7 @@ flowchart LR
 
 ## Matrix definition
 
-**Default matrix: 12 cells = 3 models × 4 conditions** (as of 2026-04-19; see "Kimi exclusion" below for the methodology note).
+**Default matrix: 8 cells = 2 models × 4 conditions** (as of 2026-04-19; see "Kimi exclusion" and "Gemma exclusion" below for methodology notes).
 
 | Condition | Meta-agent capability added | Configs / model slot |
 |-----------|------------------------------|----------------------|
@@ -125,7 +125,7 @@ flowchart LR
 |------------|----------------------|-------------------|-----------------------|---------------------|
 | **Mistral** | `mistral-small` (native La Plateforme) | $0.15 / $0.60 | `"required"` works | Dense ~24B; uses `MISTRAL_API_KEY`. |
 | **Qwen** | `or-qwen3.6-plus` (OpenRouter, D1) | $0.325 / $1.95 | **hybrid dispatch → "auto"** (Qwen-family prefix rule, D3) | Vision + 1M context. OR providers for the whole Qwen family reject `"required"`; hybrid dispatch + retry guard coax plain-text replies back into tool calls. |
-| **Gemma** (D4) | `or-gemma-4-31b-it` (OpenRouter paid) | $0.13 / $0.38 | `"required"` works directly (verified 2026-04-18) | Dense 31B, Apache 2.0, only non-MoE in the matrix. Provider pin `DeepInfra+Together` + `reasoning.enabled=false`; `:free` variant excluded (Google AI Studio lacks reliable `tools` + `required`). Per-stream concurrency capped at 4 (vLLM #39392 pad-parser bug). |
+| ~~**Gemma** (D4)~~ | ~~`or-gemma-4-31b-it` (OpenRouter paid)~~ | — | — | **EXCLUDED 2026-04-19.** See "Gemma exclusion" note below. Config files remain; opt-in via explicit `model=gemma`. |
 | ~~**Kimi**~~ | ~~`or-kimi-k2.5` (OpenRouter)~~ | — | — | **EXCLUDED 2026-04-19.** See "Kimi exclusion" note below. Config files remain; opt-in via explicit `model=kimi`. |
 
 ### Kimi exclusion (2026-04-19, methodology note)
@@ -140,6 +140,20 @@ Kimi K2.5 via the `or-kimi-k2.5` slug (OpenRouter → Moonshot AI provider pin) 
 **Paper language suggestion:** *"We excluded Kimi K2.5 from the evaluation matrix after persistent SSE streaming stalls on the OpenRouter→Moonshot AI routing path during E0 validation training (effective throughput ~9% after 5.8h, including a post-timeout cleanup deadlock requiring manual intervention). These are provider-side reliability issues; the other three models (Mistral Small 4, Qwen3.6-Plus, Gemma 4 31B) exhibited normal throughput and are retained for the full C0/C2/C3/C4 ablation."*
 
 **To re-enable Kimi** (e.g., after Moonshot AI stabilizes or for a follow-up study): pass `kimi` explicitly to `run_eval_matrix.sh` (`smoke kimi c0`, etc.) — the configs and registration remain in the repo.
+
+### Gemma exclusion (2026-04-19, methodology note)
+
+Gemma-4 31B via the `or-gemma-4-31b-it` slug (OpenRouter → DeepInfra+Together provider pin) was dropped from the default matrix mid-E0 after **13 hours of training produced only 8 valid rows (12% valid-row rate) and 0 learned skills**. Unlike Kimi — where the issue was SSE streaming stalls — Gemma's problem was **baseline per-step slowness on DeepInfra**:
+
+- **Per-step wall distribution** (from E0 training logs): p50=48s, p75=192s, p90=394s, **p95=660s**, max=2725s. For comparison: Mistral p95=155s, Qwen p95=350s. Gemma's p95 per step is 4–5× slower than the other matrix models.
+- **Effect:** even under tightened caps (`agent_config.max_steps=15`, `auto_browser_use_tool_config.max_steps=10`), a single Gemma planner step routinely ate 500–700s of the 1200s per-Q budget, leaving no wall for the remaining 14 steps. Result: per-Q 1200s timeout fired on 86% of Gemma's Qs.
+- **Retry loops amplified:** HTTP `Chat completion timed out after 120s` fired 126× on Gemma alone during E0 (vs. 1× for Mistral, 29× for Qwen in the same window). Each 120s timeout × 5 retry attempts = 600s wasted on a single stuck call; with planner caps of 15 and the Gemma step distribution, hitting the per-Q 1200s wall became near-certain.
+- **Not a code bug:** Gemma's config, registration, and tool_choice handling all work (Qs that did complete produced the correct 'Unable to determine' / answer). The issue is provider-side latency on DeepInfra's Gemma serving, which OR's `provider.order` pin does not mitigate.
+- **Dropped at E0 resume restart point** (2026-04-19 ~22:30 HKT), after 65 attempts over 13h. Matrix narrowed from 12 cells (3 models × 4 conditions) to **8 cells (2 models × 4 conditions)**.
+
+**Paper language suggestion:** *"Gemma 4 31B was additionally excluded after E0 training revealed provider-side per-step latency (DeepInfra p95 660s/step) incompatible with the per-question 1200s budget (12% valid-row rate, 0 learned skills in 13h). The final evaluation matrix retains Mistral Small 4 and Qwen3.6-Plus — a dense single-vendor model and a MoE multi-vendor-routed model — sufficient to support the C0/C2/C3/C4 ablation."*
+
+**To re-enable Gemma**: same pattern as Kimi — `model=gemma` explicit arg to `run_eval_matrix.sh`. The configs and registration remain in the repo.
 
 ### Browser step cap policy (2026-04-19)
 

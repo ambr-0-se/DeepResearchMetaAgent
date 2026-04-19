@@ -89,15 +89,33 @@ def filter_answers(answers_file):
     logger.info(f"Previous answers filtered! {len(answer_df)} -> {len(filttered_df)}")
 
 def get_tasks_to_run(answers_file, dataset) -> List[dict]:
-    
+
     data = dataset.data
 
     logger.info(f"Loading answers from {answers_file}...")
+    # DRA_RESUME_PRESERVE_ALL=1 opts out of filter_answers, which normally
+    # drops wrong/errored validation rows from the dra.jsonl and lets the
+    # resume re-attempt them. That default behavior:
+    #   (a) wastes budget (each rerun consumes per-Q timeout + tokens), and
+    #   (b) gives the model a second chance, which contaminates E0 skill
+    #       training — a harder question the model failed once should NOT
+    #       get to retry with a different (possibly successful) trajectory
+    #       that influences the learned skill library.
+    # With this flag, every prior attempt — correct, wrong, errored, or
+    # "Unable to determine" — counts as done and is skipped on resume.
+    # Use when fairness > retry-on-transient-failure.
+    preserve_all = os.environ.get("DRA_RESUME_PRESERVE_ALL", "").strip() in ("1", "true", "True", "yes")
     try:
         if os.path.exists(answers_file):
-            logger.info("Filtering answers starting.")
-            filter_answers(answers_file)
-            logger.info("Filtering answers ending.")
+            if preserve_all:
+                logger.info(
+                    "DRA_RESUME_PRESERVE_ALL=1: skipping filter_answers — "
+                    "every attempted task_id (any outcome) will be treated as done."
+                )
+            else:
+                logger.info("Filtering answers starting.")
+                filter_answers(answers_file)
+                logger.info("Filtering answers ending.")
 
             df = pd.read_json(answers_file, lines=True)
             if "task_id" not in df.columns:

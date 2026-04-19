@@ -112,7 +112,7 @@ flowchart LR
 
 ## Matrix definition
 
-16 cells = 4 models × 4 conditions:
+**Default matrix: 12 cells = 3 models × 4 conditions** (as of 2026-04-19; see "Kimi exclusion" below for the methodology note).
 
 | Condition | Meta-agent capability added | Configs / model slot |
 |-----------|------------------------------|----------------------|
@@ -124,9 +124,22 @@ flowchart LR
 | Model slot | Real slug (model_id) | Cost (in/out /M) | tool_choice handling | Rationale / caveats |
 |------------|----------------------|-------------------|-----------------------|---------------------|
 | **Mistral** | `mistral-small` (native La Plateforme) | $0.15 / $0.60 | `"required"` works | Dense ~24B; uses `MISTRAL_API_KEY`. |
-| **Kimi** | `or-kimi-k2.5` (OpenRouter) | free tier | `"required"` works after extra_body fix (thinking off) | `extra_body={thinking: disabled, provider.order: [Moonshot]}` pins routing so free-tier OR can't silently fall back to a sub-provider with diverging thinking semantics. Enables vision on GAIA image questions. |
 | **Qwen** | `or-qwen3.6-plus` (OpenRouter, D1) | $0.325 / $1.95 | **hybrid dispatch → "auto"** (Qwen-family prefix rule, D3) | Vision + 1M context. OR providers for the whole Qwen family reject `"required"`; hybrid dispatch + retry guard coax plain-text replies back into tool calls. |
 | **Gemma** (D4) | `or-gemma-4-31b-it` (OpenRouter paid) | $0.13 / $0.38 | `"required"` works directly (verified 2026-04-18) | Dense 31B, Apache 2.0, only non-MoE in the matrix. Provider pin `DeepInfra+Together` + `reasoning.enabled=false`; `:free` variant excluded (Google AI Studio lacks reliable `tools` + `required`). Per-stream concurrency capped at 4 (vLLM #39392 pad-parser bug). |
+| ~~**Kimi**~~ | ~~`or-kimi-k2.5` (OpenRouter)~~ | — | — | **EXCLUDED 2026-04-19.** See "Kimi exclusion" note below. Config files remain; opt-in via explicit `model=kimi`. |
+
+### Kimi exclusion (2026-04-19, methodology note)
+
+Kimi K2.5 via the `or-kimi-k2.5` slug (OpenRouter → Moonshot AI provider pin) was dropped from the default matrix after persistent SSE streaming stalls during **E0** validation training. Observations:
+
+- During the 5.8-hour initial E0 run, 232 `Chat completion timed out after 120s` warnings fired across the 4-model streams. 76 of those (~33%) were on Kimi alone, vs. 1 for Mistral, 29 for Qwen, 126 for Gemma.
+- More importantly, Kimi hit a **cleanup-deadlock pathology** after a per-question 1200s timeout fired on a browser question: the Python process wedged at 0% CPU for 58 minutes with no forward progress, Playwright driver + Chromium children leaking. Neither `Chat completion timed out` nor the outer `Per-question timeout` signal unwedged it (root cause: asyncio-CancelledError-during-in-flight-Playwright-operation did not drain cleanly; fix committed in `aa78edc` adds a `finally` block that force-calls `browser_agent.close()` with a 15s bound).
+- Even after the cleanup-deadlock fix, Kimi's effective throughput during E0 was ~9% (14 valid rows out of the first 47 attempted, since `run_gaia.py`'s `filter_answers` drops errored rows on resume). Projecting a full validation sweep would have taken ~15h wall on Kimi alone while the other three models were on track for ~10-12h each.
+- These are **provider-side reliability issues** (Moonshot AI via OpenRouter), not code issues on our side. The `_CHAT_COMPLETION_TIMEOUT_S=120s` + retry fix (`fbd0dd1`) catches the stalls uniformly, but the underlying SSE layer is too flaky to produce reliable E0-training signal — and the same flakiness would contaminate E3 test scoring at identical ratios.
+
+**Paper language suggestion:** *"We excluded Kimi K2.5 from the evaluation matrix after persistent SSE streaming stalls on the OpenRouter→Moonshot AI routing path during E0 validation training (effective throughput ~9% after 5.8h, including a post-timeout cleanup deadlock requiring manual intervention). These are provider-side reliability issues; the other three models (Mistral Small 4, Qwen3.6-Plus, Gemma 4 31B) exhibited normal throughput and are retained for the full C0/C2/C3/C4 ablation."*
+
+**To re-enable Kimi** (e.g., after Moonshot AI stabilizes or for a follow-up study): pass `kimi` explicitly to `run_eval_matrix.sh` (`smoke kimi c0`, etc.) — the configs and registration remain in the repo.
 
 ### Browser step cap policy (2026-04-19)
 

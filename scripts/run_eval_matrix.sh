@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
-# Parallel GAIA evaluation runner across the 4-models × 4-conditions matrix.
+# Parallel GAIA evaluation runner.
+#
+# DEFAULT MATRIX (2026-04-19 onward): 3 models × 4 conditions = **12 cells**
+# (mistral / qwen / gemma × C0/C2/C3/C4). Kimi K2.5 was dropped from the
+# default set after persistent OpenRouter→Moonshot AI SSE streaming stalls
+# during E0 validation training made its data unreliable. Kimi configs
+# remain in the repo — pass `model=kimi` explicitly to re-enable.
 #
 # Track naming (see docs/handoffs/HANDOFF_TEST_EVAL.md): **`smoke`** = integration
-# **I2** (16-cell validation matrix); **`full`** (default test split) = evaluation **E3**
-# submission when scoring the official matrix. C4 val training before E3 is **E0**
-# (`DATASET_SPLIT=validation`, `full '' c4`).
+# **I2** (12-cell default validation matrix); **`full`** (default test split) =
+# evaluation **E3** submission when scoring the official matrix. C4 val
+# training before E3 is **E0** (`DATASET_SPLIT=validation`, `full '' c4`).
 #
 # Strategy: 4 model streams run in parallel (different API keys, no rate-limit
 # contention between streams). WITHIN each model stream, the four conditions
 # C0/C2/C3/C4 run sequentially because they share one API key per model.
 #
 # Usage:
-#   # Smoke test — default 3 validation-split Q/cell, all 16 cells (4 model streams in parallel):
+#   # Smoke test — default 3 validation-split Q/cell, all 12 cells (3 model streams in parallel):
 #   bash scripts/run_eval_matrix.sh smoke
+#
+#   # Include Kimi (opt-in — slow/flaky on OR):
+#   bash scripts/run_eval_matrix.sh smoke kimi
 #
 #   # Full test-split submission run (NO max_samples cap, default split=test):
 #   bash scripts/run_eval_matrix.sh full
@@ -83,13 +92,22 @@ fi
 
 # Shared run id for every cell in this invocation. Every generated config
 # reads this env var (with a fresh-timestamp fallback at config load) to
-# stamp its output directory. Exporting it here guarantees all 16 cells of
-# one matrix invocation share a single RUN_ID so results correlate cleanly.
+# stamp its output directory. Exporting it here guarantees all 12 cells of
+# one default matrix invocation share a single RUN_ID so results correlate cleanly.
 # Without it each cell would generate its own timestamp. Operators resume
 # a prior run by exporting DRA_RUN_ID before invocation.
 export DRA_RUN_ID="${DRA_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 
-ALL_MODELS=(mistral kimi qwen gemma)
+# Kimi excluded from the default model set as of 2026-04-19. The
+# OpenRouter→Moonshot AI route exhibited persistent SSE streaming stalls
+# during E0 training (58-min post-timeout cleanup deadlocks, 9% effective
+# throughput across 5.8h). Provider-side reliability issues — outside our
+# code's control — would have carried into E3 test scoring and contaminated
+# the C0/C2/C3/C4 ablation deltas. Kimi configs remain in the repo and can
+# be re-enabled by passing model=kimi explicitly (e.g., `smoke kimi c0`);
+# they are just not run by default. See `docs/handoffs/HANDOFF_TEST_EVAL.md`
+# methodology note and HANDOFF_INDEX.md commit row for full rationale.
+ALL_MODELS=(mistral qwen gemma)
 ALL_CONDITIONS=(c0 c2 c3 c4)
 
 [[ -n "$ONLY_MODEL" ]] && ALL_MODELS=("$ONLY_MODEL")

@@ -16,6 +16,7 @@ task. Same logic in both paths so results align.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -28,6 +29,47 @@ from pathlib import Path
 DRA_RUN_ID = "20260420_E0v3"
 MODELS = ["mistral", "qwen"]
 STATE_FILE = Path("workdir/E0_MONITORING_STATE.jsonl")
+
+# --- Official GAIA scorer (lazy isolated import) -------------------------
+# Importing `src.metric.gaia_scorer` via the package path pulls in
+# `src/__init__.py`, which imports `crawl4ai` (not always installed in the
+# env that invokes this monitor). Load the scorer module directly so the
+# monitor stays self-contained and read-only.
+_SCORER_PATH = Path(__file__).resolve().parent.parent / "src" / "metric" / "gaia_scorer.py"
+_spec = importlib.util.spec_from_file_location("gaia_scorer_iso", _SCORER_PATH)
+_gs = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_gs)  # type: ignore[union-attr]
+_official_scorer = _gs.question_scorer
+
+
+def _is_correct_official(pred: str, truth: str) -> bool:
+    """Official GAIA scorer, with warnings suppressed for length-mismatch
+    lists (expected noise, not signal)."""
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return bool(_official_scorer(pred, truth))
+    except Exception:
+        return False
+
+
+_GAVE_UP_RE = re.compile(r"unable to determine|i cannot determine|cannot be determined", re.I)
+
+
+def _classify_wrong(pred: str, truth: str) -> str:
+    """Categorize a wrong (non-errored) answer row."""
+    if not pred:
+        return "empty_prediction"
+    if _GAVE_UP_RE.search(pred):
+        return "gave_up"
+    # "Close under lax": official scorer said wrong, but a strip+lower match
+    # would flip it. This catches residual format brittleness the official
+    # normalizer missed (should be rare — the official scorer already strips
+    # whitespace + punctuation for strings).
+    if pred.strip().lower() == truth.strip().lower():
+        return "format_near_miss_lax"
+    return "genuine_wrong"
 
 
 def _read_rows(m: str) -> list:
@@ -64,7 +106,12 @@ def _recent_activity(m: str) -> str:
     if not p.exists():
         return "<no stream log>"
     try:
-        tail = subprocess.getoutput(f"tail -200 {p!s}")
+        # Use list args to avoid shell-quoting issues on paths with spaces
+        # (the project root contains "APAI4799 MetaAgent").
+        tail = subprocess.run(
+            ["tail", "-200", str(p)],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
     except Exception:
         return "<tail failed>"
     # Find last line that isn't MCP JSON-RPC noise
@@ -92,35 +139,73 @@ def _caffeinate_count() -> int:
 def snapshot() -> dict:
     now = datetime.now(timezone.utc)
     snap: dict = {"timestamp": now.isoformat(timespec="seconds"), "dra_run_id": DRA_RUN_ID, "models": {}}
+    wrong_task_ids_by_model: dict[str, set] = {}
+
     for m in MODELS:
         rows = _read_rows(m)
         err = sum(1 for r in rows if r.get("agent_error"))
         cap = sum(1 for r in rows if r.get("iteration_limit_exceeded"))
+
         correct = 0
+        wrong_buckets: Counter = Counter()
+        wrong_task_ids: set = set()
+        wrong_examples: list = []
+
         for r in rows:
             if r.get("agent_error"):
                 continue
-            pred = str(r.get("prediction") or "").strip().lower()
-            truth = str(r.get("true_answer", "")).strip().lower()
-            if pred and pred == truth:
+            pred = str(r.get("prediction") or "").strip()
+            truth = str(r.get("true_answer") or "").strip()
+            if not pred or not truth:
+                continue
+            if _is_correct_official(pred, truth):
                 correct += 1
-        error_types = Counter()
+            else:
+                category = _classify_wrong(pred, truth)
+                wrong_buckets[category] += 1
+                tid = str(r.get("task_id") or "")
+                if tid:
+                    wrong_task_ids.add(tid)
+                # Keep a small rotating sample for the report (max 3).
+                if len(wrong_examples) < 3:
+                    wrong_examples.append({
+                        "task_id": tid[:8],
+                        "category": category,
+                        "pred": pred[:50],
+                        "truth": truth[:50],
+                    })
+
+        wrong_task_ids_by_model[m] = wrong_task_ids
+
+        error_types: Counter = Counter()
         for r in rows:
             e = r.get("agent_error")
             if e:
                 error_types[str(e)[:80]] += 1
+
         seeded, learned = _count_skills(m)
         snap["models"][m] = {
             "rows": len(rows),
-            "correct": correct,
+            "correct": correct,  # OFFICIAL GAIA scorer (type-aware normalization)
             "errored": err,
             "iter_limit_hit": cap,
             "seeded_count": seeded,
             "learned_count": learned,
             "evolution_log_entries": _evolution_log_len(m),
             "error_types": dict(error_types),
+            "wrong_buckets": dict(wrong_buckets),
+            "wrong_examples": wrong_examples,
             "recent_activity": _recent_activity(m),
         }
+
+    # Cross-model shared-wrong task_ids — the "inherently hard" set and a
+    # direct signal for the C4 skill library's value add.
+    if len(MODELS) >= 2:
+        shared = set.intersection(*wrong_task_ids_by_model.values()) if wrong_task_ids_by_model else set()
+        snap["shared_wrong_task_ids"] = sorted(shared)
+    else:
+        snap["shared_wrong_task_ids"] = []
+
     snap["procs_alive"] = _proc_count()
     snap["caffeinate_assertions"] = _caffeinate_count()
     return snap
@@ -191,8 +276,23 @@ def main() -> int:
         cap = fmt_delta(cur["iter_limit_hit"], prev_m.get("iter_limit_hit"))
         learned = fmt_delta(cur["learned_count"], prev_m.get("learned_count"))
         print(
-            f"[{m:7s}] rows={rows}/80  correct={ok}  errored={err}  cap_hit={cap}  learned_skills={learned}  evol_log={cur['evolution_log_entries']}"
+            f"[{m:7s}] rows={rows}/80  correct={ok}(official)  errored={err}  cap_hit={cap}  learned_skills={learned}  evol_log={cur['evolution_log_entries']}"
         )
+
+        # Wrong-answer bucket breakdown (non-errored rows the official scorer
+        # marked wrong). Primary signal for fixable vs inherent-difficulty.
+        wb = cur.get("wrong_buckets", {})
+        if wb:
+            total_wrong = sum(wb.values())
+            bucket_str = "  ".join(f"{k}={v}" for k, v in sorted(wb.items(), key=lambda x: -x[1]))
+            print(f"         wrong (non-err, n={total_wrong}): {bucket_str}")
+            # Show up to 3 representative wrong examples — helps spot drift
+            # in failure mode without opening the dra.jsonl.
+            for ex in cur.get("wrong_examples", [])[:3]:
+                print(
+                    f"           {ex['category']:22s} {ex['task_id']}  pred={ex['pred']!r} vs truth={ex['truth']!r}"
+                )
+
         top = sorted(cur["error_types"].items(), key=lambda x: -x[1])[:3]
         if top:
             print(f"         top errors:")
@@ -203,6 +303,18 @@ def main() -> int:
             for e in new_errors[m]:
                 print(f"           + {e!r}")
         print(f"         last_activity: {cur['recent_activity']}")
+
+    # Cross-model analysis — the C4 skill-library-target set.
+    shared = snap.get("shared_wrong_task_ids", [])
+    if shared:
+        prev_shared = set(prev.get("shared_wrong_task_ids", []) if prev else [])
+        new_shared = [t for t in shared if t not in prev_shared]
+        print(
+            f"cross-model: {len(shared)} task_ids wrong under BOTH models "
+            f"(C4 skill-library target set){'  +' + str(len(new_shared)) + ' new' if new_shared else ''}"
+        )
+        for tid in shared[:5]:
+            print(f"           {tid[:8]}")
 
     # Alarms
     alarms = []

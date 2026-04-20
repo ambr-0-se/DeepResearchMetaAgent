@@ -84,9 +84,54 @@ For each model with N_infra > 0, Phase 2 produces:
 
 After Phase 2 completes, this handoff is updated with final match counts and outcomes (OK / still-infra / timeout / other) per model, preserving the git history of the pre-registration.
 
+## Final outcomes (post-Phase 2, 2026-04-20 21:25 HKT)
+
+### Execution
+
+- **Phase 1 complete** at 21:09 HKT (Mistral) / 21:09 HKT (Qwen) — both models at 80/80 rows.
+- **Phase 2 launched** at 19:12 HKT for Mistral (parallel with Qwen Phase 1 tail — safe per per-model workdir isolation). Script: `scripts/rerun_e0_infra_errors.sh mistral`.
+- **Phase 2 complete** at 21:25 HKT for Mistral. Qwen Phase 2 was a no-op (0 matches, rule applied symmetrically).
+- **Wall clock Phase 2**: ~2h13m for 16 re-attempts at concurrency=4.
+
+### Artifacts
+
+- `workdir/gaia_c4_mistral_20260420_E0v3/dra.jsonl.pre_rerun_20260420_191202.bak` — pre-Phase-2 80-row snapshot
+- `workdir/gaia_c4_mistral_20260420_E0v3/skills.pre_rerun_20260420_191202/` — skill library at Phase 2 launch (6 learned + 7 seed)
+- `workdir/run_logs/rerun_infra_mistral_20260420_191202.log` — Phase 2 launcher log
+- `workdir/run_logs/full_mistral.log` — continued stream log (appended)
+
+### Per-task outcomes — Mistral's 16 re-attempts
+
+Classified via official GAIA scorer + pre-registered infra regex:
+
+| Outcome | Count | % | Task IDs |
+|---------|-------|---|----------|
+| **CORRECT** (newly recovered) | **3** | 18.75% | `a3fbeb63`, `4b650a35`, `4d0aa727` |
+| Wrong (model attempted, missed) | 3 | 18.75% | `3cef3a44`, `0383a3ee`, `e9a2c537` |
+| Gave-up (`Unable to determine`) | 2 | 12.50% | `65afbc8a`, `5cfb274c` |
+| Timeout 1800s (full budget consumed) | 8 | 50.00% | `544b7f0c`, `ecbc4f94`, `72e110e7`, `8131e2c0`, `5b2a14e8`, `ebbc1f13`, `5d0080cb`, `87c610df` |
+| **Still-infra (re-attempt re-failed)** | **0** | **0%** | — |
+| Other errors | 0 | 0% | — |
+
+All 16 rows produced non-zero intermediate steps this time (vs 0 steps on original Phase 1 infra-failure), confirming the re-attempts were substantive. The provider outage (08:28–09:25 HKT cluster) is no longer observable in the stack.
+
+### Aggregate impact on E0 v3 scores
+
+| Model | Condition | Correct (before / after Phase 2) | Errors (before / after Phase 2) |
+|-------|-----------|----------------------------------|--------------------------------|
+| Mistral | C4 | 8 / **11** (+3) | 55 (incl. 16 infra) / 47 (0 infra) |
+| Qwen | C4 | 16 / 16 (no-op) | 54 (0 infra) / 54 |
+
+### Methodology conformance
+
+- Regex applied unchanged from pre-registration (no edits after seeing outcomes).
+- One re-attempt per row; no second re-attempts on the 13 non-correct outcomes.
+- No retargeting: the 16 dropped task_ids exactly matched the max_samples=16 slice after shuffle+done_questions filter (shuffle invariant verified in launch log: `Found 64 previous results! | Limited to 16 tasks (max_samples=16)`).
+- Rule applied symmetrically: Qwen's 0-match result is an honest reflection of provider reliability during E0 (no carve-out).
+
 ## Files touched by Phase 2
 
-- `scripts/rerun_e0_infra_errors.sh` (new) — one-shot launcher; written after Phase 1 completes.
+- `scripts/rerun_e0_infra_errors.sh` (new) — one-shot launcher; written 2026-04-20 after Phase 1 completion verified.
 - `workdir/gaia_c4_mistral_20260420_E0v3/dra.jsonl` (in-place rewrite + backup)
 - `workdir/gaia_c4_qwen_20260420_E0v3/dra.jsonl` (unchanged; no matches)
 

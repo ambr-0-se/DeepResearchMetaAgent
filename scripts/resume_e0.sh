@@ -79,24 +79,43 @@ for m in mistral qwen; do
   [ -f "$f" ] && printf "  %-8s %4s rows\n" "$m" "$(wc -l <"$f")" || printf "  %-8s no dra.jsonl yet\n" "$m"
 done
 
+# Target rows per model. E0 v3 methodology: 80 Qs per (model, C4) cell
+# on the shuffled validation subsample.
+TARGET_PER_MODEL=80
+
 # Launch.
 #   PATH prefix = dra bin    → MCP subprocess "python" resolves to dra.
 #   PYTHON=dra py            → the outer launcher uses the right interpreter.
 #   DRA_RESUME_PRESERVE_ALL  → skip filter_answers; no reruns of prior attempts.
-#   FULL_CFG_OPTIONS         → seed=42 shuffle, cap 80 per stream.
 #   DATASET_SPLIT=validation → required by run_eval_matrix strict-guard.
-PATH="$DRA_BIN_DIR:$PATH" \
-DRA_RUN_ID="$DRA_RUN_ID" \
-DATASET_SPLIT=validation \
-PYTHON="$DRA_PY" \
-DRA_RESUME_PRESERVE_ALL=1 \
-FULL_CFG_OPTIONS="max_samples=80 dataset.shuffle=True dataset.seed=42" \
-  nohup bash scripts/run_eval_matrix.sh full '' c4 >"$LOG" 2>&1 &
+#   Per-model max_samples    → dynamically computed from current row count
+#                              so we stop at TARGET_PER_MODEL total (not
+#                              TARGET_PER_MODEL *new* past what's already done).
+#                              Required because run_gaia.py's max_samples
+#                              slices the REMAINING tasks after excluding
+#                              done_questions.
+LAUNCH_TS="$(date +%H%M%S)"
+for model in mistral qwen; do
+  dra_jsonl="workdir/gaia_c4_${model}_${DRA_RUN_ID}/dra.jsonl"
+  done_rows=0
+  [ -f "$dra_jsonl" ] && done_rows=$(wc -l <"$dra_jsonl" | tr -d ' ')
+  remaining=$(( TARGET_PER_MODEL - done_rows ))
+  if [ "$remaining" -le 0 ]; then
+    echo "[resume_e0] $model: already at $done_rows/$TARGET_PER_MODEL — skipping launch"
+    continue
+  fi
+  echo "[resume_e0] $model: $done_rows done, will attempt up to $remaining more (target $TARGET_PER_MODEL)"
+  model_log="workdir/run_logs/launcher_${model}_${LAUNCH_TS}.log"
+  PATH="$DRA_BIN_DIR:$PATH" \
+  DRA_RUN_ID="$DRA_RUN_ID" \
+  DATASET_SPLIT=validation \
+  PYTHON="$DRA_PY" \
+  DRA_RESUME_PRESERVE_ALL=1 \
+  FULL_CFG_OPTIONS="max_samples=${remaining} dataset.shuffle=True dataset.seed=42" \
+    nohup bash scripts/run_eval_matrix.sh full "$model" c4 >"$model_log" 2>&1 &
+  disown
+  echo "[resume_e0] $model: launched, log=$model_log"
+done
 
-LAUNCH_PID=$!
-disown
-
-echo "[resume_e0] launched pid=$LAUNCH_PID"
-echo "[resume_e0] tail the log:  tail -f $LOG"
 echo "[resume_e0] tail streams:  tail -f workdir/run_logs/full_{mistral,qwen}.log"
 echo "[resume_e0] monitor tick:  $DRA_PY scripts/monitor_tick.py"

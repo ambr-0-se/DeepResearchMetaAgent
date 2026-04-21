@@ -68,8 +68,8 @@ flowchart LR
 | **I2** | 16-cell integration smoke | `sbatch run_matrix_slurm.sh smoke` |
 | **I3** | C4 E2E integration (subset → snapshot → few Q, **one model**, default Mistral) | `bash scripts/integration_i3_c4_pipeline.sh` |
 | **E0** | C4 val train (full val, **four** models) | `DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c4` |
-| **E1** | Snapshot trained `skills/` after E0 | `cp -a` loop → `workdir/c4_trained_libraries/{model}_skills` |
-| **E2** | Farm freeze smoke (four models, real libraries) | per-model `sbatch` loop with `agent_config.*` overrides |
+| **E1** | Snapshot trained `skills/` after E0 | `cp -a` loop → `workdir/c4_trained_libraries/<model>_skills_v<N>` (bump `N` each E0 iteration) |
+| **E2** | Freeze smoke (local `scripts/launch_e2_freeze_smoke.sh` or farm `sbatch` loop, real libraries) | `agent_config.skills_dir=<snapshot> agent_config.enable_skill_extraction=False` |
 | **E3** | Test-split submission (16 cells) | `DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' {c0,c2,c3}` (one per condition — matrix runner refuses the all-4-conditions shape on test to prevent C4 train-on-test) + per-model frozen C4 via `examples/run_gaia.py` with `agent_config.enable_skill_extraction=False` |
 
 ---
@@ -100,8 +100,8 @@ flowchart LR
 - [ ] **I3** (optional, recommended when C4 code/config changes): `bash scripts/integration_i3_c4_pipeline.sh` — one-model C4 subset train → snapshot → freeze few-Q smoke under `workdir/c4_i3_*` (does not touch `c4_trained_libraries/`)
 - [ ] **E0** C4 validation training (see §E0 — C4 val train) — **required** before scored **C4** on `test` (four parallel model jobs)
 - [ ] **E1 — snapshot after E0** — `cp -a` each C4 `skills/` into
-      `workdir/c4_trained_libraries/{model}_skills` (§E0 / §E1)
-- [ ] **E2** farm-side freeze smoke (~30 min): 3-Q × 4 models, `agent_config.*` freeze overrides
+      `workdir/c4_trained_libraries/<model>_skills_v<N>` (§E1)
+- [ ] **E2** freeze smoke (~30 min, local `scripts/launch_e2_freeze_smoke.sh` or farm `sbatch` loop): `agent_config.*` freeze overrides against the `_skills_v<N>` snapshot. See `HANDOFF_E1_E2_RESULTS.md` for the 2026-04-20 pass and known findings (timeout overshoot, non-invocation of `activate_skill` on the 3-Q sample).
 - [ ] **E3** test-split submission: one `DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' <cN>` per C0/C2/C3, plus per-model frozen C4 via `examples/run_gaia.py` (see §E3). The matrix runner refuses the all-4-conditions shape on test by design.
 - [ ] Collect `dra.jsonl` → run `scripts/analyze_results.py` per cell
 - [ ] `bash scripts/validate_handoffs.sh <DRA_RUN_ID>` → attach pass/info
@@ -460,17 +460,51 @@ farm C4 Train pass is still the first end-to-end test of real skill
 extraction + later freeze. Reserve the 1 h budget slot mentioned in
 "Known unknowns" for that.
 
-### E2 — Farm-side freeze smoke (~30 min, ~$0.80) — recommended before E3
+### E1 — Snapshot after E0
 
-Integration test: the Mac validation above proved the *mechanism*; this
-step proves the same override also holds on the HKU CS farm environment
-(`conda activate dra` instead of the Mac `python` workaround) and against
-a genuinely-trained library (seeds + newly-extracted skills), **before**
-committing the 8–24 h, $30–100 **E3** scored run.
+> **Executed 2026-04-20.** Snapshots live at `workdir/c4_trained_libraries/mistral_skills_v3/` (14 / 7 seeded + 7 learned) and `workdir/c4_trained_libraries/qwen_skills_v3/` (9 / 7 seeded + 2 learned). Provenance + raw counts in `HANDOFF_E1_E2_RESULTS.md` §E1.
 
-**Inputs:** requires **E1** (snapshot after **E0**; formerly “post–S2 snapshot”) to have
-completed, so `workdir/c4_trained_libraries/{mistral,kimi,qwen,gemma}_skills/`
-exist and each contains the `.seeded` marker.
+Cheap, one-shot copy from each E0 `skills/` into the pinned
+`c4_trained_libraries/<model>_skills[_v<N>]` path E2 / E3 point at. Must
+run **after** every E0 re-run (including Phase-2 re-attempts) so the
+snapshot reflects the final extractor state. Use `cp -a` (preserves the
+`.seeded` marker → no re-seed when E2 mounts it):
+
+```bash
+for m in mistral qwen; do          # add kimi / gemma if re-enabled
+  src="workdir/gaia_c4_${m}_${TRAIN_RUN_ID}/skills"
+  dst="workdir/c4_trained_libraries/${m}_skills_v${N}"   # bump N per E0 revision
+  [ -d "$src" ] || { echo "MISSING $src — refusing"; exit 2; }
+  [ -d "$dst" ] && { echo "REFUSING to overwrite $dst — pick a fresh v-suffix"; exit 2; }
+  cp -a "$src" "$dst"
+  [ -f "$dst/.seeded" ] || echo "WARN: $dst missing .seeded marker"
+done
+```
+
+Naming convention: `_skills_v1`, `_skills_v2`, … bumps each E0 iteration so
+historic snapshots stay inspectable. E2 / E3 operators must match the
+version suffix in their `agent_config.skills_dir=…` override — the matrix
+runner has no idea which snapshot is current.
+
+### E2 — Freeze smoke (local or farm; ~30 min, ~$0.80) — recommended before E3
+
+> **First E2 pass executed 2026-04-20 (local, Mac). Results + two blocking findings in `HANDOFF_E1_E2_RESULTS.md`.** The SLURM block below is retained for the farm-side variant; the local-side launcher `scripts/launch_e2_freeze_smoke.sh` is the Mac equivalent.
+
+Integration test: the Mac validation of the `--cfg-options` override proved the
+*mechanism*; this step proves the same override still holds when the library
+is a genuinely-trained E1 snapshot (seeds + learned skills), **before**
+committing the 8–24 h, $30–100 **E3** scored run. May be run either on the
+farm (SLURM block below) or locally via
+`scripts/launch_e2_freeze_smoke.sh` (nohup + caffeinate, Mistral + Qwen in
+parallel). The farm variant adds a few extra pass criteria
+(canary skill, pre/post body diff) — prefer the farm path whenever the farm
+is available; the local path was used in 2026-04 because farm access was
+constrained.
+
+**Inputs:** requires **E1** (see §E1 below) to have completed, so
+`workdir/c4_trained_libraries/{mistral,qwen}_skills_v3/` exist and each
+contains the `.seeded` marker. Add `kimi` / `gemma` to the list only if
+those models are being re-enabled per §Matrix definition.
 
 **Cost caps** (applied inline via `--cfg-options` — important; the Mac
 dry run spent ~15 min on a single CAPTCHA retry loop because defaults

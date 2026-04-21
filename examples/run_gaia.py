@@ -224,6 +224,15 @@ async def answer_single_question(config, example):
                         f"complete in {CLEANUP_GRACE_SECS}s — abandoning. "
                         f"Proceeding with next task."
                     )
+                    # Silence asyncio's "Task was destroyed but it is
+                    # pending!" warning that would otherwise fire at
+                    # event-loop shutdown. The task continues to run in
+                    # the background, bounded by the already-landed HTTP
+                    # + browser cleanup timeouts (see CLEANUP_GRACE_SECS
+                    # docstring above). This callback registers an
+                    # acknowledgement so asyncio considers the task
+                    # "retrieved" even though we intentionally drop it.
+                    agent_task.add_done_callback(lambda _t: None)
                 # Re-raise to hand control to the outer TimeoutError branch,
                 # preserving the exact log message + state-mutation semantics
                 # the pre-change code produced.
@@ -351,14 +360,17 @@ async def main():
     # With a semaphore + TaskGroup, as soon as any worker finishes the
     # next queued task starts — straggler stalls go away.
     #
-    # Safety: `answer_single_question` has perfect exception containment
-    # (every path writes a jsonl row and returns implicit None; no
-    # exception escapes). The `_bounded` wrapper below ALSO catches
-    # Exception defensively — if an unexpected error ever escaped the
-    # worker it would otherwise propagate into TaskGroup, which cancels
-    # siblings on any unhandled exception. Catching Exception (NOT
-    # BaseException) keeps CancelledError propagation intact so Ctrl-C
-    # still cancels the whole run.
+    # Safety: `answer_single_question` handles its own exceptions on all
+    # currently-reachable paths (every path writes a jsonl row via
+    # `append_answer` before returning). The real safety net, though, is
+    # `_bounded` below — it catches anything unhandled so TaskGroup
+    # cannot cancel siblings on a crashed worker. A future change to
+    # `answer_single_question` (e.g. a new exception raised from
+    # `_serialize_steps` or `append_answer` itself) would still be
+    # contained by `_bounded`'s `except Exception` without needing
+    # `answer_single_question` to be audited again. Catching Exception
+    # (NOT BaseException) keeps CancelledError propagation intact so
+    # Ctrl-C still cancels the whole run.
     concurrency = max(1, int(getattr(config, "concurrency", 4)))
     sem = asyncio.Semaphore(concurrency)
 

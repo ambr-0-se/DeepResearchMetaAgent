@@ -1,6 +1,9 @@
 # Throughput + timeout-enforcement refactor — implementation plan
 
-**Status:** PRE-REGISTERED (2026-04-21) — not yet landed.
+**Status:** ALL FOUR PHASES LANDED (2026-04-22). Unit tests green across the
+full 140-test sweep + 43 new tests; smoke re-run with all phases active
+pending (see "Execution log" below). Original pre-registration kept intact
+below for audit.
 **Goal:** make E3 cost/time projections trustworthy and cut wall time on Mistral's rate-limit-bound cells.
 **Scope:** four phases, landed in strict order. Each is independently useful; each has its own smoke gate before promoting.
 **Out of scope:** A.2 (extraction on timeout) — dropped per 2026-04-21 decision; no E0 re-run planned, so E2/E3's frozen-library path never triggers extraction.
@@ -566,3 +569,49 @@ Capture before/after for each phase on the same smoke (`launch_e2_freeze_smoke.s
 - P2: any task from the smoke is missing from the jsonl (dropped by TaskGroup).
 - P3: any 429 appears in the Qwen smoke log at concurrency=8.
 - P4: Mistral smoke raises a new class of error not seen at concurrency=4/single-key.
+
+---
+
+## Execution log (2026-04-22)
+
+### P1 — landed `5aa1467` (+ index row `803a7ab`)
+
+Files: `examples/run_gaia.py`, `tests/conftest.py` (new), `tests/test_run_gaia_timeout.py` (new).
+
+Implementation variance from the plan: during test-driven iteration I discovered that the first cleanup wait I wrote (`asyncio.wait_for(agent_task, timeout=CLEANUP_GRACE_SECS)`) re-introduced the exact pathology it was guarding against — Python 3.11's `wait_for` on timeout cancels the inner and awaits its completion, which hangs for a task swallowing `CancelledError`. Fix: add a second `asyncio.shield(agent_task)` around the inner wait too so the cleanup wait is strictly bounded. Without it the `test_hard_cap_on_cancel_ignoring_task` test ran 10 s against a 4 s expected upper bound. With the shield it passes in ~3 s. Documented inline in the `except asyncio.TimeoutError:` block.
+
+All 3 P1 tests pass in ~6.3 s. 140-test sweep green.
+
+### P2 — landed `89f3bf0` (+ index row `b52bbb9`)
+
+Files: `examples/run_gaia.py`, `tests/test_run_gaia_worker_pool.py` (new).
+
+No design variance. 4 new tests pass in ~1 s (slow test gated at ~0.8 s wall for the straggler scenario). 140-test sweep green.
+
+### P3 — landed `1b9f82c` (+ index row `653fbb9`)
+
+Files: `scripts/gen_eval_configs.py`, `configs/config_gaia_c{0,2,3,4}_{mistral,kimi,qwen,gemma}.py` (all 16 regenerated), `tests/test_gen_eval_configs_concurrency.py` (new).
+
+Diff against the pre-P3 tracked state: 4 Qwen configs now emit `concurrency = 8`; non-Qwen configs show only a comment refresh (regenerator's timeout-pin paragraph wording slightly newer) — behavioural values unchanged for Mistral / Kimi / Gemma. 17 new tests (16 parametrised `condition × model` + 1 defensive on the MODELS tuple shape) pass in <0.1 s.
+
+### P4 — landed `d4197fd` (+ index row `5d85155`)
+
+Files: `src/models/openaillm.py`, `src/models/models.py`, `.env.template`, `tests/test_key_rotation.py` (new).
+
+Implementation variance:
+- `_load_suffix_keys` scans contiguously (stops at first unset). The pre-reg doc had been ambiguous between contiguous-only and scan-all; I chose contiguous because a sparse `_4` with `_3` unset is more likely an operator mistake than intent.
+- LangChain wrapper is a pure delegator (not `ChatOpenAI` subclass) — Pydantic fields on `ChatOpenAI` make attribute overrides brittle. `__getattr__` fallback to `_instances[0]` covers `bind_tools` etc. with a documented caveat: returned bound-tool instances are locked to instance 0 and don't rotate. Acceptable because browser-use binds once per agent construction, not per question.
+- Tests use real `httpx.Response` + `openai.RateLimitError` (not `SimpleNamespace`) because the SDK constructor inspects `response.request`.
+
+19 new tests pass in ~7 s; all 43 new tests across P1-P4 pass together in ~12.6 s. 140-test handoff sweep unchanged.
+
+### Combined smoke (pending)
+
+Deferred to the operator's next live pass: run `bash scripts/launch_e2_freeze_smoke.sh` with both `MISTRAL_API_KEY` and `MISTRAL_API_KEY_2` set; capture the measurements contract described in "Cross-cutting concerns → Measurement contract". Expected signals:
+
+- **P1:** every timeout row `end_time − start_time ≤ 1830 s` (was 3273–3308 s).
+- **P2:** total wall ≤ `max(per-Q wall)` for the 6-Q sample (vs. sum-of-batch-maxes before).
+- **P3:** Qwen at c=8 finishes the 3 fixed Qs in ≤70 % of the c=4 baseline; zero 429 in the Qwen log.
+- **P4:** Mistral `Chat completion timed out after 120s` count drops ≥30 % from pre-P4 baseline; no new error class.
+
+The operator should append the measured numbers to this section under a new "Combined smoke (executed)" subheading after the run.

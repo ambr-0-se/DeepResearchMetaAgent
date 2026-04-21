@@ -128,9 +128,9 @@ Kimi and Gemma are excluded from the active matrix (see `HANDOFF_TEST_EVAL.md` �
 
 ## Blockers before E3
 
-1. **F1 (timeout enforcement)** — must land before E3. Proposed fix: §A.1 in session plan (hard wall-clock guard in `run_gaia.py`). Without it, the 8–24 h E3 estimate is off by 1.5–2× in the worst case.
-2. **F3 (extraction on timeout)** — not strictly required for E3 (E3 freezes extraction), but worth landing before any future E0 re-run. Proposed fix: §A.2 in session plan.
-3. **Re-run E2 with F1 fixed and a 10–15 question sample + canary.** Repeat pass #4 specifically — if `activate_skill` is still not invoked at a meaningful rate, revisit prompt phrasing before E3.
+1. **F1 (timeout enforcement)** — ✅ **ADDRESSED 2026-04-22 by P1 of `HANDOFF_THROUGHPUT_REFACTOR.md` (commit `5aa1467`).** Hard wall-clock guard caps each question at `per_question_timeout_secs + CLEANUP_GRACE_SECS=30` via an explicit `asyncio.create_task` + double `asyncio.shield` pattern. Combined-phase smoke re-run still pending to measure the observable wall-time delta.
+2. **F3 (extraction on timeout)** — ❌ **deliberately not fixed.** Operator confirmed 2026-04-21 no E0 re-run planned; E2/E3 freeze extraction so the `_maybe_extract_skill` branch never fires in the active roadmap. Covered by a methodology footnote in the paper instead. If a future ablation re-enables extraction, reopen this via the session-plan §A.2 sketch.
+3. **Re-run E2 with F1 fixed and a 10–15 question sample + canary.** Still recommended. Combine with the `HANDOFF_THROUGHPUT_REFACTOR.md` §Execution log → "Combined smoke (pending)" in a single pass to amortize setup.
 
 ## Items explicitly not blockers
 

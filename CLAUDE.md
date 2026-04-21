@@ -215,7 +215,11 @@ Models are managed through `model_manager` (`src/models/`). Supported:
 - Files: `configs/config_gaia_<c0|c2|c3|c4>_<mistral|kimi|qwen|gemma>.py`.
 - **Active matrix** (as of 2026-04-19): Mistral + Qwen only. Kimi was excluded after persistent OpenRouter→Moonshot SSE stalls during E0 v1 (see `HANDOFF_TEST_EVAL.md` §Kimi exclusion); Gemma was excluded 2026-04-19 (see §Gemma exclusion). Their configs remain in the tree and can be re-enabled per-invocation via `run_eval_matrix.sh smoke|full kimi <cond>` etc.
 - Single-model constraint: every agent + tool in a given config uses the same `model_id`. Qwen configs use `or-qwen3.6-plus` (OpenRouter) for the hybrid `tool_choice` dispatch — the Qwen-family prefix rule downgrades `required` → `auto`.
+- **Per-model `concurrency` defaults** (baked into each generated config via `scripts/gen_eval_configs.py`'s `MODELS` tuple): Qwen=8 (post-P3 2026-04-22, after E0 v3 showed 0×429 in 3,006 calls at 4); Mistral / Kimi / Gemma = 4.
+- **Mistral multi-key round-robin (P4, 2026-04-22):** set `MISTRAL_API_KEY_2` (and optionally `_3`…`_8`) alongside `MISTRAL_API_KEY` in `.env` to auto-switch the native + LangChain registrations to `KeyRotatingOpenAIServerModel` + `KeyRotatingChatOpenAI`. Scans suffixes contiguously — stops at the first unset. With 1 key the existing single-client path is taken unchanged (no behavioural diff).
 - Parallel runner: `scripts/run_eval_matrix.sh smoke|full [model] [condition]` — runs selected model streams in parallel (default = active matrix, i.e. 2 streams), conditions sequential within each stream.
+- **Per-question timeout enforcement (P1, 2026-04-22):** `examples/run_gaia.py` hard-caps each question at `per_question_timeout_secs + CLEANUP_GRACE_SECS=30`. The outer `asyncio.wait_for` would otherwise await a cancel-ignoring sub-tool indefinitely; the guard shields the task and bounds cleanup strictly.
+- **Streaming worker pool (P2, 2026-04-22):** `main()` uses `asyncio.Semaphore + asyncio.TaskGroup` instead of batch-gather. Straggler questions no longer block batch peers.
 
 ### MCP (Model Context Protocol)
 MCP tools are integrated via `src/mcp/`:

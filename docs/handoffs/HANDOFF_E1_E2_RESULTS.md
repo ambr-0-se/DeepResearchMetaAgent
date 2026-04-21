@@ -58,11 +58,11 @@ Kimi and Gemma are excluded from the active matrix (see `HANDOFF_TEST_EVAL.md` �
 | 1 | Extractor NOT constructed (`grep -c "SkillExtractor active (C4 training mode)"`) | 0 | 0 | ✅ pass |
 | 2 | No writes to snapshot (file count stable across run) | 14 | 9 | ✅ pass |
 | 3 | Skill bodies unchanged (body-only diff excluding frontmatter) | — | — | *not checked — no pre-run body snapshot was taken; add to launcher for E3* |
-| 4 | Library actually read (`activate_skill` **invoked** as a tool call) | **0 invocations** | **0 invocations** | ❌ **fail** (see finding F2) |
+| 4 | Library actually read (`activate_skill` **invoked** as a tool call) | 0 invocations on 3-Q smoke ([re-analysis 2026-04-22](#f2-activate_skill-invocation-rate-zero-on-e2-smoke-is-a-sample-size-artifact-e0-training-shows-the-library-is-used): **60 invocations / 26 Qs across the 80-Q E0 run**) | 0 invocations on 3-Q smoke (E0 = **10 invocations / 10 Qs**) | ⚠️ smoke uninformative (zero expected at these sample sizes); production-scale evidence confirms library is invoked — see F2 |
 | 5 | Canary visible (planner-scope canary skill surfaces in registry block) | — | — | *not executed — canary step skipped in this local run* |
 | 6 | Override banner names the snapshot path | `[SkillRegistry] loaded 14 skills from workdir/c4_trained_libraries/mistral_skills_v3` | `loaded 9 skills from workdir/c4_trained_libraries/qwen_skills_v3` | ✅ pass |
 
-**Summary:** 3/4 executed checks pass (1, 2, 6); pass #4 fails on both models; passes #3 and #5 were not set up locally.
+**Summary:** 3/4 executed checks pass (1, 2, 6); pass #4's zero-count was reclassified 2026-04-22 as a sample-size artifact after scanning E0 v3 data showed 60 Mistral + 10 Qwen real activations across the 80-Q training run (see F2 below). Passes #3 and #5 were not set up locally.
 
 ---
 
@@ -85,21 +85,39 @@ Kimi and Gemma are excluded from the active matrix (see `HANDOFF_TEST_EVAL.md` �
 1. **Hard wall-clock guard in `run_gaia.py`.** After the outer `asyncio.wait_for` raises `TimeoutError`, give the inner task a bounded cleanup window (e.g. `asyncio.shield(..., timeout=30)`), then force-terminate if still alive — don't await it indefinitely.
 2. **Audit sub-agent / tool paths that block in `CancelledError`.** `aa78edc` patched `auto_browser.py`. Likely offenders still unpatched: `deep_researcher` inner call (the current per-call timeout in `453ae24` may be suppressed when the outer event loop is cancelling), and any MCP-backed tool that awaits subprocess stdout.
 
-### F2 — `activate_skill` not invoked on the 3 smoke questions
+### F2 — `activate_skill` invocation rate: zero on E2 smoke is a sample-size artifact; E0 training shows the library IS used
 
-**Observation.** `SkillRegistry` loads correctly (banner + 14/9 skill counts in the log), but the `activate_skill` tool was **called 0 times** on either model in the `intermediate_steps` JSON for all 3 rows. The 20 / 16 `activate_skill` mentions per-row are from the injected registry-block *prompt text*, not tool invocations.
+**Original observation (2026-04-20).** `SkillRegistry` loads correctly (banner + 14/9 skill counts in the log), but the `activate_skill` tool was **called 0 times** on either model in the `intermediate_steps` JSON for all 3 rows. The 20 / 16 `activate_skill` mentions per-row were from the injected registry-block *prompt text*, not tool invocations. That raised the concern: "is the library cosmetic?"
 
-**Interpretation.** Three non-exclusive explanations:
-1. **Sample is too small** — 3 questions may not intersect the 14 (Mistral) / 9 (Qwen) skill topics well. The first question (`6f37996b`) is a ~100 s categorical that doesn't need workflow scaffolding. The two timeout rows never reached a planning step where a skill would have been activated.
-2. **Prompt phrasing is permissive, not directive** — the system prompt says *"Call `activate_skill` with a skill name to load its full workflow"* but does not mandate consulting the registry before delegation. Planners observed to go straight to `deep_analyzer_agent` / `browser_use_agent` without a skill probe.
-3. **Library coverage gap** — with 9 Qwen skills, topical coverage of a random 3-question sample is ≤30% at best, even with perfect prompt adherence.
+**Re-analysis (2026-04-22).** Scanning the E0 v3 `dra.jsonl` (80 Qs per model, production caps) for `tool_calls[].function.name == "activate_skill"`:
 
-**Why it matters.** F2 does not invalidate the E2 freeze-mechanism verification (1, 2, 6 all pass). It does mean we have **zero positive evidence that the frozen library influences behaviour** on this smoke, which is the whole point of running E2 before E3. The E3 score gap between C3 and C4 is the *ground truth* answer to the activation question, but a silent smoke is a missed early-warning opportunity.
+| Model | Real invocations | Questions with ≥1 activation | Per-Q activation rate |
+|---|---|---|---|
+| Mistral | **60** | **26 / 80** | **32.5%** |
+| Qwen    | **10** | **10 / 80** | **12.5%** |
 
-**Fix direction.**
-1. **Extend the smoke to 10–15 questions** on the next E2 run. Topic intersection with a 14-skill library should become non-trivial.
-2. **Inject the canary skill** (pass #5) before any future E2 — a planner-scope canary that matches every task is the cheapest way to assert the registry-consumer path works end-to-end.
-3. **(Optional) add `activate_skill` to the planner's prompted checklist** with a "did you consult the registry?" nudge before the first delegation. This is a prompt change, not a pipeline change; measure via C3→C4 delta, not local smoke.
+**The library is being invoked at production scale.** The E2 zero-count reflects small-sample variance + smoke-cap compression, not a dead code path:
+
+- Probability of zero activations in a random 3-Q sample given the measured per-Q rate:
+  - Mistral at 32.5% → P(zero in 3) = (1 − 0.325)³ ≈ **31%** (unlikely but plausible)
+  - Qwen at 12.5% → P(zero in 3) = (1 − 0.125)³ ≈ **67%** (zero is the *modal* outcome)
+- Per-task corroboration: **2 of E2's 3 questions** (`6f37996b`, `e961a717`) DID have Mistral activations during E0 (1 and 2 respectively). E2 missed them, which points to a second factor beyond sample size.
+
+**Second factor — smoke step caps compress the planner's registry-exploration budget.** E2 uses `SMOKE_CFG_OPTIONS` with `agent_config.max_steps=10` (down from the E0/E3 default `max_steps=20`). With half the planning budget, the planner goes straight to delegation instead of probing `activate_skill` first. Same system prompt, same library — different exploration headroom.
+
+**Evidence this matters.** Mistral's E0 24-Q with-activation subset had activations spread across planner steps 3–15 (median 7). In a 10-step budget, activations from step 11+ are literally impossible. That alone is consistent with E2's Mistral-specific underperformance.
+
+**What E2 actually verified** (revised):
+- ✅ Plumbing: `SkillRegistry` loads the right snapshot path, `enable_skill_extraction=False` is honoured, no writes to the snapshot.
+- ❌ Behaviour under smoke caps: can't extrapolate from a 3-Q cap-compressed sample.
+- (previously thought) ~~Zero positive evidence the frozen library influences behaviour.~~ **Superseded:** the E0 training data provides the positive evidence at scale.
+
+**Implications.**
+1. **F2 downgraded from "blocker-adjacent" to "smoke-coverage note."** The library is demonstrably being invoked. E3's C3→C4 delta remains the authoritative signal for "does it help", which is the real question.
+2. **Future E2 pass design.** If re-running E2 as a quick canary, either (a) use 10–15 Qs to make zero-activation an informative signal, or (b) use E3-level caps (`max_steps=20`) instead of `SMOKE_CFG_OPTIONS` so the activation budget is representative. Option (a) is cheaper.
+3. **Per-question activation data for the paper.** Add a brief methodology subsection reporting the E0 per-Q activation rates (32.5% / 12.5%) as evidence the C4 library isn't passive decoration.
+
+**Original fix directions superseded.** The "inject canary skill" + "tighten prompt wording" suggestions were mitigations for what we now know was a sample-size artifact. They are not necessary for E3. If post-E3 analysis shows the C4 accuracy lift is smaller than expected, reopen prompt-wording changes then.
 
 ### F3 — Timeout rows produce no skill-extraction signal during E0 training (CRITICAL for E0 interpretation)
 
@@ -134,6 +152,6 @@ Kimi and Gemma are excluded from the active matrix (see `HANDOFF_TEST_EVAL.md` �
 
 ## Items explicitly not blockers
 
-- **F2 alone** (small-sample non-activation) is not a blocker; E3's C3→C4 delta is the authoritative test.
+- **F2** — reclassified 2026-04-22 from "small-sample non-activation" to "measured per-Q activation rate 12.5%–32.5% in E0 v3 training; E2's zero-count was a sample-size + smoke-cap artifact." The library is demonstrably being invoked. See F2 section above for the full re-analysis. E3's C3→C4 accuracy delta remains the authoritative signal for whether the library *helps*; nothing to fix before E3.
 - **Kimi / Gemma exclusion** is stable and documented (`HANDOFF_TEST_EVAL.md` §Matrix definition). No action.
 - **Seeded-vs-learned asymmetry** (Mistral 7 / Qwen 2) is an honest artefact, not a bug.

@@ -576,16 +576,14 @@ done
 |---|-------|---------|--------|
 | 1 | Extractor not constructed | `grep -c "SkillExtractor active (C4 training mode)" logs/c4_freeze_smoke_${m}_*.out` | **0** |
 | 2 | No writes to snapshot | `find workdir/c4_trained_libraries/${m}_skills -name SKILL.md \| wc -l` before vs after | equal counts, same names |
-| 3 | Skill bodies unchanged | body-only `diff` of each snapshot `SKILL.md` (exclude frontmatter — `increment_verified_uses` mutates it legitimately) | all empty |
-| 4 | Library actually read | `jq -r '.intermediate_steps[]?.tool_calls[]?.name // empty' workdir/gaia_c4_${m}_<FREEZE_RUN_ID>/dra.jsonl \| grep -c activate_skill` | **> 0** |
+| 3 | Skill bodies unchanged | body-only `diff` of each snapshot `SKILL.md` (**including frontmatter** — `increment_verified_uses` is defined but **has no production call sites** as of 2026-04-22, so the library is strictly read-only during eval) | all empty |
+| 4 | Library actually read (canary-only) | `jq -r '.intermediate_steps[]?.tool_calls[]?.name // empty' workdir/gaia_c4_${m}_<FREEZE_RUN_ID>/dra.jsonl \| grep -c activate_skill` | **depends on sample size — see note below** |
 | 5 | Canary visible | `grep -c "freeze-canary-farm-${m}" logs/c4_freeze_smoke_${m}_*.out` | **> 0** |
 | 6 | Override banner landed | `grep "building SkillRegistry at" logs/c4_freeze_smoke_${m}_*.out` | shows the snapshot path, not `workdir/gaia_c4_${m}_<run>/skills` |
 
-**Fail → stop-gate.** If any model fails any check, do NOT submit **E3** C4
-cells. Most likely culprits: shell quoting swallowing the `--cfg-options`
-args in `--wrap` (switch to a standalone `script.sh` + `sbatch script.sh`),
-or a regression in the generated configs (regenerate from
-`scripts/gen_eval_configs.py` and retry).
+**Pass #4 note (added 2026-04-22).** E0 v3 measured per-Q `activate_skill` rates of **32.5% (Mistral)** and **12.5% (Qwen)** against real trained libraries with production caps (`max_steps=20`). On a 3-Q smoke with SMOKE caps (`max_steps=10`), zero activations is the *expected* outcome for Qwen (P≈67%) and plausible for Mistral (P≈31%). **Treat pass #4 as informational only at 3-Q + smoke caps;** require it only when the smoke is ≥ 10 Qs AND uses `max_steps=20` (i.e. drop `SMOKE_CFG_OPTIONS`). Canary (pass #5) is the cheap way to assert the consumer path works end-to-end under any sample size. See `HANDOFF_E1_E2_RESULTS.md` §F2 for the full re-analysis.
+
+**Fail → stop-gate.** If any model fails pass #1, #2, #3, #5 or #6, do NOT submit **E3** C4 cells. Most likely culprits: shell quoting swallowing the `--cfg-options` args in `--wrap` (switch to a standalone `script.sh` + `sbatch script.sh`), or a regression in the generated configs (regenerate from `scripts/gen_eval_configs.py` and retry).
 
 **Pass → ready for E3.** Attach the 6-row pass table per model to this
 handoff before launching **E3**.

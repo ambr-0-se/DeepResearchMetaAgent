@@ -29,13 +29,21 @@ from textwrap import dedent
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIGS_DIR = REPO_ROOT / "configs"
 
-# (model_label, model_id_for_agents, langchain_alias, comment_about_thinking)
+# (model_label, model_id_for_agents, langchain_alias, comment_about_thinking,
+#  concurrency_default)
+#
+# `concurrency_default` is the per-question parallelism baked into each
+# generated config. Historically 4 across the board. 2026-04-22: bumped Qwen
+# to 8 after E0 v3 evidence showed 0 × 429 / Retry-After / RateLimitError
+# in 3 006 calls at c=4 — headroom was left on the table (§P3 of
+# docs/handoffs/HANDOFF_THROUGHPUT_REFACTOR.md). Others remain at 4.
 MODELS = [
     (
         "mistral",
         "mistral-small",
         "langchain-mistral-small",
         "Mistral Small 4 (mistral-small-2603) — native multimodal, no thinking mode.",
+        4,
     ),
     (
         "kimi",
@@ -46,6 +54,7 @@ MODELS = [
         "OpenRouter does not enforce Moonshot's thinking-on default, so this "
         "also satisfies the C3/C4 JSON-output requirement without an extra_body "
         "override.",
+        4,
     ),
     (
         "qwen",
@@ -59,7 +68,10 @@ MODELS = [
         "`src/models/tool_choice.py` (D3) — the `qwen/` wire-id prefix "
         "downgrades to `\"auto\"` and the retry guard in GeneralAgent / "
         "ToolCallingAgent re-prompts plain-text responses back into tool "
-        "calls. $0.325 in / $1.95 out per M tokens.",
+        "calls. $0.325 in / $1.95 out per M tokens. concurrency=8 per §P3: "
+        "E0 v3 showed 0 × 429 in 3 006 calls at c=4; doubling consumes "
+        "measured OR→Alibaba headroom.",
+        8,
     ),
     (
         "gemma",
@@ -78,6 +90,7 @@ MODELS = [
         "through unchanged. Concurrency is capped at 4 in "
         "`scripts/run_eval_matrix.sh` for this stream only (vLLM #39392 "
         "pad-bug under parallel load). $0.13 in / $0.38 out per M tokens.",
+        4,
     ),
 ]
 
@@ -273,7 +286,7 @@ auto_browser_use_tool_config = dict(
 #   python examples/run_gaia.py --config {self_path} \\
 #     --cfg-options max_samples=10 dataset.split=validation
 max_samples = None
-concurrency = 4
+concurrency = {concurrency}
 
 # Per-question wall clock timeout (secs). Pinned 2026-04-20 after the
 # E0 v3 resume surfaced an asymmetry: training had been running at 1800s
@@ -305,7 +318,8 @@ _RUN_ID_PRELUDE = (
 
 
 def render_config(model_label: str, model_id: str, langchain_alias: str,
-                  model_comment: str, condition: str, base_config: str) -> str:
+                  model_comment: str, condition: str, base_config: str,
+                  concurrency: int) -> str:
     tag_prefix = f"{condition}_{model_label}"
     self_path = f"configs/config_gaia_{condition}_{model_label}.py"
     planning_block = PLANNING_TEMPLATES[condition].format(model_id=model_id)
@@ -329,6 +343,7 @@ def render_config(model_label: str, model_id: str, langchain_alias: str,
         planning_block=planning_block.rstrip("\n"),
         langchain_alias=langchain_alias,
         self_path=self_path,
+        concurrency=concurrency,
     )
 
 
@@ -339,7 +354,7 @@ def main() -> int:
     args = parser.parse_args()
 
     written = []
-    for model_label, model_id, langchain_alias, model_comment in MODELS:
+    for model_label, model_id, langchain_alias, model_comment, concurrency in MODELS:
         for condition, base_config, _tag_suffix, _max_steps in CONDITIONS:
             text = render_config(
                 model_label=model_label,
@@ -348,6 +363,7 @@ def main() -> int:
                 model_comment=model_comment,
                 condition=condition,
                 base_config=base_config,
+                concurrency=concurrency,
             )
             out_path = CONFIGS_DIR / f"config_gaia_{condition}_{model_label}.py"
             if args.dry_run:

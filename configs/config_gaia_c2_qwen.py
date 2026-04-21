@@ -5,7 +5,7 @@ instead. Inherits from ./config_gaia_adaptive.py and overrides every model_id to
 at the chosen model.
 
 Model: or-qwen3.6-plus
-Qwen3.6-Plus via OpenRouter (operator preference — D1, 2026-04-18). Chosen over Qwen3-Next for its vision modality (text+image+video per OR metadata) and 1M context. OR providers for the whole Qwen family reject `tool_choice="required"` (404/400 depending on backend); this is handled transparently by the hybrid tool_choice dispatch in `src/models/tool_choice.py` (D3) — the `qwen/` wire-id prefix downgrades to `"auto"` and the retry guard in GeneralAgent / ToolCallingAgent re-prompts plain-text responses back into tool calls. $0.325 in / $1.95 out per M tokens.
+Qwen3.6-Plus via OpenRouter (operator preference — D1, 2026-04-18). Chosen over Qwen3-Next for its vision modality (text+image+video per OR metadata) and 1M context. OR providers for the whole Qwen family reject `tool_choice="required"` (404/400 depending on backend); this is handled transparently by the hybrid tool_choice dispatch in `src/models/tool_choice.py` (D3) — the `qwen/` wire-id prefix downgrades to `"auto"` and the retry guard in GeneralAgent / ToolCallingAgent re-prompts plain-text responses back into tool calls. $0.325 in / $1.95 out per M tokens. concurrency=8 per §P3: E0 v3 showed 0 × 429 in 3 006 calls at c=4; doubling consumes measured OR→Alibaba headroom.
 
 Output dir: workdir/gaia_c2_qwen_<run_id>/
 
@@ -118,10 +118,11 @@ auto_browser_use_tool_config = dict(
 #   python examples/run_gaia.py --config configs/config_gaia_c2_qwen.py \
 #     --cfg-options max_samples=10 dataset.split=validation
 max_samples = None
-concurrency = 4
+concurrency = 8
 
-# Per-question wall clock timeout (secs). Pinned 2026-04-20 for fairness
-# with E0 v3 C4 training (which used 1800s). Previously inherited
-# run_gaia.py default 1200, creating a training/test asymmetry that
-# could bias the C0-C3 vs C4 ablation at test time.
+# Per-question wall clock timeout (secs). Pinned 2026-04-20 after the
+# E0 v3 resume surfaced an asymmetry: training had been running at 1800s
+# but test-time configs silently fell back to the run_gaia.py default of
+# 1200s, biasing the C0-C3 vs C4 ablation at test time. Now uniformly
+# 1800s across training (E0) and test (E3) for every (model, condition).
 per_question_timeout_secs = 1800

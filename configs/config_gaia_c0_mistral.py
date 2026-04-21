@@ -120,8 +120,9 @@ auto_browser_use_tool_config = dict(
 max_samples = None
 concurrency = 4
 
-# Per-question wall clock timeout (secs). Pinned 2026-04-20 for fairness
-# with E0 v3 C4 training (which used 1800s). Previously inherited
-# run_gaia.py default 1200, creating a training/test asymmetry that
-# could bias the C0-C3 vs C4 ablation at test time.
+# Per-question wall clock timeout (secs). Pinned 2026-04-20 after the
+# E0 v3 resume surfaced an asymmetry: training had been running at 1800s
+# but test-time configs silently fell back to the run_gaia.py default of
+# 1200s, biasing the C0-C3 vs C4 ablation at test time. Now uniformly
+# 1800s across training (E0) and test (E3) for every (model, condition).
 per_question_timeout_secs = 1800

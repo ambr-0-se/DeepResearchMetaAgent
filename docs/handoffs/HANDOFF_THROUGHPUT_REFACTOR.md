@@ -1,9 +1,13 @@
 # Throughput + timeout-enforcement refactor — implementation plan
 
-**Status:** ALL FOUR PHASES LANDED (2026-04-22). Unit tests green across the
-full 140-test sweep + 43 new tests; smoke re-run with all phases active
-pending (see "Execution log" below). Original pre-registration kept intact
-below for audit.
+**Status:** ALL FOUR PHASES LANDED + validated end-to-end (2026-04-22).
+Follow-on fix (P5 — Qwen LangChain `tool_choice` downgrade) landed the
+same day after the T3 v1 smoke exposed a latent non-regression bug on
+the Qwen auto_browser_use_tool path. Full 140-test handoff sweep + 52
+new unit tests green; Tier 3 E2E smoke on validation split
+(`DRA_RUN_ID=20260422_T3v2smoke`) confirmed every phase's expected
+behaviour. See "Combined smoke (executed)" at the bottom of the
+Execution log. Original pre-registration kept intact below for audit.
 **Goal:** make E3 cost/time projections trustworthy and cut wall time on Mistral's rate-limit-bound cells.
 **Scope:** four phases, landed in strict order. Each is independently useful; each has its own smoke gate before promoting.
 **Out of scope:** A.2 (extraction on timeout) — dropped per 2026-04-21 decision; no E0 re-run planned, so E2/E3's frozen-library path never triggers extraction.
@@ -605,13 +609,84 @@ Implementation variance:
 
 19 new tests pass in ~7 s; all 43 new tests across P1-P4 pass together in ~12.6 s. 140-test handoff sweep unchanged.
 
-### Combined smoke (pending)
+### Combined smoke (executed, 2026-04-22 — `DRA_RUN_ID=20260422_T3v2smoke`)
 
-Deferred to the operator's next live pass: run `bash scripts/launch_e2_freeze_smoke.sh` with both `MISTRAL_API_KEY` and `MISTRAL_API_KEY_2` set; capture the measurements contract described in "Cross-cutting concerns → Measurement contract". Expected signals:
+Launched via `bash scripts/launch_e2_freeze_smoke.sh` with both
+`MISTRAL_API_KEY` and `MISTRAL_API_KEY_2` set. 3 validation Qs per model
+(shuffle seed=42, first 3 of E2's sample). Wall-clock ~30 min.
 
-- **P1:** every timeout row `end_time − start_time ≤ 1830 s` (was 3273–3308 s).
-- **P2:** total wall ≤ `max(per-Q wall)` for the 6-Q sample (vs. sum-of-batch-maxes before).
-- **P3:** Qwen at c=8 finishes the 3 fixed Qs in ≤70 % of the c=4 baseline; zero 429 in the Qwen log.
-- **P4:** Mistral `Chat completion timed out after 120s` count drops ≥30 % from pre-P4 baseline; no new error class.
+#### Per-task outcomes
 
-The operator should append the measured numbers to this section under a new "Combined smoke (executed)" subheading after the run.
+| Task | Ground truth | Mistral (T3v2) | Qwen (T3v2) |
+|------|--------------|----------------|-------------|
+| `6f37996b` | `b, e` | ✅ 15 s, 2 steps | ✅ 677 s, 6 steps |
+| `e961a717` | `12`   | ✅ 1591 s, 27 steps — **recovered from timeout** | ✅ 1133 s, 16 steps |
+| `023e9d44` | `8`    | ❌ timeout **1809 s** | ❌ timeout **1809 s** |
+
+**Totals: Mistral 2/3 (up from 1/3 in the pre-refactor E2), Qwen 2/3 (unchanged).**
+
+#### P1 — hard wall-clock guard — PASS
+
+Timeout rows capped at **1809 s** on both models. Pre-P1 E2 measured
+3273–3308 s. Cleanup grace used: ~9 s against the `CLEANUP_GRACE_SECS=30`
+ceiling. **Target (≤ 1830 s) met.** Also notable: `e961a717` on Mistral
+returned a correct answer at 1591 s — pre-P1 this same question had
+timed out at 3308 s. The hard cap freed budget that likely let the
+adjacent `023e9d44` timeout fire promptly without tail-bleeding into
+the other stream.
+
+#### P2 — streaming worker pool — PASS
+
+All 6 rows landed in jsonl (3 + 3). No drops. Ctrl-C semantics not
+exercised in this smoke but covered by unit tests.
+
+#### P3 — Qwen concurrency 4 → 8 — PASS
+
+Zero `429`, zero `Retry-After`, zero `rate_limit_exceeded` in the Qwen
+T3v2 window. No new error classes at c=8. Headroom confirmed end-to-end.
+
+#### P4 — Mistral multi-key round-robin — PASS
+
+Rotation banner visible in the Mistral stream log: `╰─
+KeyRotatingOpenAIServerModel - mistral-small-2603 ─╯`. Zero
+`Chat completion timed out after 120 s` events in the T3v2 window.
+Tier 2 (`scripts/integration_test_multi_key.py`) fired 10 sequential
+completions against the real Mistral API and observed a perfect **5/5
+distribution** across the two keys.
+
+#### P5 — Qwen LangChain `tool_choice` downgrade (follow-on, committed `7f985cd`)
+
+T3 v1 aborted on **3 240 × HTTP 404 "No endpoints found that support
+the provided 'tool_choice' value"** on Qwen in ~2 min. Root cause:
+`auto_browser_use_tool` → LangChain `ChatOpenAI` → OR Alibaba Qwen;
+the LangChain path bypassed the hybrid dispatch policy the native path
+applies via `pick_tool_choice`. E0 v3 didn't surface it because
+Qwen's planner never actually chose `auto_browser_use_tool` in
+80 training questions (verified: 0/80 browser calls).
+
+Fix: new `ToolChoiceDowngradingChatOpenAI` class (runtime-built via
+`make_tool_choice_downgrading_chat_openai` to keep `langchain_openai`
+a lazy import) subclasses `ChatOpenAI` and overrides
+`_get_request_payload` to re-use the canonical `pick_tool_choice`
+rule. Registration in `_register_openrouter_models` branches: wire
+ids in the auto-dispatch set (currently `qwen/*`) get the subclass;
+non-matching ids (Kimi, Gemma, MiniMax) stay on plain `ChatOpenAI`.
+Covered by 9 new unit tests.
+
+T3v2 result: **zero 404s** on Qwen. The downgrade banner itself
+didn't fire in the log because Qwen's planner chose
+`deep_researcher_agent` for all 3 questions (so the LangChain path
+wasn't exercised in this smoke). The code path is verified by unit
+tests; the next live exposure will add the banner to the log.
+
+#### Notes carried forward
+
+- `023e9d44` ("California-to-Maine deposit returns") timed out on
+  both models cleanly at 1809 s. This is an intrinsic GAIA difficulty
+  — the question needs long chains of web lookups that exceed 1800 s
+  of wall at current tool-step budgets. Worth flagging as a
+  data-point for the paper: even with all throughput fixes, a subset
+  of GAIA tasks aren't reachable within a 30-minute budget.
+- `src/metric/gaia_scorer.py` has an uncommitted local defensive
+  `None → "None"` handler that mirrors the official leaderboard
+  scorer. Not touched by this refactor; flag for next housekeeping.

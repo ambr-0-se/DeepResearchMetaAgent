@@ -9,7 +9,11 @@ from langchain_openai import ChatOpenAI
 
 from src.logger import logger
 from src.models.litellm import LiteLLMModel
-from src.models.openaillm import OpenAIServerModel
+from src.models.openaillm import (
+    OpenAIServerModel,
+    make_tool_choice_downgrading_chat_openai,
+)
+from src.models.tool_choice import pick_tool_choice
 from src.models.hfllm import InferenceClientModel
 from src.models.restful import (RestfulModel,
                                 RestfulTranscribeModel,
@@ -989,11 +993,32 @@ class ModelManager(metaclass=Singleton):
             # not propagated here. If a browser-use agent starts exercising
             # those code paths under Kimi/Gemma/etc., plumb `model_kwargs`
             # through at that call site — out of scope for this change.
-            langchain_model = ChatOpenAI(
-                model=model_id,
-                api_key=api_key,
-                base_url=api_base,
-            )
+            #
+            # tool_choice hybrid dispatch parity with the native path
+            # (src/models/tool_choice.py). For wire ids matched by
+            # `pick_tool_choice` (currently anything starting with `qwen/`,
+            # plus entries in `MODELS_REJECTING_REQUIRED`), build the
+            # `ToolChoiceDowngradingChatOpenAI` variant so browser_use's
+            # `bind_tools(..., tool_choice="required")` is transparently
+            # rewritten to `"auto"` before the OR request leaves the
+            # process — same policy as the native dispatch. Non-matching
+            # ids get the plain `ChatOpenAI` (no overhead).
+            # Regression source: T3 smoke 2026-04-22 hit a 404 flood on
+            # Qwen auto_browser_use_tool — see
+            # `docs/handoffs/HANDOFF_THROUGHPUT_REFACTOR.md` §Execution log.
+            if pick_tool_choice(model_id, default="required") == "auto":
+                _Downgrading = make_tool_choice_downgrading_chat_openai()
+                langchain_model = _Downgrading(
+                    model=model_id,
+                    api_key=api_key,
+                    base_url=api_base,
+                )
+            else:
+                langchain_model = ChatOpenAI(
+                    model=model_id,
+                    api_key=api_key,
+                    base_url=api_base,
+                )
             self.registed_models[f"langchain-{model_name}"] = langchain_model
 
     def _register_qwen_failover_models(self):

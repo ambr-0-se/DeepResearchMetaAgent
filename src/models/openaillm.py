@@ -501,8 +501,12 @@ class _KeyPoolState:
     def n(self) -> int:
         return self._n
 
-    def key(self, idx: int) -> str:
-        """Return the API key at `idx`. Internal — do not log the result."""
+    def _key(self, idx: int) -> str:
+        """Return the API key at `idx`. Private — do not log the result.
+        Underscore-prefixed to match the rest of the internal state
+        (`_keys`, `_cool_until`, `_next_idx`); external callers that need
+        to distinguish between keys should pass indices, not values.
+        """
         return self._keys[idx]
 
     def pick_index(self) -> int:
@@ -674,7 +678,7 @@ class KeyRotatingOpenAIServerModel(OpenAIServerModel):
             return self._async_clients[idx]
         import openai
         client = openai.AsyncOpenAI(
-            api_key=self._pool.key(idx),
+            api_key=self._pool._key(idx),
             base_url=self._api_base,
         )
         self._async_clients[idx] = client
@@ -799,3 +803,105 @@ class KeyRotatingChatOpenAI:
         if instances is None:  # during __init__ before _instances set
             raise AttributeError(name)
         return getattr(instances[0], name)
+
+
+# ===========================================================================
+# LangChain-path tool_choice downgrade — Qwen OR regression (2026-04-22)
+# ===========================================================================
+#
+# Problem
+# -------
+# The native `OpenAIServerModel.generate()` path passes every outgoing
+# completion through `pick_tool_choice()` in `src/models/tool_choice.py`,
+# which downgrades `tool_choice="required"` → `"auto"` for wire-ids that
+# OpenRouter's Qwen providers reject (prefix rule `qwen/*`).
+#
+# The LangChain `ChatOpenAI` path — used by `auto_browser_use_tool` via
+# `browser_use.Agent(llm=..., page_extraction_llm=...)` — bypasses that
+# dispatch entirely. `browser_use` calls `bind_tools` internally and emits
+# `tool_choice` values that Alibaba (the sole OR Qwen provider as of
+# 2026-04-22) rejects with HTTP 404 "No endpoints found that support the
+# provided 'tool_choice' value".
+#
+# The Qwen LangChain path never triggered this bug before because Qwen's
+# planner did not invoke `auto_browser_use_tool` in E0 v3 training
+# (verified 2026-04-22: 0 browser calls / 80 Qwen questions). The
+# 2026-04-22 T3 smoke was the first real exposure.
+#
+# Fix
+# ---
+# Extend the downgrade to the LangChain path by subclassing `ChatOpenAI`
+# and overriding `_get_request_payload` — the lowest-level hook that
+# builds the dict sent to `openai.AsyncOpenAI.chat.completions.create`.
+# The override re-uses the canonical `pick_tool_choice` rule so behaviour
+# is identical to the native path (one source of truth for the downgrade
+# policy).
+
+
+class ToolChoiceDowngradingChatOpenAI:
+    """LangChain `ChatOpenAI` subclass-in-name-only that applies the
+    project's hybrid `tool_choice` dispatch to outgoing payloads.
+
+    Runtime-built subclass (see factory ``make_tool_choice_downgrading_chat_openai``
+    below) so that `ChatOpenAI` is imported lazily — this module is
+    imported at project start and `langchain_openai` is heavy.
+
+    Semantics
+    ---------
+    - For every outgoing chat completion, inspect the payload's
+      `tool_choice` key. If `pick_tool_choice(model_id, current_value)`
+      returns a different value, swap it in. Emit `log_downgrade_once`
+      for the first downgrade per model.
+    - When `tool_choice` is absent from the payload, pass through
+      unchanged — LangChain's default behaviour is retained.
+    - The `model_id` used for the dispatch decision is `self.model_name`
+      (which LangChain populates from the `model=` constructor arg),
+      not a separate wire-id. For OR Qwen wrappers this is
+      `"qwen/qwen3.6-plus"` which matches the `qwen/` prefix rule.
+
+    Test hook
+    ---------
+    The factory exposes the class so unit tests can instantiate and
+    invoke `_get_request_payload` directly without hitting the network.
+    """
+
+
+def make_tool_choice_downgrading_chat_openai():
+    """Build the `ChatOpenAI` subclass. Lazy — only imports
+    `langchain_openai` on first call.
+
+    Returns a class object; callers construct instances exactly like
+    `ChatOpenAI`:
+
+        cls = make_tool_choice_downgrading_chat_openai()
+        model = cls(model="qwen/qwen3.6-plus", api_key=..., base_url=...)
+    """
+    from langchain_openai import ChatOpenAI
+
+    class _Impl(ChatOpenAI):
+        """Concrete subclass. See `ToolChoiceDowngradingChatOpenAI` for
+        the design doc. Name kept private because LangChain's Pydantic
+        machinery is brittle with class-name introspection in some
+        code paths."""
+
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+
+            requested = payload.get("tool_choice")
+            if requested is None:
+                # Caller didn't set one; nothing to downgrade. Pass through.
+                return payload
+
+            model_id = payload.get("model") or getattr(self, "model_name", None)
+            resolved = pick_tool_choice(model_id, default=requested)
+            if resolved != requested and resolved == "auto":
+                payload["tool_choice"] = resolved
+                log_downgrade_once(model_id or "<unknown>")
+            elif resolved != requested:
+                # Some non-"auto" rewrite (currently impossible per
+                # pick_tool_choice rules, but defensive if policy changes).
+                payload["tool_choice"] = resolved
+
+            return payload
+
+    return _Impl

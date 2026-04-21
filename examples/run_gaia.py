@@ -344,12 +344,43 @@ async def main():
     else:
         logger.info(f"| Loaded {len(tasks_to_run)} tasks to run.")
 
-    # Run tasks
-    batch_size = getattr(config, "concurrency", 4)
-    for i in range(0, len(tasks_to_run), batch_size):
-        batch = tasks_to_run[i:min(i + batch_size, len(tasks_to_run))]
-        await asyncio.gather(*[answer_single_question(config, task) for task in batch])
-        logger.info(f"| Batch {i // batch_size + 1} done.")
+    # Run tasks — streaming worker pool (§P2 of HANDOFF_THROUGHPUT_REFACTOR.md).
+    # Replaces the previous batch-gather loop: under that scheme a slow
+    # question blocked its batch peers for up to 1800 s even if they were
+    # idle, because `asyncio.gather` waits for the slowest in each batch.
+    # With a semaphore + TaskGroup, as soon as any worker finishes the
+    # next queued task starts — straggler stalls go away.
+    #
+    # Safety: `answer_single_question` has perfect exception containment
+    # (every path writes a jsonl row and returns implicit None; no
+    # exception escapes). The `_bounded` wrapper below ALSO catches
+    # Exception defensively — if an unexpected error ever escaped the
+    # worker it would otherwise propagate into TaskGroup, which cancels
+    # siblings on any unhandled exception. Catching Exception (NOT
+    # BaseException) keeps CancelledError propagation intact so Ctrl-C
+    # still cancels the whole run.
+    concurrency = max(1, int(getattr(config, "concurrency", 4)))
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _bounded(task_item):
+        async with sem:
+            try:
+                return await answer_single_question(config, task_item)
+            except Exception as e:
+                logger.exception(
+                    f"| worker crashed on task "
+                    f"{task_item.get('task_id', '?')}: {e}"
+                )
+                return None
+
+    async with asyncio.TaskGroup() as tg:
+        for task_item in tasks_to_run:
+            tg.create_task(_bounded(task_item))
+
+    logger.info(
+        f"| All {len(tasks_to_run)} tasks complete (streaming worker pool, "
+        f"concurrency={concurrency})."
+    )
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -140,6 +140,22 @@ TRANSIENT_ERROR_KEYWORDS = [
 MAX_RETRIES = 3
 RETRY_WAIT_SECS = 60
 
+# Hard wall-clock guard — see docs/handoffs/HANDOFF_THROUGHPUT_REFACTOR.md §P1.
+# `asyncio.wait_for(timeout=per_question_timeout)` alone does not enforce a
+# hard wall-clock cap: after it calls `task.cancel()`, `finally:` cleanup
+# blocks in sub-tools (e.g. `src/tools/auto_browser.py:152-160` which waits up
+# to 15 s for `browser_agent.close()`) still run to completion before control
+# returns, extending wall time. Observed 2026-04-20: E2 task 023e9d44 ran
+# 3298 s against a nominal 1800 s cap.
+#
+# Fix: build the agent call as an explicit task, shield it so the outer
+# `wait_for` cannot auto-cancel the inner, then on TimeoutError cancel
+# manually and give cleanup at most CLEANUP_GRACE_SECS to unwind before
+# abandoning. `CLEANUP_GRACE_SECS=30` is a 2× margin over the known 15 s
+# browser close bound; the already-landed per-call 120 s HTTP timeout
+# (fbd0dd1) reaps any stuck LLM call shortly after.
+CLEANUP_GRACE_SECS = 30
+
 def _is_transient_error(error: Exception) -> bool:
     err_str = str(error)
     return any(kw in err_str for kw in TRANSIENT_ERROR_KEYWORDS)
@@ -172,10 +188,48 @@ async def answer_single_question(config, example):
                 logger.visualize_agent_tree(agent)
             logger.info(f"Task Id: {example['task_id']}, Final Answer: {example['true_answer']}")
 
-            final_result = await asyncio.wait_for(
+            # Build the agent call as a named task so we can cancel it
+            # explicitly on timeout; shield it so `wait_for` does not issue
+            # its own auto-cancel. See CLEANUP_GRACE_SECS comment above.
+            agent_task = asyncio.create_task(
                 agent.run(task=augmented_question),
-                timeout=per_question_timeout,
+                name=f"run_{example['task_id']}",
             )
+            try:
+                final_result = await asyncio.wait_for(
+                    asyncio.shield(agent_task),
+                    timeout=per_question_timeout,
+                )
+            except asyncio.TimeoutError:
+                agent_task.cancel()
+                try:
+                    # Bounded cleanup. CRITICAL: we `shield(agent_task)` so
+                    # this inner `wait_for` does NOT re-invoke the same
+                    # "await cancelled task to unwind" pathology we're
+                    # guarding against — if the task is ignoring
+                    # cancellation, awaiting it directly would block here
+                    # exactly as the original bug does in production.
+                    # Instead, shield + timeout gives us a strict
+                    # CLEANUP_GRACE_SECS ceiling. The task keeps running in
+                    # the background; the per-call 120 s HTTP timeout
+                    # (src/models/openaillm.py) and the 15 s browser close
+                    # guard (src/tools/auto_browser.py) reap its resources
+                    # on their own schedules.
+                    await asyncio.wait_for(
+                        asyncio.shield(agent_task), timeout=CLEANUP_GRACE_SECS
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                    logger.error(
+                        f"Task {example['task_id']}: cancel() did not "
+                        f"complete in {CLEANUP_GRACE_SECS}s — abandoning. "
+                        f"Proceeding with next task."
+                    )
+                # Re-raise to hand control to the outer TimeoutError branch,
+                # preserving the exact log message + state-mutation semantics
+                # the pre-change code produced.
+                raise asyncio.TimeoutError(
+                    f"Per-question timeout ({per_question_timeout}s) exceeded"
+                ) from None
 
             agent_memory = await agent.write_memory_to_messages(summary_mode=True)
             reformulation_model_id = getattr(config.agent_config, 'model_id', 'gpt-4.1')

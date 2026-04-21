@@ -730,14 +730,27 @@ class ModelManager(metaclass=Singleton):
 
         Covers Mistral Small 4 (`mistral-small-2603`). Tool results use role
         `tool`; parallel tool calls opt-in via `parallel_tool_calls` per request.
+
+        Multi-key round-robin (§P4 of HANDOFF_THROUGHPUT_REFACTOR.md):
+        reads `MISTRAL_API_KEY`, `MISTRAL_API_KEY_2`, `MISTRAL_API_KEY_3` …
+        via the `_load_suffix_keys` helper. When ≥2 keys are set, both the
+        native and LangChain registrations switch to the `KeyRotating*`
+        variants; with exactly 1 key the existing single-client code path
+        is taken unchanged.
         """
-        api_key = os.getenv("MISTRAL_API_KEY", PLACEHOLDER)
-        if api_key == PLACEHOLDER:
+        from src.models.openaillm import (
+            KeyRotatingChatOpenAI,
+            KeyRotatingOpenAIServerModel,
+            _load_suffix_keys,
+        )
+
+        api_keys = _load_suffix_keys("MISTRAL_API_KEY", placeholder=PLACEHOLDER)
+        if not api_keys:
             logger.warning("MISTRAL_API_KEY is not set, skipping Mistral models")
             return
 
         api_base = os.getenv("MISTRAL_API_BASE", "https://api.mistral.ai/v1")
-        logger.info("Registering Mistral models")
+        logger.info(f"Registering Mistral models ({len(api_keys)} key(s))")
 
         models = [
             {"model_name": "mistral-small", "model_id": "mistral-small-2603"},
@@ -746,19 +759,33 @@ class ModelManager(metaclass=Singleton):
         for m in models:
             model_name = m["model_name"]
             model_id = m["model_id"]
-            client = AsyncOpenAI(api_key=api_key, base_url=api_base)
-            registered_model = OpenAIServerModel(
-                model_id=model_id,
-                http_client=client,
-                custom_role_conversions=custom_role_conversions,
-            )
-            self.registed_models[model_name] = registered_model
 
-            langchain_model = ChatOpenAI(
-                model=model_id,
-                api_key=api_key,
-                base_url=api_base,
-            )
+            if len(api_keys) > 1:
+                registered_model = KeyRotatingOpenAIServerModel(
+                    model_id=model_id,
+                    api_keys=api_keys,
+                    api_base=api_base,
+                    custom_role_conversions=custom_role_conversions,
+                )
+                langchain_model = KeyRotatingChatOpenAI(
+                    model=model_id,
+                    api_keys=api_keys,
+                    base_url=api_base,
+                )
+            else:
+                client = AsyncOpenAI(api_key=api_keys[0], base_url=api_base)
+                registered_model = OpenAIServerModel(
+                    model_id=model_id,
+                    http_client=client,
+                    custom_role_conversions=custom_role_conversions,
+                )
+                langchain_model = ChatOpenAI(
+                    model=model_id,
+                    api_key=api_keys[0],
+                    base_url=api_base,
+                )
+
+            self.registed_models[model_name] = registered_model
             self.registed_models[f"langchain-{model_name}"] = langchain_model
 
     def _register_moonshot_models(self):

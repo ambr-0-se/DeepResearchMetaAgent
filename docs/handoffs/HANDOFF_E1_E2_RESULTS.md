@@ -119,6 +119,86 @@ Kimi and Gemma are excluded from the active matrix (see `HANDOFF_TEST_EVAL.md` �
 
 **Original fix directions superseded.** The "inject canary skill" + "tighten prompt wording" suggestions were mitigations for what we now know was a sample-size artifact. They are not necessary for E3. If post-E3 analysis shows the C4 accuracy lift is smaller than expected, reopen prompt-wording changes then.
 
+### F6 — Qwen `browser_use.Agent` has been broken since stack assembly (CRITICAL for Qwen C4 interpretation) — added 2026-04-22
+
+**Observation.** Across every run in the entire workdir history,
+`browser_use.Agent` on Qwen has failed at Step 1 and never progressed.
+Evidence:
+
+- `workdir/run_logs/full_qwen.log`: **3 266 `[agent] 📍 Step 1`
+  marks, 0 `Step 2` marks**. Every Qwen browser_use attempt died at
+  the first LLM call.
+- `workdir/run_logs/full_mistral.log`: **1 880 Step 1 + 1 970 Step 2
+  + 1 810 Step 3 + 1 577 Step 4 + … + 663 Step 10+**. Mistral's
+  browser_use works normally — distinct step distribution with
+  thousands of multi-step sessions.
+- Per-question E0 v3 Qwen `dra.jsonl`: 14 / 80 questions show
+  `browser_use_agent` delegation from the planner; all 14 produced
+  "about:blank, about:blank, about:blank" trajectories — browser_use
+  returned no useful web content.
+
+**Root cause.** Configs give Mistral and Qwen different LangChain
+wrappers for their browser tool:
+
+| Model | `auto_browser_use_tool_config.model_id` | Endpoint | `tool_choice="required"` support |
+|---|---|---|---|
+| Mistral | `langchain-mistral-small` | Mistral La Plateforme (native) | ✅ supported |
+| Qwen | `langchain-or-qwen3.6-plus` | OpenRouter → Alibaba | ❌ rejected with HTTP 404 |
+
+Our agent default is `tool_choice="required"`. The native path
+applies the `pick_tool_choice` downgrade (qwen/\* → `"auto"`) via
+`OpenAIServerModel.generate()`, but the LangChain path used by
+`auto_browser_use_tool` did not. So every Qwen browser_use.Agent
+Step 1 LLM call sent `"required"` → Alibaba → 404 → browser_use gave
+up on that step. Mistral's browser calls go direct to La Plateforme
+which accepts `"required"` natively; no downgrade needed.
+
+**Why this wasn't flagged until T3 v1:** browser_use.Agent failures
+at Step 1 don't surface as loud errors in `run_gaia.py`'s per-Q
+jsonl — the sub-agent returns a normal-looking result (something
+about "couldn't load the page") and the planner moves on. The 3 240-
+error cascade in T3 v1 was one Qwen question's retry loop sitting
+in the 1800 s budget long enough for the retries to accumulate; E0
+v3 questions bailed out through other error paths before the retry
+counter reached 3 000. The phenomenon was always there, just silent.
+
+**Implications for E0 v3 Qwen C4 training:**
+
+- 14 / 80 E0 v3 Qwen questions (17.5%) involved `browser_use_agent`
+  delegations that produced only failed trajectories.
+- Qwen's 2 learned skills from E0 v3 are biased toward cases where
+  the planner learned to **avoid** browser_use — `research-fallback-sources`
+  (prefer alt data sources when browser fails) and the `escalate-to-
+  deep-research-on-browser-failure` are skills that RESPOND to this
+  broken path rather than use it productively.
+- Mistral's 7 learned skills are unaffected — Mistral's browser_use
+  worked throughout.
+- E3 Qwen C4 cells will either show the same bias (if P5's fix isn't
+  live-validated before E3) OR show an improvement delta attributable
+  to P5 landing (if it is). Worth pre-registering this observation
+  before E3 submission so the paper can frame the result either way.
+
+**What P5 fixes and what it doesn't.** P5 addresses the tool_choice
+404 at the LangChain layer. If `browser_use.Agent` can reach its
+first LLM call without Playwright bailing out, P5's downgrade will
+rewrite `"required"` → `"auto"` and Alibaba will accept the request.
+What P5 does NOT fix: Playwright initialization failures, anti-bot
+blocks, JavaScript-heavy pages returning the fallback "Please enable
+JavaScript" text — those are separate browser-automation issues.
+
+**Fix direction.**
+1. Before E3: run a **targeted Qwen browser_use validation** (see
+   `HANDOFF_THROUGHPUT_REFACTOR.md` §Combined smoke executed). A
+   single Qwen question that reliably forces `browser_use_agent`
+   delegation + confirms Step 1 → Step 2+ transition + confirms the
+   `qwen/qwen3.6-plus -> auto` downgrade banner fires.
+2. Paper methodology footnote: disclose the 17.5% silent-failure rate
+   on E0 v3 Qwen browser delegations and the implication for learned-
+   skill composition.
+3. Optional longer-term: align Mistral and Qwen on the same browser
+   backend (e.g. both use native paths) so P5-style seam bifurcation
+   isn't needed.
+
 ### F3 — Timeout rows produce no skill-extraction signal during E0 training (CRITICAL for E0 interpretation)
 
 **Observation.** In `src/agent/adaptive_planning_agent/adaptive_planning_agent.py:323`, `super().run(...)` is awaited inside a `try:` block, and `_maybe_extract_skill(...)` is called after it returns. When the outer `asyncio.wait_for` in `run_gaia.py` cancels the inner agent task on timeout, `super().run()` raises `CancelledError` and the extraction branch is never reached. The `finally:` block only calls `_reset_to_original_state()`.

@@ -654,15 +654,16 @@ Tier 2 (`scripts/integration_test_multi_key.py`) fired 10 sequential
 completions against the real Mistral API and observed a perfect **5/5
 distribution** across the two keys.
 
-#### P5 — Qwen LangChain `tool_choice` downgrade (follow-on, committed `7f985cd`)
+#### P5 — Qwen LangChain `tool_choice` downgrade (follow-on, committed `7f985cd`) — **NOT LIVE-VALIDATED**
 
 T3 v1 aborted on **3 240 × HTTP 404 "No endpoints found that support
 the provided 'tool_choice' value"** on Qwen in ~2 min. Root cause:
 `auto_browser_use_tool` → LangChain `ChatOpenAI` → OR Alibaba Qwen;
 the LangChain path bypassed the hybrid dispatch policy the native path
-applies via `pick_tool_choice`. E0 v3 didn't surface it because
-Qwen's planner never actually chose `auto_browser_use_tool` in
-80 training questions (verified: 0/80 browser calls).
+applies via `pick_tool_choice`.
+
+**Initial diagnosis (2026-04-22) claimed E0 v3 "never exercised" this
+path. That claim was wrong — see corrected evidence below.**
 
 Fix: new `ToolChoiceDowngradingChatOpenAI` class (runtime-built via
 `make_tool_choice_downgrading_chat_openai` to keep `langchain_openai`
@@ -671,13 +672,60 @@ a lazy import) subclasses `ChatOpenAI` and overrides
 rule. Registration in `_register_openrouter_models` branches: wire
 ids in the auto-dispatch set (currently `qwen/*`) get the subclass;
 non-matching ids (Kimi, Gemma, MiniMax) stay on plain `ChatOpenAI`.
-Covered by 9 new unit tests.
+Covered by 16 unit tests (expanded from 9 post-review — covers all 4
+registered `qwen/*` OR aliases and a version-compatibility guard
+against a future langchain-openai upgrade removing
+`_get_request_payload`).
 
-T3v2 result: **zero 404s** on Qwen. The downgrade banner itself
-didn't fire in the log because Qwen's planner chose
-`deep_researcher_agent` for all 3 questions (so the LangChain path
-wasn't exercised in this smoke). The code path is verified by unit
-tests; the next live exposure will add the banner to the log.
+**Corrected evidence on E0 v3 and T3 runs (2026-04-22):**
+
+Full Qwen stream log (`workdir/run_logs/full_qwen.log`) shows
+**3 266 `[agent] 📍 Step 1` marks, all Step 1** — `browser_use.Agent`
+on Qwen has never progressed past Step 1 in any run. Compare Mistral:
+14 357 step marks distributed across Step 1→Step 10+. Qwen's
+browser_use path has been deterministically broken the entire time
+the stack has been assembled, not just during T3 v1.
+
+Per-run breakdown:
+
+| Run | Qwen `browser_use_agent` delegations (planner) | `[agent] 📍 Step` marks | 404 errors |
+|---|---|---|---|
+| E0 v3 (80 Qs, production caps) | **14 / 80** | ~25 (all Step 1) | ~0 observed in per-run log, ~25 via retries |
+| T3 v1 (aborted, 1 Q written) | ≥1 | 3 240 (all Step 1) | **3 240** |
+| T3 v2 (3 Qs, post-P5) | 1 / 3 | 0 | 0 |
+
+Why T3 v1 produced a 3 240-retry cascade where E0 v3 did not:
+unclear — most likely each E0 v3 delegation bailed out through a
+different error path (question timeout, max_steps, browser_use
+agent giving up) before the retry counter reached 3 000; T3 v1's
+one Qwen question happened to sit in the retry loop for the full
+per-Q budget.
+
+**What T3 v2's "zero 404s" actually proves:** the P5 code path was
+NOT exercised live. T3 v2's 1 Qwen `browser_use_agent` delegation
+emitted **0 step marks** in the per-run log, meaning
+`browser_use.Agent` didn't even reach its first LLM call — Playwright
+initialization or pre-LLM setup bailed before any downgrade could
+fire. The downgrade banner `[tool_choice] qwen/qwen3.6-plus -> auto`
+has never been seen in a live log.
+
+**So the correct status for P5 is:**
+- ✅ Unit-tested against real `openai.RateLimitError` + `httpx.Response`
+  shapes (16 tests).
+- ✅ Registration branching verified (every qwen/\* alias gets the
+  subclass; non-qwen gets plain ChatOpenAI).
+- ❌ **Not yet live-validated** on a Qwen question that drives
+  `browser_use.Agent` through at least one full LLM call. Pending
+  follow-up.
+
+**Broader implication** — see `HANDOFF_E1_E2_RESULTS.md` §F6 (added
+2026-04-22): Qwen's browser_use has been broken across every run in
+this stack's history. Any Qwen C4 result that involved the planner
+delegating to `browser_use_agent` has been biased downward since day
+one. The 14/80 = 17.5% of E0 v3 questions that involved browser
+delegation contributed only failed trajectories — the 2 learned
+skills Qwen produced during E0 v3 are skewed toward cases where the
+planner learned to route AROUND browser_use.
 
 #### Notes carried forward
 

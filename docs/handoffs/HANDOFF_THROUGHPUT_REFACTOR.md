@@ -654,7 +654,7 @@ Tier 2 (`scripts/integration_test_multi_key.py`) fired 10 sequential
 completions against the real Mistral API and observed a perfect **5/5
 distribution** across the two keys.
 
-#### P5 — Qwen LangChain `tool_choice` downgrade (follow-on, committed `7f985cd`) — **NOT LIVE-VALIDATED**
+#### P5 — Qwen LangChain `tool_choice` downgrade (follow-on, committed `7f985cd`) — **LIVE-VALIDATED 2026-04-22 via `scripts/p5_live_validation.py`**
 
 T3 v1 aborted on **3 240 × HTTP 404 "No endpoints found that support
 the provided 'tool_choice' value"** on Qwen in ~2 min. Root cause:
@@ -711,12 +711,21 @@ has never been seen in a live log.
 
 **So the correct status for P5 is:**
 - ✅ Unit-tested against real `openai.RateLimitError` + `httpx.Response`
-  shapes (16 tests).
+  shapes (16 tests, up from 9 post-review).
 - ✅ Registration branching verified (every qwen/\* alias gets the
   subclass; non-qwen gets plain ChatOpenAI).
-- ❌ **Not yet live-validated** on a Qwen question that drives
-  `browser_use.Agent` through at least one full LLM call. Pending
-  follow-up.
+- ✅ **Live-validated 2026-04-22** via `scripts/p5_live_validation.py`
+  driving `browser_use.Agent(llm=langchain-or-qwen3.6-plus)` on a
+  Wikipedia task. Pass criteria: C1 ≥1 `[agent] 📍 Step` mark (LLM call
+  completed) + C2 zero 404s. Both passed. Diagnostic D3 (downgrade
+  banner firing) did not fire — browser_use 0.1.48 + langchain-openai
+  0.3.11 does not send `tool_choice="required"` through the LangChain
+  wrapper, so the subclass has nothing to rewrite in the current
+  library state. The P5 subclass remains installed as **defensive
+  insurance** against a future library version that reintroduces
+  `"required"` on this path. Qwen even answered the task correctly
+  ("Macropus") from its pre-training knowledge during Step 1's multi-
+  action dump — confirming the LLM path works end-to-end.
 
 **Broader implication** — see `HANDOFF_E1_E2_RESULTS.md` §F6 (added
 2026-04-22): Qwen's browser_use has been broken across every run in

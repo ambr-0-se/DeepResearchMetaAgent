@@ -224,14 +224,24 @@ async def answer_single_question(config, example):
                         f"complete in {CLEANUP_GRACE_SECS}s — abandoning. "
                         f"Proceeding with next task."
                     )
-                    # Silence asyncio's "Task was destroyed but it is
-                    # pending!" warning that would otherwise fire at
-                    # event-loop shutdown. The task continues to run in
-                    # the background, bounded by the already-landed HTTP
-                    # + browser cleanup timeouts (see CLEANUP_GRACE_SECS
-                    # docstring above). This callback registers an
-                    # acknowledgement so asyncio considers the task
-                    # "retrieved" even though we intentionally drop it.
+                    # Suppress asyncio's "Task exception was never
+                    # retrieved" warning that would fire at GC time if
+                    # the abandoned task later finishes with an
+                    # exception. The callback invokes
+                    # `Future.result()`/`exception()` via asyncio's
+                    # done-callback plumbing which clears
+                    # `__log_traceback`, so any eventual failure in the
+                    # background task is silenced.
+                    #
+                    # The "Task was destroyed but it is pending!" warning
+                    # (a different warning, gated on `_state==_PENDING`
+                    # at `Task.__del__` time) is NOT controlled by this
+                    # callback — that one is already prevented by the
+                    # `agent_task.cancel()` call above, which transitions
+                    # the task to `_CANCELLED` before GC as long as the
+                    # event loop gets at least one cycle before shutdown.
+                    # Both warnings are cosmetic; this callback silences
+                    # the remaining one that could still fire.
                     agent_task.add_done_callback(lambda _t: None)
                 # Re-raise to hand control to the outer TimeoutError branch,
                 # preserving the exact log message + state-mutation semantics

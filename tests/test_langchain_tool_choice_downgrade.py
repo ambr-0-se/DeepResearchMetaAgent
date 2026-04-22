@@ -231,3 +231,136 @@ def test_kimi_or_registration_uses_plain_chatopenai(monkeypatch):
     kimi = mm.registed_models.get("langchain-or-kimi-k2.5")
     assert kimi is not None
     assert type(kimi) is ChatOpenAI
+
+
+# ---------------------------------------------------------------------------
+# Negative case — `OPENROUTER_API_KEY` unset skips registration
+# ---------------------------------------------------------------------------
+
+def test_openrouter_key_unset_skips_registration(monkeypatch):
+    """Guards the early-return in `_register_openrouter_models` that
+    skips registration entirely when no key is provided. If that guard
+    regresses (e.g. someone removes the `if api_key == PLACEHOLDER:`
+    branch), registering without a key would either crash at network
+    time or register models pointed at an unusable endpoint. This test
+    catches either failure mode at import time.
+    """
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    from src.models.models import ModelManager
+    ModelManager._instances = {}  # type: ignore[attr-defined]
+    mm = ModelManager()
+    mm.init_models()
+
+    # All `or-*` and `langchain-or-*` aliases should be absent.
+    or_aliases = [
+        k for k in mm.registed_models
+        if k.startswith("or-") or k.startswith("langchain-or-")
+    ]
+    assert or_aliases == [], (
+        f"Expected 0 OR aliases registered with OPENROUTER_API_KEY unset; "
+        f"got {or_aliases!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# All registered qwen/* OR variants get the downgrading subclass
+# ---------------------------------------------------------------------------
+
+# The full list of qwen/* OR aliases registered by _register_openrouter_models.
+# Sourced from src/models/models.py (2026-04-22). Add new slugs here whenever
+# a new Qwen OR variant is registered.
+QWEN_OR_ALIASES = [
+    "langchain-or-qwen3-max",
+    "langchain-or-qwen3.6-plus",
+    "langchain-or-qwen3-next-80b-a3b-instruct",
+    "langchain-or-qwen3-coder-next",
+]
+
+
+@pytest.mark.parametrize("alias", QWEN_OR_ALIASES)
+def test_every_qwen_or_variant_uses_downgrading_subclass(monkeypatch, alias):
+    """Every registered `qwen/*` OR wire id must map to the downgrading
+    subclass, not plain `ChatOpenAI`. A regression here (e.g. a new
+    Qwen variant added to models.py without the prefix match firing)
+    would silently re-expose the 404 tool_choice bug for that slug.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+
+    from src.models.models import ModelManager
+    ModelManager._instances = {}  # type: ignore[attr-defined]
+    mm = ModelManager()
+    mm.init_models()
+
+    model = mm.registed_models.get(alias)
+    assert model is not None, f"{alias} not registered at all"
+    # Behaviour-level assertion: the _get_request_payload override is
+    # installed (doesn't rely on class name which is a brittle contract).
+    assert (
+        type(model)._get_request_payload
+        is not ChatOpenAI._get_request_payload
+    ), (
+        f"{alias} is plain ChatOpenAI — downgrade override not installed. "
+        f"Check the prefix rule in pick_tool_choice() and the branching "
+        f"in _register_openrouter_models."
+    )
+
+
+def test_every_qwen_or_variant_behaviour_downgrades(monkeypatch):
+    """End-to-end behaviour check: feed each registered qwen/* variant
+    a `tool_choice="required"` call and assert the payload comes out
+    with `"auto"`. One parametrise combines the registration check
+    (above) with the actual rewrite semantics.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+
+    from src.models.models import ModelManager
+    ModelManager._instances = {}  # type: ignore[attr-defined]
+    mm = ModelManager()
+    mm.init_models()
+
+    for alias in QWEN_OR_ALIASES:
+        model = mm.registed_models.get(alias)
+        assert model is not None, f"{alias} missing"
+        payload = model._get_request_payload(
+            [HumanMessage(content="probe")],
+            tool_choice="required",
+            tools=[DUMMY_TOOL],
+        )
+        assert payload["tool_choice"] == "auto", (
+            f"{alias}: expected downgrade to 'auto'; got "
+            f"{payload['tool_choice']!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Factory runtime guard — langchain-openai version compatibility
+# ---------------------------------------------------------------------------
+
+def test_factory_raises_when_get_request_payload_removed(monkeypatch):
+    """The factory asserts `ChatOpenAI._get_request_payload` exists
+    before returning the subclass. If a langchain-openai upgrade
+    renames or removes this hook, every call site that relies on the
+    downgrade would silently fail — registration falls back to plain
+    ChatOpenAI with no override. The guard fails loudly instead.
+    """
+    # Patch langchain_openai.ChatOpenAI to a stub that LACKS
+    # `_get_request_payload`, simulating a hypothetical future version
+    # where the method was renamed.
+    import langchain_openai
+    original = langchain_openai.ChatOpenAI
+
+    class _FutureChatOpenAIWithoutGetRequestPayload:
+        # Deliberately no _get_request_payload attribute.
+        pass
+
+    monkeypatch.setattr(
+        langchain_openai, "ChatOpenAI", _FutureChatOpenAIWithoutGetRequestPayload
+    )
+
+    from src.models.openaillm import make_tool_choice_downgrading_chat_openai
+    with pytest.raises(RuntimeError, match="_get_request_payload"):
+        make_tool_choice_downgrading_chat_openai()
+
+    # Restore so the rest of the test module can still import cleanly.
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", original)

@@ -875,8 +875,31 @@ def make_tool_choice_downgrading_chat_openai():
 
         cls = make_tool_choice_downgrading_chat_openai()
         model = cls(model="qwen/qwen3.6-plus", api_key=..., base_url=...)
+
+    Implementation-stability guard
+    ------------------------------
+    Overrides `BaseChatOpenAI._get_request_payload` — a method with a
+    leading underscore in the LangChain public API, which means
+    LangChain is free to rename or restructure it across releases. We
+    assert it exists at factory time so a langchain-openai upgrade
+    that moves the method fails loudly at first call instead of
+    silently disabling the downgrade. Pinned + tested against
+    langchain-openai==0.3.11 (install date 2026-04-18); before
+    upgrading, confirm the method is still present via
+    `inspect.getsourcefile(ChatOpenAI._get_request_payload)`.
     """
     from langchain_openai import ChatOpenAI
+
+    if not hasattr(ChatOpenAI, "_get_request_payload"):
+        raise RuntimeError(
+            "langchain-openai removed or renamed "
+            "`ChatOpenAI._get_request_payload`. The Qwen tool_choice "
+            "downgrade path (P5) depends on this internal hook. Pin "
+            "the previous working version (0.3.11) in the environment "
+            "or port the override to the new method name. See "
+            "docs/handoffs/HANDOFF_THROUGHPUT_REFACTOR.md §P5 for the "
+            "seam rationale."
+        )
 
     class _Impl(ChatOpenAI):
         """Concrete subclass. See `ToolChoiceDowngradingChatOpenAI` for

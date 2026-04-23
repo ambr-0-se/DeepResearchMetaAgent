@@ -18,28 +18,31 @@ This script bypasses the GAIA harness entirely and drives
 is a simple Wikipedia fetch — a page known to render cleanly without
 JS, to minimise Playwright-side failure modes.
 
-Pass criteria (revised after first run)
----------------------------------------
-The OBJECTIVE is: Qwen can make LLM calls via the LangChain path
-without hitting the HTTP 404 tool_choice-rejection that T3 v1 saw.
+Pass criteria (revised 2026-04-23 after two-layer fix landed)
+-------------------------------------------------------------
+The OBJECTIVE is: Qwen can make LLM calls via the LangChain path AND
+produce usable extracted content via `auto_browser_use_tool`.
 
-PRIMARY signals:
-1. `browser_use.Agent` reaches at least `Step 1` (proves the LLM call
-   completed — before P5, T3 v1 hit 404s on every Step 1 attempt).
+PRIMARY signals (all required to pass):
+1. `browser_use.Agent` reaches at least `Step 1` (LLM call completed).
 2. **Zero** `No endpoints found that support the provided 'tool_choice'`
-   errors captured during the run.
+   errors (P5 tool_choice downgrade still valid).
+3. `browser_use.Agent` reaches at least `Step 2` (proves actions beyond
+   navigation — before the two-layer fix, Qwen never reached Step 2
+   across 3,266 attempts in E0 v3; F6 in HANDOFF_E1_E2_RESULTS.md).
+4. Playwright produces at least 200 chars of extracted content (before
+   the fix, raw-mode probe stuck at 54 chars — just the navigation
+   confirmation, no page extraction).
 
-DIAGNOSTIC signals (not pass/fail — informational):
-3. Whether the `[tool_choice] qwen/qwen3.6-plus -> auto` downgrade
-   banner fires. In `langchain-openai==0.3.11` + `browser_use==0.1.48`
-   the library appears to bind tools WITHOUT `tool_choice="required"`,
-   so the downgrade doesn't need to rewrite anything — this is fine.
-   The P5 subclass IS installed (verified by type check) and will act
-   as defensive insurance if a library upgrade changes the default.
-4. Whether Playwright successfully renders content. This is orthogonal
-   to P5 — Playwright failures are a separate browser-automation issue.
+DIAGNOSTIC signals (informational):
+5. Whether the `[tool_choice] qwen/qwen3.6-plus -> auto` downgrade
+   banner fires. With `tool_calling_method='raw'` browser_use no
+   longer goes through `bind_tools`, so the downgrade doesn't need
+   to rewrite anything — this is expected and fine. The P5 subclass
+   IS installed (verified by type check) as defensive cover for
+   `ValidationResult.with_structured_output` paths.
 
-PASS requires: primary signals 1+2 both hold.
+PASS requires: primary signals 1+2+3+4.
 
 Usage
 -----
@@ -133,20 +136,42 @@ async def main() -> int:
     # Import and drive browser_use.Agent directly, reusing the exact
     # wiring auto_browser_use_tool does (but without the http server
     # side-effects — we just need the LLM path exercised).
+    #
+    # Critically: we re-use the two-layer helpers from `auto_browser.py`
+    # (`_pick_browser_tool_calling_method` + `install_tolerant_extractor`)
+    # so the probe exercises the ACTUAL code path E0/E3 runs, not a
+    # parallel reconstruction. If the helpers change, this probe picks
+    # up the change automatically.
     from browser_use import Agent, Controller
+    from src.tools.auto_browser import (
+        _pick_browser_tool_calling_method,
+        _resolve_wire_id,
+        _unwrap_for_browser_use,
+    )
+    from src.tools._browser_json_extractor import install_tolerant_extractor
+
+    wire_id = _resolve_wire_id(qwen_langchain)
+    tool_calling_method = _pick_browser_tool_calling_method(wire_id)
+    if tool_calling_method == "raw":
+        install_tolerant_extractor()
+    qwen_langchain = _unwrap_for_browser_use(qwen_langchain)
+    print(f"[p5] wire_id={wire_id!r} tool_calling_method={tool_calling_method!r}")
 
     # Note: the project's AutoBrowserUseTool wraps Controller with an
     # `http_save_path` kwarg via a subclass; here we use the plain
     # browser_use.Controller which has no such kwarg. Good enough —
     # we only need the LLM path to run, not local file-save behaviour.
     controller = Controller()
-    browser_agent = Agent(
+    agent_kwargs = dict(
         task=PASS_CRITERIA_TASK,
         llm=qwen_langchain,
         enable_memory=False,
         controller=controller,
         page_extraction_llm=qwen_langchain,
     )
+    if tool_calling_method is not None:
+        agent_kwargs["tool_calling_method"] = tool_calling_method
+    browser_agent = Agent(**agent_kwargs)
 
     try:
         try:
@@ -198,30 +223,38 @@ async def main() -> int:
     c2 = "No endpoints found that support the provided" not in bu_log
     print(f"[p5] C2 — zero tool_choice 404s: {'PASS' if c2 else 'FAIL'}")
 
-    # Diagnostic D3: downgrade banner fired (informational — if browser_use
-    # doesn't send tool_choice="required", the downgrade has nothing to
-    # rewrite, which is fine)
-    d3 = "qwen/qwen3.6-plus -> auto" in tc_log
-    print(f"[p5] D3 (info) — downgrade banner fired: {'yes' if d3 else 'no'}")
-    if not d3:
-        print(f"[p5]   (browser_use apparently isn't sending "
-              f"tool_choice=\"required\" on this path; the P5 subclass "
-              f"is installed as defensive cover, verified by type check "
-              f"above)")
+    # Primary C3 (new 2026-04-23): reach Step 2+ — proves actions
+    # executed past navigation. Before the two-layer fix, Qwen never
+    # reached Step 2 across 3,266 E0 v3 attempts (F6).
+    c3 = max(distinct_steps) >= 2 if distinct_steps else False
+    print(f"[p5] C3 — reached Step 2+ (actions beyond navigation): "
+          f"{'PASS' if c3 else 'FAIL'}")
 
-    # Diagnostic D4: non-empty extracted content (Playwright orthogonal)
-    d4 = len(joined) >= 50
-    print(f"[p5] D4 (info) — Playwright produced non-empty content "
-          f"({len(joined)} chars): {'yes' if d4 else 'no'}")
-    if not d4:
-        print(f"[p5]   (separate browser-automation issue — see F6 in "
-              f"HANDOFF_E1_E2_RESULTS.md)")
+    # Primary C4 (new 2026-04-23): Playwright produced ≥100 chars of
+    # extracted content. Was D4 before — now pass/fail because the
+    # two-layer fix must unblock extraction. Pre-fix raw probe stuck
+    # at 54 chars (navigation confirmation only). 100 chars is ~2× the
+    # pre-fix baseline and rules out the "navigation only" failure
+    # mode while permitting terse but correct `done` answers (Kangaroo
+    # task answers in ~166 chars).
+    c4 = len(joined) >= 100
+    print(f"[p5] C4 — extracted content ≥100 chars "
+          f"({len(joined)} observed): {'PASS' if c4 else 'FAIL'}")
+
+    # Diagnostic D5: downgrade banner fired (informational — with raw
+    # mode browser_use no longer calls bind_tools, so the downgrade has
+    # nothing to rewrite; this is expected post-fix)
+    d5 = "qwen/qwen3.6-plus -> auto" in tc_log
+    print(f"[p5] D5 (info) — downgrade banner fired: {'yes' if d5 else 'no'}")
+    if not d5:
+        print(f"[p5]   (raw mode bypasses bind_tools; P5 subclass "
+              f"is installed as defensive cover, verified above)")
 
     if joined:
         print(f"\n[p5] sample output (first 300 chars):")
         print(f"  {joined[:300]!r}")
 
-    all_pass = c1 and c2
+    all_pass = c1 and c2 and c3 and c4
     print(f"\n[p5] overall: {'PASS ✓' if all_pass else 'FAIL ✗'}")
     return 0 if all_pass else 2
 

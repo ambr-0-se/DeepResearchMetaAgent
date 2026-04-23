@@ -783,6 +783,34 @@ class KeyRotatingChatOpenAI:
             self._handle_exc(idx, e)
             raise
 
+    # ---- Pydantic v1 validator shim --------------------------------------
+    #
+    # Some callers (browser_use `AgentSettings.__init__` → LangChain
+    # `raise_deprecation` pre_init validator) receive this wrapper as the
+    # `values` dict and call `values.get("callback_manager")`. That path
+    # can't be fulfilled by `__getattr__` delegation because `ChatOpenAI`
+    # has no `.get()`, so the AttributeError surfaces as
+    # ``Error: 'ChatOpenAI' object has no attribute 'get'`` and silently
+    # kills every browser_use session on multi-key Mistral / any other
+    # non-Pydantic-BaseChatModel wrapper. The clean fix is to provide an
+    # explicit dict-shaped `.get(key, default=None)` so validators that
+    # treat us as dict-like see a well-defined "unset" answer for every
+    # field. See HANDOFF_QWEN_BROWSER_RAW_MODE.md §KeyRotatingChatOpenAI
+    # compatibility fix.
+    def get(self, key: str, default=None):
+        """Dict-like shim for LangChain's pre-init validators that walk
+        `values.get("...")`. Returns the attribute if it exists, else
+        `default` — never raises.
+        """
+        # Serve the caller from the first instance when possible. If the
+        # attribute is missing (common: `callback_manager` in langchain
+        # >=0.3), fall back to `default` instead of raising — matches
+        # the dict.get() contract.
+        instances = self.__dict__.get("_instances")
+        if not instances:
+            return default
+        return getattr(instances[0], key, default)
+
     # ---- pass-through for the long tail -------------------------------
 
     def __getattr__(self, name: str):  # noqa: D401
@@ -910,12 +938,46 @@ def make_tool_choice_downgrading_chat_openai():
         def _get_request_payload(self, input_, *, stop=None, **kwargs):
             payload = super()._get_request_payload(input_, stop=stop, **kwargs)
 
+            model_id = payload.get("model") or getattr(self, "model_name", None)
+
+            # Raw-mode guard for Qwen (2026-04-23). When browser_use runs
+            # `tool_calling_method='raw'` it calls `llm.invoke(messages)`
+            # WITHOUT `bind_tools` — so the payload has no `tools` key.
+            # Alibaba's Qwen backend nonetheless returns
+            # `finish_reason='tool_calls'` with `content=""` (observed in
+            # the 2026-04-23 verbose probe: 243–298 completion tokens,
+            # 0 reasoning tokens, `content=''`, no tool_calls surfaced
+            # through LangChain's AIMessage). The library tags the
+            # response as tool-calls even though nothing was bound to
+            # call, which makes `extract_json_from_model_output` fail on
+            # empty content.
+            # Explicitly setting `tool_choice="none"` (supported by
+            # Alibaba per DashScope docs — the opposite knob to the
+            # `"required"` that was rejected) forces Qwen into plain
+            # chat-completion mode → `finish_reason="stop"` with the
+            # JSON in `content`. This is only applied when no tools are
+            # bound, so the standard `bind_tools`/`with_structured_output`
+            # paths are untouched.
+            tools = payload.get("tools")
+            tool_choice_unset = "tool_choice" not in payload
+            if (
+                tool_choice_unset
+                and not tools
+                and model_id
+                and model_id.startswith("qwen/")
+            ):
+                payload["tool_choice"] = "none"
+                logger.info(
+                    "[tool_choice] %s raw-mode (no tools) -> injected tool_choice='none'",
+                    model_id,
+                )
+                return payload
+
             requested = payload.get("tool_choice")
             if requested is None:
                 # Caller didn't set one; nothing to downgrade. Pass through.
                 return payload
 
-            model_id = payload.get("model") or getattr(self, "model_name", None)
             resolved = pick_tool_choice(model_id, default=requested)
             if resolved != requested and resolved == "auto":
                 payload["tool_choice"] = resolved

@@ -988,13 +988,8 @@ class ModelManager(metaclass=Singleton):
             self.registed_models[model_name] = registered_model
 
             # LangChain wrapper required by auto_browser_use_tool.
-            # Note: ChatOpenAI does not accept `extra_body` at construction;
-            # provider-specific routing (thinking off, provider pin, etc.) is
-            # not propagated here. If a browser-use agent starts exercising
-            # those code paths under Kimi/Gemma/etc., plumb `model_kwargs`
-            # through at that call site — out of scope for this change.
             #
-            # tool_choice hybrid dispatch parity with the native path
+            # (1) tool_choice hybrid dispatch parity with the native path
             # (src/models/tool_choice.py). For wire ids matched by
             # `pick_tool_choice` (currently anything starting with `qwen/`,
             # plus entries in `MODELS_REJECTING_REQUIRED`), build the
@@ -1006,19 +1001,33 @@ class ModelManager(metaclass=Singleton):
             # Regression source: T3 smoke 2026-04-22 hit a 404 flood on
             # Qwen auto_browser_use_tool — see
             # `docs/handoffs/HANDOFF_THROUGHPUT_REFACTOR.md` §Execution log.
+            #
+            # (2) Provider routing / reasoning-mode forwarding. For Qwen
+            # specifically we disable reasoning/thinking mode on the
+            # browser_use path (see HANDOFF_QWEN_BROWSER_RAW_MODE.md §L3):
+            # without this, Qwen sometimes consumes its entire output
+            # budget on reasoning tokens and emits `content=""`, causing
+            # browser_use's raw-mode parser to hit 3/3 parse failures
+            # and terminate the session before any extraction. The native
+            # path sets `enable_thinking=False` on DashScope but OpenRouter
+            # uses `reasoning={"enabled": False}` (same translation that
+            # `or-kimi-k2.5` and `or-gemma-4-31b-it` use above) — OR maps
+            # this to whichever provider-native knob matches the backend.
+            # langchain-openai ChatOpenAI accepts `extra_body` as a
+            # first-class constructor parameter (verified against
+            # langchain-openai==0.3.11, base.py:522).
+            langchain_kwargs: dict[str, Any] = dict(
+                model=model_id,
+                api_key=api_key,
+                base_url=api_base,
+            )
+            if model_id.startswith("qwen/"):
+                langchain_kwargs["extra_body"] = {"reasoning": {"enabled": False}}
             if pick_tool_choice(model_id, default="required") == "auto":
                 _Downgrading = make_tool_choice_downgrading_chat_openai()
-                langchain_model = _Downgrading(
-                    model=model_id,
-                    api_key=api_key,
-                    base_url=api_base,
-                )
+                langchain_model = _Downgrading(**langchain_kwargs)
             else:
-                langchain_model = ChatOpenAI(
-                    model=model_id,
-                    api_key=api_key,
-                    base_url=api_base,
-                )
+                langchain_model = ChatOpenAI(**langchain_kwargs)
             self.registed_models[f"langchain-{model_name}"] = langchain_model
 
     def _register_qwen_failover_models(self):

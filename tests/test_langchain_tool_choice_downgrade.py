@@ -95,19 +95,56 @@ def test_passes_through_tool_choice_for_non_auto_dispatch_models():
     )
 
 
-def test_no_tool_choice_in_payload_means_no_change():
-    """If the caller didn't set `tool_choice`, the payload is returned
-    unchanged — the downgrade only activates when there's something to
-    downgrade."""
+def test_no_tool_choice_non_qwen_passes_through():
+    """For non-Qwen models, absent `tool_choice` + absent `tools` must
+    pass through unchanged — the downgrade only activates when there's
+    something to downgrade."""
     Cls = make_tool_choice_downgrading_chat_openai()
-    model = Cls(model="qwen/qwen3.6-plus", api_key="fake", base_url="https://x")
+    # Use a non-Qwen wire id so the raw-mode Qwen injection doesn't fire.
+    model = Cls(model="gpt-4.1", api_key="fake", base_url="https://x")
 
     payload = model._get_request_payload([HumanMessage(content="hi")])
 
     assert "tool_choice" not in payload, (
         f"Payload should not gain a tool_choice key when the caller "
-        f"didn't set one; got {payload.get('tool_choice')!r}"
+        f"didn't set one for non-Qwen models; got "
+        f"{payload.get('tool_choice')!r}"
     )
+
+
+def test_qwen_no_tools_gets_tool_choice_none():
+    """Qwen-specific raw-mode guard: when `browser_use` calls
+    `llm.invoke()` WITHOUT `bind_tools`, the payload has no `tools` key
+    and no `tool_choice` either. Alibaba's Qwen backend still emits
+    `finish_reason='tool_calls'` + empty content in this state (observed
+    2026-04-23). We inject `tool_choice="none"` to force plain chat
+    completion. See HANDOFF_QWEN_BROWSER_RAW_MODE.md §B5."""
+    Cls = make_tool_choice_downgrading_chat_openai()
+    model = Cls(model="qwen/qwen3.6-plus", api_key="fake", base_url="https://x")
+
+    payload = model._get_request_payload([HumanMessage(content="hi")])
+
+    assert payload.get("tool_choice") == "none", (
+        f"Expected raw-mode guard to inject tool_choice='none' for Qwen "
+        f"without bound tools; got {payload.get('tool_choice')!r}"
+    )
+
+
+def test_qwen_with_tools_bound_keeps_downgrade_path():
+    """If tools ARE bound (structured_output path), the raw-mode guard
+    must NOT fire — only the standard Qwen downgrade applies."""
+    Cls = make_tool_choice_downgrading_chat_openai()
+    model = Cls(model="qwen/qwen3.6-plus", api_key="fake", base_url="https://x")
+
+    payload = model._get_request_payload(
+        [HumanMessage(content="hi")],
+        tool_choice="required",
+        tools=[DUMMY_TOOL],
+    )
+
+    # Required tools means tools are bound — the downgrade to "auto"
+    # is what should fire, NOT the raw-mode "none" injection.
+    assert payload["tool_choice"] == "auto"
 
 
 def test_payload_fields_preserved_after_downgrade():

@@ -33,6 +33,7 @@ FILES=(
   tests/test_skill_registry.py
   tests/test_skill_seed.py
   tests/test_tool_choice_dispatch.py
+  tests/test_auto_browser_qwen_raw_mode.py
 )
 
 for f in "${FILES[@]}"; do

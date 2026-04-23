@@ -35,6 +35,14 @@ def question_scorer(
     model_answer: str,
     ground_truth: str,
 ) -> bool:
+    # Parity with the official GAIA leaderboard scorer
+    # (huggingface.co/spaces/gaia-benchmark/leaderboard scorer.py): a None
+    # prediction is scored as the literal string "None" rather than raising.
+    # Ensures the function is safe to call on any prediction field without
+    # the caller having to guard it.
+    if model_answer is None:
+        model_answer = "None"
+
     # if gt is a number
     if is_float(ground_truth):
         normalized_answer = normalize_number_str(str(model_answer))

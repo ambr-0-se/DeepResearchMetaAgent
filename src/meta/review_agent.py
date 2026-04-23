@@ -47,6 +47,17 @@ You receive a single delegation to review, containing:
   * task_given       — the task passed to the sub-agent
   * expected_outcome — what the manager expected
   * actual_response  — what the sub-agent returned
+  * original_user_task (when available) — the outer task the planner is solving
+  * prior_attempts (when available) — compact log of earlier attempts on the
+    same delegation lineage in this task, including verdicts, root causes,
+    and truncated revised_task digests
+{%- if sub_agent_catalog %}
+
+AVAILABLE SUB-AGENTS (the planner's managed agents — use these names in
+`escalate.to_agent` and `modify_agent.agent_name`; do NOT invent names):
+
+{{ sub_agent_catalog }}
+{%- endif %}
 
 WORKFLOW
 
@@ -84,6 +95,27 @@ REVIEW RESULT SCHEMA
 root_cause_primary is REQUIRED when verdict != "satisfactory", and MUST be null
 when verdict == "satisfactory".
 
+ROOT CAUSE → RECOMMENDED NEXT ACTION
+
+Use this table as guidance when picking `next_action`. Rows marked
+"retry unavailable" will have any RetrySpec you emit coerced to proceed at
+runtime — respect the guidance and pick a supported action.
+
+| root_cause        | recommended next_action                                                  |
+|-------------------|--------------------------------------------------------------------------|
+| missing_tool      | modify_agent (add_existing_tool_to_agent preferred; add_new_tool_to_agent when no existing tool covers the capability) — retry unavailable |
+| wrong_tool        | modify_agent (add_existing_tool_to_agent OR remove_tool_from_agent) — retry unavailable |
+| bad_instruction   | retry (with clearer task)                                                |
+| misread_task      | retry (with task explicitly corrected)                                   |
+| unclear_goal      | retry (with clarified goal) OR proceed                                   |
+| incomplete        | retry once, then proceed                                                 |
+| external          | escalate OR proceed — retry unavailable (rephrasing cannot unlock paywalls, rate limits, or missing data) |
+| model_limit       | modify_agent (add python_interpreter_tool to offload arithmetic OR modify_agent_instructions to force step-by-step decomposition) OR escalate OR proceed — retry unavailable; do NOT propose speculative new tool synthesis, model_limit is a reasoning failure not a missing capability |
+
+For `bad_instruction` / `misread_task` / `unclear_goal`, prefer `retry`.
+For `missing_tool` / `wrong_tool`, prefer `modify_agent`.
+For `external` / `model_limit`, do not retry — choose `escalate` or `proceed`.
+
 NEXT ACTION VARIANTS (exactly one; dispatched on `action`)
 
 {"action": "proceed"}
@@ -115,19 +147,58 @@ NEXT ACTION VARIANTS (exactly one; dispatched on `action`)
  "reason":     "<why this agent is better suited>",
  "task":       "<task reformulated for the new agent>"}
   Switch to a different sub-agent. `to_agent` MUST be an existing managed
-  agent name.
+  agent name{%- if sub_agent_catalog %} from AVAILABLE SUB-AGENTS above{%- endif %}.
+
+WORKED EXAMPLES
+
+EXAMPLE 1 — modify_agent with add_existing_tool_to_agent (PREFERRED path)
+  {"action": "modify_agent",
+   "modify_action": "add_existing_tool_to_agent",
+   "agent_name": "deep_analyzer_agent",
+   "specification": "python_interpreter_tool",
+   "followup_retry": true}
+
+  The specification is the exact name of an existing tool from a
+  recognisable toolbox. Use this whenever the missing capability is
+  covered by something already available — no synthesis needed, lowest
+  risk.
+
+EXAMPLE 2 — modify_agent with add_new_tool_to_agent (gated: only when
+no existing tool covers the needed capability)
+  The specification is a natural-language requirement passed to a code
+  generator — keep it concrete, narrowly scoped, and implementable.
+
+  {"action": "modify_agent",
+   "modify_action": "add_new_tool_to_agent",
+   "agent_name": "deep_researcher_agent",
+   "specification": "A tool that queries the arXiv API at http://export.arxiv.org/api/query with parameters search_query and max_results (1-100), parses the Atom XML response, and returns a JSON list of {title, authors, abstract, pdf_url}. On HTTP error return the error string.",
+   "followup_retry": true}
+
+EXAMPLE 3 — retry (for bad_instruction / misread_task / unclear_goal only)
+  {"action": "retry",
+   "agent_name": "browser_use_agent",
+   "revised_task": "On en.wikipedia.org/wiki/Interstate_40, find the year construction was completed on the segment through Nashville, TN. Return only the year as a 4-digit number.",
+   "additional_guidance": "Use the Wikipedia table-of-contents to jump to the 'History' section; avoid keyword search on the full article.",
+   "avoid_patterns": ["returning the full article body",
+                      "answering with a date range instead of a year"]}
 
 CONSTRAINTS
 
 - You MUST return exactly one `final_answer_tool` call with a valid JSON payload.
-- Do not propose modify_actions or agent names that don't exist. If unsure,
-  prefer "retry" with clearer guidance over a speculative "modify_agent".
+- Do not propose modify_actions or agent names that don't exist.
+{%- if sub_agent_catalog %}
+  Use only the agent names listed under AVAILABLE SUB-AGENTS above.
+{%- endif %}
 - Be concise: `summary` is a single line, `root_cause_detail` is at most 2
   sentences. The planner reads this verbatim in the next THINK.
 - Only reach for `diagnose_subagent` when the failure reason isn't obvious.
   Every extra step costs tokens.
+- When `prior_attempts` shows earlier attempts with the same root cause,
+  do not re-emit the same next_action type — the prior attempts' evidence
+  already falsifies that path. Change strategy (escalate / modify_agent /
+  proceed).
 
-AVAILABLE TOOLS
+AVAILABLE TOOLS (the reviewer's own tools for this workflow)
 {%- for tool in tools.values() %}
 * {{ tool.name }}: {{ tool.description }}
 {%- endfor %}
@@ -216,6 +287,7 @@ class ReviewAgent(GeneralAgent):
         parent_agent: "AsyncMultiStepAgent",
         model: "Model",
         max_steps: int | None = None,
+        sub_agent_catalog: str | None = None,
     ) -> "ReviewAgent":
         """
         Construct a ReviewAgent sealed from the planner.
@@ -225,6 +297,12 @@ class ReviewAgent(GeneralAgent):
                 agent is allowed to inspect via DiagnoseSubAgentTool.
             model: LLM to use — should be `parent_agent.model`.
             max_steps: Override reasoning depth (default 3).
+            sub_agent_catalog: Pre-rendered catalog of the planner's managed
+                agents (names, descriptions, tool lists) to inject into the
+                system prompt under AVAILABLE SUB-AGENTS. When None, the
+                section is omitted (Jinja `{%- if sub_agent_catalog %}` guard).
+                Callers should produce this via
+                `ReviewStep._render_sub_agent_catalog(parent_agent)`.
 
         Returns:
             A fully initialised ReviewAgent instance. The returned agent is
@@ -284,9 +362,16 @@ class ReviewAgent(GeneralAgent):
 
         # Rendered prompts. The system prompt uses the {{tools}} iteration
         # from populate_template, same as GeneralAgent.initialize_system_prompt.
+        # sub_agent_catalog is injected under AVAILABLE SUB-AGENTS when
+        # supplied — the Jinja template has an `{%- if sub_agent_catalog %}`
+        # guard so the section is cleanly omitted when absent.
         agent.system_prompt = populate_template(
             prompt_templates["system_prompt"],
-            variables={"tools": agent.tools, "managed_agents": agent.managed_agents},
+            variables={
+                "tools": agent.tools,
+                "managed_agents": agent.managed_agents,
+                "sub_agent_catalog": sub_agent_catalog or "",
+            },
         )
         agent.user_prompt = populate_template(
             prompt_templates["user_prompt"],

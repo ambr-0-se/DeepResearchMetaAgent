@@ -179,6 +179,9 @@ async def answer_single_question(config, example):
     raised_exception = False
     exception = None
     attempts_made = 0
+    # Pre-initialise so the post-loop review_metrics extraction can't hit an
+    # UnboundLocalError if create_agent() raises on the first attempt.
+    agent = None
 
     for attempt in range(MAX_RETRIES + 1):
         attempts_made = attempt + 1
@@ -294,6 +297,23 @@ async def answer_single_question(config, example):
             raised_exception = True
             break
     end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Extract optional ReviewStep metrics from the agent. Under P1 semantics
+    # the agent task may be abandoned on timeout, but the `agent` object
+    # itself remains in scope here (it was assigned by `create_agent(config)`
+    # inside the retry loop, not to the abandoned task), so its
+    # `review_step._metrics` dict is still accessible. Defensive getattr so
+    # that C0/C2 (review_step=None) and any pre-agent crash produce None
+    # cleanly without breaking the row write.
+    review_metrics = None
+    try:
+        rev = getattr(agent, "review_step", None) if agent is not None else None
+        if rev is not None:
+            review_metrics = dict(rev._metrics)
+    except Exception:
+        # Never let metric emission break the row write.
+        review_metrics = None
+
     annotated_example = {
         "agent_name": config.agent_config.name,
         "question": example["question"],
@@ -302,6 +322,7 @@ async def answer_single_question(config, example):
         "output": output,
         "intermediate_steps": intermediate_steps,
         "parsing_error": parsing_error,
+        "review_metrics": review_metrics,
         "iteration_limit_exceeded": iteration_limit_exceeded,
         "agent_error": str(exception) if raised_exception else None,
         "start_time": start_time,

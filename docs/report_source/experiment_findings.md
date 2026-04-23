@@ -353,29 +353,71 @@ For `related_work.tex` / framing:
 Re-ordered 2026-04-21 after the §E0.3.d correction (rate-limiting is NOT
 a primary cause, so provider-level mitigations drop off the list).
 
-1. **Cap REVIEW retries per sub-agent per task at 2** in
-   [`src/meta/review_step.py`](../../src/meta/review_step.py). Highest
-   expected lift: this alone covers 100 % of Mistral timeout batches and
-   71 % of Qwen timeout batches. Applies uniformly to C3 and C4
-   (C0/C2 don't run REVIEW, so the cap is a no-op there —
-   ablation-safe).
+1. ~~**Cap REVIEW retries per sub-agent per task at 2**~~ → **LANDED**
+   2026-04-24 on branch `feat/review-step-hardening`. Scope widened in
+   implementation to cover more than a flat cap — see "Status" below.
+   Still pending: live 5-Q smoke validation (recipe in
+   [`docs/handoffs/HANDOFF_REVIEW_HARDENING.md`](../handoffs/HANDOFF_REVIEW_HARDENING.md)).
 2. **Cap DeepResearchTool consecutive 60 s fallbacks per task at 3** in
    [`src/tools/deep_researcher.py`](../../src/tools/deep_researcher.py).
    Qwen-specific bottleneck (Mistral barely uses DR). Returns a
    `research_exhausted` sentinel so the planner changes strategy instead
    of burning budget. Fairness-safe because it applies uniformly across
-   conditions and both models.
+   conditions and both models. **Not yet done.**
 3. **Timeout bump to 2,400 s** for E3. Trivial config change; marginal
    lift once (1) and (2) are in place, but still a cheap safety margin
-   for L3 tasks.
+   for L3 tasks. **Not yet done.**
 4. **`intermediate_steps` serialisation on timeout** — see Cross-cutting
    data-logging section. Not performance-critical but unlocks post-hoc
-   analysis on E3.
-5. **`None` guard in `question_scorer`** — already applied 2026-04-21
+   analysis on E3. **Not yet done.**
+5. ~~**`None` guard in `question_scorer`**~~ → **LANDED** 2026-04-21
    (see Cross-cutting scorer parity section).
 
 None of 1-4 affect ablation integrity; all apply uniformly to C0/C2/C3/C4
 and both models.
+
+### Status of item #1 (REVIEW retry hardening) — landed 2026-04-24
+
+Branch: `feat/review-step-hardening` (7 commits, ~296 tests passing
+offline). Scope in the plan evolved beyond a flat cap during
+implementation. **Delivered in this PR:**
+
+- **Asymmetric per-root-cause retry caps** (not flat=2):
+  `bad_instruction` / `misread_task` / `unclear_goal` → cap 2;
+  `incomplete` → cap 1; `external` / `model_limit` / `missing_tool` /
+  `wrong_tool` → cap 0 (retry never permitted — rephrasing cannot unlock
+  paywalls, fix reasoning gaps, or synthesise missing capabilities).
+- **Chain ledger** keyed on `(agent_name, intent_anchor)` — UUID
+  inherited across reviewer-driven retries, fresh-minted on planner
+  pivots. Resolves the narrow A→B→A via `_capped_anchors`.
+- **Task-wide blocklist** `(agent_name, root_cause)` — stronger guard
+  above the chain ledger. Once an agent fails with a cap=0 cause, ALL
+  future delegations (review-driven OR planner-initiated with fresh
+  anchor) are coerced. Closes the planner re-entry bypass that the
+  per-chain cap alone doesn't cover.
+- **Reviewer prompt rewrite** — sub-agent catalog + root-cause → action
+  advisory table + three worked examples (add_existing primary /
+  add_new gated / retry symmetric) + removed anti-bias line. Prompt
+  length 7.9-8.3 KB (under the 12 KB budget asserted in tests).
+- **Per-task metrics** (`retry_chains_started`, `retry_chains_capped`,
+  `retry_coercions_to_proceed`, `blocklist_coercions`,
+  `modify_agent_emitted`, `escalate_emitted`, `proceed_emitted`,
+  `max_chain_length`) emitted into the `dra.jsonl` row under the new
+  `review_metrics` key, for post-hoc calibration on E3.
+- **Deferred to follow-up PR**: parallel-delegation review schema
+  widening (original Layer 4). P6 is rare-and-silent in E0; moving the
+  schema change post-E3 isolates risk from the ablation-critical
+  retry-cap fix.
+
+**Expected impact on E3** (projected from the plan; to be validated by
+the live smoke run):
+
+- `review_retry_loop` signature count per batch: 40-70 → ≤ 5.
+- Per-Q wall time on runaway tasks: 1800 s → 300-900 s (2 retries max +
+  escalate/modify/proceed).
+- Scorable-rate on 80-Q sample: Mistral 33 → ~55-65; Qwen 26 → ~45-55.
+- `modify_agent` selection rate: 2.5 % → 8-15 %.
+- `escalate` selection rate: ~0 % → 5-10 %.
 
 ---
 

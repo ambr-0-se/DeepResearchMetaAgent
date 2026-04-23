@@ -306,6 +306,16 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         # Store original state before task execution
         self._store_original_state()
 
+        # C3/C4: initialise the ReviewStep per-task ledger. Idempotent;
+        # clears any stale chain/blocklist/metrics state and captures the
+        # original user task for inclusion in the reviewer's context.
+        # No-op under C0/C2 (review_step is None). Metrics extracted by
+        # run_gaia.py at the caller level after run() returns (see plan
+        # §Layer 3 — finally-branch is unreliable under P1 semantics, so
+        # we do NOT add a reset here in run()'s finally).
+        if self.review_step is not None:
+            self.review_step.on_task_start(task)
+
         # C4: refresh skill registry blocks so newly-extracted skills from
         # prior tasks are visible to the planner and sub-agents this run.
         # Must happen AFTER _store_original_state (which captures tools)

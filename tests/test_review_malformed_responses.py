@@ -141,6 +141,49 @@ class TestValidateNextAction:
         out = rs._validate_next_action(result)
         assert isinstance(out.next_action, ProceedSpec)
         assert "unknown agent" in out.summary.lower()
+        # New metric tracks this separately from `proceed_emitted` so the
+        # latter stays clean for "reviewer intentionally chose proceed".
+        assert rs._metrics["hallucinated_target_coercions"] == 1
+
+    def test_modify_on_hallucinated_agent_falls_back(self):
+        """New in v1.1: ModifyAgentSpec.agent_name is now validated too.
+        Defence in depth: even if modify_subagent's handler catches a bad
+        name downstream, coercing here saves a planner step."""
+        from src.meta.review_schema import ModifyAgentSpec
+        rs = self._rs()
+        result = ReviewResult(
+            verdict="unsatisfactory", confidence=0.8,
+            summary="add a tool", root_cause_primary=RootCauseCategory.MISSING_TOOL,
+            next_action=ModifyAgentSpec(
+                modify_action="add_existing_tool_to_agent",
+                agent_name="INVENTED_AGENT",  # not in managed_agents
+                specification="python_interpreter_tool",
+                followup_retry=True,
+            ),
+        )
+        out = rs._validate_next_action(result)
+        assert isinstance(out.next_action, ProceedSpec)
+        assert "unknown agent" in out.summary.lower()
+        assert "add_existing_tool_to_agent" in out.summary.lower() or \
+               "modify" in out.summary.lower()
+        assert rs._metrics["hallucinated_target_coercions"] == 1
+
+    def test_modify_on_known_agent_passes(self):
+        from src.meta.review_schema import ModifyAgentSpec
+        rs = self._rs()
+        result = ReviewResult(
+            verdict="unsatisfactory", confidence=0.8,
+            summary="add tool", root_cause_primary=RootCauseCategory.MISSING_TOOL,
+            next_action=ModifyAgentSpec(
+                modify_action="add_existing_tool_to_agent",
+                agent_name="browser_use_agent",  # exists
+                specification="python_interpreter_tool",
+                followup_retry=True,
+            ),
+        )
+        out = rs._validate_next_action(result)
+        assert isinstance(out.next_action, ModifyAgentSpec)
+        assert rs._metrics["hallucinated_target_coercions"] == 0
 
 
 class TestFallbackProceed:

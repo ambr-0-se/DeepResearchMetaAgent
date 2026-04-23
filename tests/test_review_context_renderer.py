@@ -153,6 +153,41 @@ class TestDigestHelper:
         assert d.endswith("…")
 
 
+class TestContextLengthBudget:
+    """CONTEXT_TEXT_SOFT_BUDGET sanity. The guard is a WARNING-only log,
+    not a truncation — the rendered text must always fully convey the
+    blocklist / prior_attempts directives. Here we verify the guard doesn't
+    break rendering on large inputs."""
+
+    def test_constant_is_sane(self):
+        # 10 KB is well below typical model context windows but large
+        # enough to accommodate 1500 + 5×200 + ~2 KB overhead.
+        assert ReviewStep.CONTEXT_TEXT_SOFT_BUDGET >= 8_000
+        assert ReviewStep.CONTEXT_TEXT_SOFT_BUDGET <= 32_000
+
+    def test_large_context_still_renders_completely(self):
+        """Even when above the soft budget, all required sections must be
+        present. Truncation would silently drop the load-bearing directives."""
+        priors = [
+            PriorAttempt(i, "unsatisfactory", "external", "x" * 140)
+            for i in range(1, 6)
+        ]
+        long_task = "A" * 1400
+        rendered = ReviewStep._format_context_for_review(
+            _ctx(),
+            original_user_task=long_task,
+            prior_attempts=priors,
+            task_blocklist_directive="IMPORTANT: blocklist",
+            chain_capped_directive="CHAIN CAPPED: foo",
+        )
+        # All sections present regardless of size
+        assert "IMPORTANT: blocklist" in rendered
+        assert "CHAIN CAPPED: foo" in rendered
+        assert "ORIGINAL USER TASK" in rendered
+        assert "PRIOR ATTEMPTS" in rendered
+        assert "#5" in rendered  # last prior retained
+
+
 class TestSubAgentCatalog:
     def test_empty_managed_agents(self):
         p = MagicMock()

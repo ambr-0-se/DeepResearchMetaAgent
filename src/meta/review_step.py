@@ -93,6 +93,11 @@ _METRIC_KEYS: tuple[str, ...] = (
     "escalate_emitted",
     "proceed_emitted",
     "max_chain_length",
+    #: Count of EscalateSpec / ModifyAgentSpec coerced to ProceedSpec
+    #: because the targeted agent name wasn't in parent.managed_agents.
+    #: Kept separate from `proceed_emitted` so the latter stays clean as
+    #: "reviewer genuinely chose proceed" for post-hoc calibration.
+    "hallucinated_target_coercions",
 )
 
 
@@ -186,6 +191,15 @@ class ReviewStep:
     #: retry is categorically capped by Layer 2's per-root-cause limits, so
     #: more history adds tokens without adding signal.
     PRIOR_ATTEMPTS_KEEP_LAST: int = 5
+
+    #: Soft budget on the rendered task_text fed to the ReviewAgent. The
+    #: reviewer's 3-step budget + model context window can stretch further,
+    #: but keeping the task text under ~10 KB prevents the reviewer from
+    #: spending its step budget on reading history instead of deciding.
+    #: Measured in characters; a WARNING is logged if exceeded but the text
+    #: is NOT truncated (truncation could drop blocklist directives or the
+    #: prior_attempts log, which are load-bearing for correct dispatch).
+    CONTEXT_TEXT_SOFT_BUDGET: int = 10_000
 
     def __init__(self, parent_agent: "AsyncMultiStepAgent") -> None:
         self.parent = parent_agent
@@ -697,6 +711,18 @@ class ReviewStep:
             chain_capped_directive=chain_capped_directive,
         )
 
+        # Soft bloat guard — log a WARNING if the rendered context exceeds
+        # the budget, but do NOT truncate. Truncation could silently drop
+        # blocklist / prior_attempts directives that are load-bearing for
+        # correct dispatch downstream.
+        if len(task_text) > self.CONTEXT_TEXT_SOFT_BUDGET:
+            logger.log(
+                f"[ReviewStep] task_text len={len(task_text)} exceeds soft "
+                f"budget {self.CONTEXT_TEXT_SOFT_BUDGET} for agent="
+                f"{ctx.agent_name!r}; reviewer may spend extra tokens.",
+                level=LogLevel.WARNING,
+            )
+
         try:
             raw = await agent.run(task_text, reset=True)
         except Exception as e:
@@ -848,14 +874,38 @@ class ReviewStep:
         Validate agent-name references in the next_action against the
         planner's actual managed_agents. Hallucinated names fall back to
         ProceedSpec with a warning embedded in the summary — we do NOT raise.
+
+        Cases coerced:
+          - EscalateSpec.to_agent not in managed_agents
+          - ModifyAgentSpec.agent_name not in managed_agents (defence in
+            depth: even if modify_subagent's own handler eventually catches
+            a bad name, coercing here avoids wasting a planner step on a
+            doomed tool call)
+
+        Coercions bump `_metrics["hallucinated_target_coercions"]` so they
+        stay out of `proceed_emitted` (which is reserved for "reviewer
+        intentionally chose proceed"). This preserves the calibration
+        signal on `proceed_emitted` for post-hoc analysis.
         """
         managed_names = set(getattr(self.parent, "managed_agents", {}).keys())
 
         if isinstance(result.next_action, EscalateSpec):
             if result.next_action.to_agent not in managed_names:
+                self._metrics["hallucinated_target_coercions"] += 1
                 return _fallback_proceed(
                     f"Review escalated to unknown agent "
                     f"'{result.next_action.to_agent}'; defaulting to proceed. "
+                    f"(original summary: {result.summary})"
+                )
+
+        if isinstance(result.next_action, ModifyAgentSpec):
+            if result.next_action.agent_name not in managed_names:
+                self._metrics["hallucinated_target_coercions"] += 1
+                return _fallback_proceed(
+                    f"Review proposed modify_agent on unknown agent "
+                    f"'{result.next_action.agent_name}' "
+                    f"(modify_action={result.next_action.modify_action!r}); "
+                    f"defaulting to proceed. "
                     f"(original summary: {result.summary})"
                 )
 

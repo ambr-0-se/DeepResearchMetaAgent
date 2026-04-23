@@ -35,14 +35,13 @@ Error handling:
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 from pydantic import ValidationError
 
 from src.logger import LogLevel, logger
 from src.memory import ActionStep
-from src.meta.review_agent import ReviewAgent
 from src.meta.review_schema import (
     EscalateSpec,
     ProceedSpec,
@@ -51,6 +50,8 @@ from src.meta.review_schema import (
 
 if TYPE_CHECKING:
     from src.base.async_multistep_agent import AsyncMultiStepAgent
+    from src.meta.review_agent import ReviewAgent  # runtime import deferred
+                                                    # (see _get_or_build_review_agent)
 
 
 # --- DelegationContext ------------------------------------------------------
@@ -69,6 +70,24 @@ class DelegationContext:
     expected_outcome: str    # planner's stated intent (best-effort extraction)
     actual_response: str     # sub-agent's response, from tool_results/observations
     step_number: int         # planner's step index (for budget-aware skips)
+
+
+# --- PriorAttempt (chain-ledger history row) --------------------------------
+
+@dataclass(frozen=True)
+class PriorAttempt:
+    """
+    A single earlier attempt on the same delegation lineage, stored in the
+    chain ledger's `prior` list. Rendered into the reviewer task text so
+    the reviewer can see what has already been tried on this intent.
+
+    Only the fields needed for the reviewer's decision are included —
+    full ReviewResults are not retained.
+    """
+    attempt_idx: int                # 1-based index within the chain
+    verdict: str                    # "satisfactory" | "partial" | "unsatisfactory"
+    root_cause: Optional[str]       # str value of RootCauseCategory, or None
+    revised_task_digest: str        # task_given truncated to PRIOR_ATTEMPT_DIGEST_MAX
 
 
 # --- Fallback ReviewResults -------------------------------------------------
@@ -99,9 +118,25 @@ class ReviewStep:
     #: Review is worthless if the planner has no budget to act on it.
     STEPS_REMAINING_SKIP_THRESHOLD: int = 1
 
+    #: Max chars of a revised_task kept in the prior_attempts digest. 150
+    #: chars is enough to identify intent; keeping 5 priors × 150 chars ≈
+    #: 1 KB of history context, well under the reviewer's 3-step budget.
+    PRIOR_ATTEMPT_DIGEST_MAX: int = 150
+
+    #: Hard cap on how many prior attempts we retain per chain. Beyond this,
+    #: retry is categorically capped by Layer 2's per-root-cause limits, so
+    #: more history adds tokens without adding signal.
+    PRIOR_ATTEMPTS_KEEP_LAST: int = 5
+
     def __init__(self, parent_agent: "AsyncMultiStepAgent") -> None:
         self.parent = parent_agent
-        self._review_agent: Optional[ReviewAgent] = None
+        self._review_agent: Optional["ReviewAgent"] = None
+        #: Original user task for the current GAIA question. Set by
+        #: `on_task_start` (called from the planner); rendered into the
+        #: reviewer task text so the reviewer can tell "sub-agent failed its
+        #: sub-task" from "planner gave wrong sub-task". Empty string when
+        #: not yet initialised — harmless (the rendering guards on it).
+        self._original_user_task: str = ""
 
     # -- public API ----------------------------------------------------------
 
@@ -233,25 +268,99 @@ class ReviewStep:
 
     # -- review agent invocation --------------------------------------------
 
-    def _get_or_build_review_agent(self) -> ReviewAgent:
-        """Lazy-build the ReviewAgent on first use; reuse across calls."""
+    def _get_or_build_review_agent(self) -> "ReviewAgent":
+        """
+        Lazy-build the ReviewAgent on first use; reuse across calls.
+
+        The sub-agent catalog is rendered lazily at build time from the
+        planner's current `managed_agents` dict, so it reflects whatever
+        the planner was given at construction time. Because `build()` is
+        idempotent and each GAIA question gets a fresh planner (and thus
+        a fresh `ReviewStep`), the catalog is effectively per-task.
+
+        `ReviewAgent` is imported lazily here to break the circular import
+        chain (review_step → review_agent → general_agent → agent.__init__
+        → adaptive_planning_agent → review_step). The lazy import keeps
+        `src.meta.review_step` importable without transitively pulling in
+        the agent construction graph, which enables unit-testing of the
+        chain ledger without instantiating real agents.
+        """
         if self._review_agent is None:
+            from src.meta.review_agent import ReviewAgent
+            catalog = self._render_sub_agent_catalog()
             self._review_agent = ReviewAgent.build(
                 parent_agent=self.parent,
                 model=self.parent.model,
+                sub_agent_catalog=catalog,
             )
         return self._review_agent
 
-    async def _run_review_agent(self, ctx: DelegationContext) -> ReviewResult:
+    def _render_sub_agent_catalog(self) -> str:
+        """
+        Produce a compact string listing the planner's managed agents:
+        name, description, and tool names. Rendered once per ReviewAgent
+        build and injected into REVIEW_AGENT_SYSTEM_PROMPT under
+        AVAILABLE SUB-AGENTS.
+
+        Returns an empty string when the planner has no managed agents —
+        the prompt's `{%- if sub_agent_catalog %}` guards then omit the
+        entire section (and the references to it) cleanly.
+        """
+        managed = getattr(self.parent, "managed_agents", None) or {}
+        if not managed:
+            return ""
+        lines: list[str] = []
+        for name in sorted(managed.keys()):
+            agent = managed[name]
+            desc = (getattr(agent, "description", None) or "").strip()
+            # Tool names: agent.tools is a dict[name, Tool]. Skip
+            # final_answer_tool — it's ubiquitous and adds no signal.
+            tools = getattr(agent, "tools", None) or {}
+            tool_names = sorted(t for t in tools.keys() if t != "final_answer_tool")
+            # Keep the block compact (<=500 chars total for 3 agents is
+            # the budget in the plan): single-line description, tool
+            # list on the next indented line.
+            desc_line = f"* {name} — {desc[:160]}" if desc else f"* {name}"
+            lines.append(desc_line)
+            if tool_names:
+                lines.append(f"  tools: [{', '.join(tool_names)}]")
+        return "\n".join(lines)
+
+    async def _run_review_agent(
+        self,
+        ctx: DelegationContext,
+        *,
+        prior_attempts: Optional[list[PriorAttempt]] = None,
+        task_blocklist_directive: str = "",
+        chain_capped_directive: str = "",
+    ) -> ReviewResult:
         """
         Invoke the sealed ReviewAgent and parse its final_answer into a
         ReviewResult.
+
+        Extra kwargs (all optional; default to empty/None so current behaviour
+        is unchanged when Layer 2 chain ledger is not yet wiring them):
+
+        - `prior_attempts`: earlier attempts on the same chain; rendered into
+          the task text under a "PRIOR ATTEMPTS" block so the reviewer can
+          tell "already tried and failed that" from "fresh delegation".
+        - `task_blocklist_directive`: rendered verbatim (when non-empty) as
+          an explicit "retry unavailable — agent X previously failed with
+          root_cause=Y" note at the top of the task text.
+        - `chain_capped_directive`: same, for the "this specific delegation
+          lineage is capped" case.
 
         Failures are swallowed: we return a fallback ProceedSpec rather than
         raising, because a broken reviewer must not break the planner's run.
         """
         agent = self._get_or_build_review_agent()
-        task_text = self._format_context_for_review(ctx)
+        task_text = self._format_context_for_review(
+            ctx,
+            original_user_task=self._original_user_task,
+            prior_attempts=prior_attempts,
+            task_blocklist_directive=task_blocklist_directive,
+            chain_capped_directive=chain_capped_directive,
+        )
 
         try:
             raw = await agent.run(task_text, reset=True)
@@ -273,15 +382,81 @@ class ReviewStep:
         return self._validate_next_action(parsed)
 
     @staticmethod
-    def _format_context_for_review(ctx: DelegationContext) -> str:
-        """Render a DelegationContext into the task text for the ReviewAgent."""
-        return (
+    def _format_context_for_review(
+        ctx: DelegationContext,
+        *,
+        original_user_task: str = "",
+        prior_attempts: Optional[list[PriorAttempt]] = None,
+        task_blocklist_directive: str = "",
+        chain_capped_directive: str = "",
+    ) -> str:
+        """
+        Render a DelegationContext (plus optional task-wide signals) into the
+        task text for the ReviewAgent.
+
+        Sections are ordered so the highest-salience items come first — the
+        reviewer is bounded to 3 steps and may not scroll back:
+
+            1. Cap directives (task blocklist, chain capped) — tells reviewer
+               up front which next_action types are unavailable.
+            2. Original user task — what the outer GAIA question is.
+            3. Prior attempts — compact log of earlier attempts on this chain.
+            4. Core delegation fields (agent_name, task_given, ...).
+
+        Any optional section that is empty is omitted entirely; the rendering
+        must stay identical to the pre-Layer-3 shape when all optional
+        arguments are empty/None (so commit 2 is behaviour-preserving — the
+        chain ledger in commit 3 is what actually populates these fields).
+        """
+        parts: list[str] = []
+
+        if task_blocklist_directive:
+            parts.append(task_blocklist_directive.strip())
+        if chain_capped_directive:
+            parts.append(chain_capped_directive.strip())
+
+        if original_user_task:
+            # Keep the outer task bounded so it can't dominate the reviewer's
+            # context. 1500 chars is roughly 300-400 tokens, enough to convey
+            # intent without crowding out prior_attempts / actual_response.
+            trimmed = original_user_task.strip()
+            if len(trimmed) > 1500:
+                trimmed = trimmed[:1500].rstrip() + " …"
+            parts.append(f"ORIGINAL USER TASK:\n{trimmed}")
+
+        if prior_attempts:
+            lines = ["PRIOR ATTEMPTS (same delegation lineage, oldest → newest):"]
+            for pa in prior_attempts:
+                rc = pa.root_cause if pa.root_cause is not None else "—"
+                lines.append(
+                    f"  #{pa.attempt_idx}  verdict={pa.verdict}  root_cause={rc}\n"
+                    f"    revised_task_digest: {pa.revised_task_digest!r}"
+                )
+            parts.append("\n".join(lines))
+
+        parts.append(
             f"agent_name: {ctx.agent_name}\n"
             f"task_given:\n{ctx.task_given}\n\n"
             f"expected_outcome (from planner reasoning):\n{ctx.expected_outcome}\n\n"
             f"actual_response:\n{ctx.actual_response}\n\n"
             f"(planner step_number: {ctx.step_number})"
         )
+
+        return "\n\n".join(parts)
+
+    @classmethod
+    def _digest_task(cls, task_given: str, cap: Optional[int] = None) -> str:
+        """
+        Condense a task_given string into a fixed-max digest for inclusion in
+        the prior_attempts block. Collapses whitespace and truncates.
+        """
+        effective_cap = cap if cap is not None else cls.PRIOR_ATTEMPT_DIGEST_MAX
+        if not task_given:
+            return ""
+        collapsed = " ".join(task_given.split())
+        if len(collapsed) > effective_cap:
+            collapsed = collapsed[: effective_cap - 1].rstrip() + "…"
+        return collapsed
 
     @staticmethod
     def _parse_review_result(raw: Any) -> Optional[ReviewResult]:

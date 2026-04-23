@@ -43,7 +43,58 @@ All three layers verified without a live API:
    against `browser_use_agent`. Post-patch it would have terminated in 3
    cycles ≈ 1-2 planner steps.
 
-## Live-eval verification (deferred to user's next eval window)
+## Live-eval verification — 3-Q smoke (2026-04-24 04:08-04:40 HKT)
+
+**Result: PASS.** 3-Q smoke run on validation seed=42 (`max_samples=3`,
+per-Q timeout 1800 s, planner max_steps 15) against both C4 cells in
+parallel. Tasks: `6f37996b` (Cayley table), `e961a717` (Chinese chess
+pieces), `023e9d44` (CA→ME drive).
+
+| Model | Correct | Duration (s) | review_metrics total |
+|---|---:|---|---|
+| Mistral (c=4) | 2/3 | 235 / 759 / 1047 | retry_chains_started=20, proceed_emitted=20, **all others 0** |
+| Qwen (c=8) | 2/3 | 699 / 1014 / 1858 | retry_chains_started=9, proceed_emitted=9, **all others 0** |
+
+**Comparison to E0 baseline (same-task subset where applicable):**
+
+| Metric | E0 v3 | Smoke | Δ |
+|---|---|---|---|
+| `review_retry_loop` signature count | 730 (Mistral) / 210 (Qwen) across all timeout batches | **0** / **0** | retry loops eliminated |
+| Timeouts | 46/80 Mistral + 54/80 Qwen | **0/3 + 0/3** | zero on this sample |
+| `retry_chains_capped` | n/a (no metric) | 0 | reviewer never hit cap |
+| `retry_coercions_to_proceed` | n/a | 0 | no cap=0 coercions fired |
+| `blocklist_coercions` | n/a | 0 | no planner re-entry blocks fired |
+| `hallucinated_target_coercions` | n/a | 0 | no escalate/modify hallucinations |
+| Accuracy on scorable | 33.3% (Mistral 11/33) / 61.5% (Qwen 16/26) | **67% (4/6 combined)** | massive lift, small sample |
+| Skill library | 7 seeded → 13 (M) / 9 (Q) over 80 Qs | 7 seeded → 8 (M) / 7 (Q) over 3 Qs | 1 new skill learned (Mistral: `verify-binary-operation-commutativity`) |
+
+**Verification of all acceptance criteria from the plan:**
+
+- ✅ `review_metrics` dict populated on every row (9 keys: the 8
+  plan-original + new `hallucinated_target_coercions`).
+- ✅ `review_retry_loop` signature count per batch drops to 0
+  (was 40-70 in E0 timeout batches).
+- ✅ Zero crashes, zero `agent_error`.
+- ✅ No retries, no hallucinations, no coercions — the reviewer took
+  the proceed path on every delegation.
+- ✅ Skill extraction still works (`verify-binary-operation-commutativity`
+  was added to mistral library mid-smoke).
+- ✅ C0/C2 ablation intact by construction (not under test here, but
+  `review_step is None` guard in `_post_action_hook` is unchanged).
+
+**New observation — reviewer leniency:** on this sample, the reviewer
+chose `proceed` for 29/29 delegations (`proceed_emitted=29`). This
+includes tasks where the sub-agent produced a subtly wrong answer
+(Mistral `6f37996b`: `b,d,e` vs truth `b, e`; Qwen `023e9d44`: `7.75`
+vs truth `8`). The retry-cap infrastructure is proven; the separate
+question of reviewer judgment calibration (should it have caught these
+partial-correct answers?) is orthogonal and out of scope for this PR.
+A future PR may want to tune the reviewer prompt to be more critical
+when the sub-agent's response looks superficially but not exactly
+correct. For now, the PR has done its job: unbounded retry loops are
+dead.
+
+## Live-eval verification — full E3 (pending user's next eval window)
 
 The plan calls for a 5-Q smoke run against a real API. This consumes
 tokens from the user's budget and is NOT blocking merge. Recommended

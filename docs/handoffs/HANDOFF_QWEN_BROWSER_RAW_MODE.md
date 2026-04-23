@@ -163,7 +163,7 @@ knob used by the `or-kimi-k2.5` and `or-gemma-4-31b-it` registrations).
 | [src/models/models.py](../../src/models/models.py) | `_register_openrouter_models`: pass `extra_body={"reasoning":{"enabled":False}}` for any `qwen/*` wire id to the LangChain wrapper | L3 |
 | [scripts/p5_live_validation.py](../../scripts/p5_live_validation.py) | Exercise real `auto_browser.py` helpers (not reconstruction); tighten D4→C4 + add C3 (Step 2+ required) | verify L1+L2+L3 end-to-end |
 | [scripts/mistral_browser_use_regression.py](../../scripts/mistral_browser_use_regression.py) (NEW) | Regression smoke against Mistral La Plateforme — asserts default path unchanged, tolerant extractor NOT installed, Step 2+ reached, ≥100 chars extracted | R6 fairness guardrail |
-| [tests/test_auto_browser_qwen_raw_mode.py](../../tests/test_auto_browser_qwen_raw_mode.py) (NEW) | 24 unit tests (T1 parser × 9, T2 installer × 4, T3 kwarg selection × 4, T4 Mistral unchanged × 2, T5 wire-id resolution × 3, T6 end-to-end × 2) | V1 |
+| [tests/test_auto_browser_qwen_raw_mode.py](../../tests/test_auto_browser_qwen_raw_mode.py) (NEW) | 27 unit tests (T1 parser × 9, T2 installer × 4, T3 kwarg selection × 4, T4 Mistral unchanged × 2, T5 wire-id resolution × 3, T6 end-to-end × 2, T7 unwrap × 3) | V1 |
 | [scripts/run_handoff_pytest_sweep.sh](../../scripts/run_handoff_pytest_sweep.sh) | Append new test file to `FILES` array (per-file sweep avoids `src.logger` stub leakage) | R9 |
 
 ## Live-validation commands

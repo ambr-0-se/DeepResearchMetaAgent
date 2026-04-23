@@ -29,11 +29,14 @@ _PER_STEP_TIMEOUT_S = 60
 
 
 # Wire-id prefixes that require `tool_calling_method='raw'` in browser_use.
-# Mirrors the canonical rule in src/models/tool_choice.py:_AUTO_WIRE_PREFIXES
-# so there is a single source of truth for "which provider family needs
-# the raw-mode browser path". Update both files together if the set
-# changes. Motivation captured in HANDOFF_QWEN_BROWSER_RAW_MODE.md.
-_RAW_MODE_WIRE_PREFIXES: tuple[str, ...] = ("qwen/",)
+# Re-exported from src/models/tool_choice.py:_AUTO_WIRE_PREFIXES so there
+# is a SINGLE source of truth for "which provider family needs
+# raw-mode browser path". Importing by alias (not copying the tuple)
+# ensures a future addition to `_AUTO_WIRE_PREFIXES` (e.g., another
+# provider family that rejects tool_choice="required") automatically
+# picks up the same browser-side remediation without a second edit.
+# See HANDOFF_QWEN_BROWSER_RAW_MODE.md code-review §HIGH-2.
+from src.models.tool_choice import _AUTO_WIRE_PREFIXES as _RAW_MODE_WIRE_PREFIXES
 
 
 def _resolve_wire_id(model) -> str:

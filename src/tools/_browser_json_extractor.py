@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,17 @@ logger = logging.getLogger(__name__)
 # lookups on the vendored module.
 _ORIGINAL: Callable[[str], dict] | None = None
 _PATCHED: bool = False
+
+# Synchronises install/reset so two concurrent coroutines can't race
+# through the "capture _ORIGINAL → swap module attr → set _PATCHED"
+# critical section. Code-review HIGH-1 (2026-04-23): under concurrent
+# Qwen tasks (P2 streaming worker pool, concurrency=8) both callers
+# could pass the `if _PATCHED: return` guard, the second would capture
+# the already-installed wrapper as `_ORIGINAL`, and a subsequent
+# `_reset_for_tests()` would restore the wrapper (not the true
+# browser_use function). `threading.Lock` is sufficient because
+# assignment is brief and the lock is never held across I/O.
+_INSTALL_LOCK = threading.Lock()
 
 
 def _flatten_anthropic_blocks(raw: Any) -> str:
@@ -215,35 +227,42 @@ def install_tolerant_extractor() -> None:
     instead of silently disabling the patch (R1 in the plan).
     """
     global _ORIGINAL, _PATCHED
+    # Fast path: no lock needed for the common "already installed" case.
     if _PATCHED:
         return
 
-    try:
-        from browser_use.agent.message_manager import utils as _bu_utils
-    except ImportError as e:  # pragma: no cover — import-level sanity
-        raise RuntimeError(
-            "install_tolerant_extractor requires browser_use to be "
-            "importable; failed with: " + str(e)
-        ) from e
+    with _INSTALL_LOCK:
+        # Re-check under the lock (double-checked locking). Protects against
+        # two concurrent callers both passing the unlocked guard above.
+        if _PATCHED:
+            return
 
-    if not hasattr(_bu_utils, "extract_json_from_model_output"):
-        raise RuntimeError(
-            "browser_use.agent.message_manager.utils no longer exposes "
-            "`extract_json_from_model_output`. The Qwen raw-mode parser "
-            "patch depends on this symbol. Pin browser_use==0.1.48 in "
-            "the environment or port the patch to the new location. "
-            "See docs/handoffs/HANDOFF_QWEN_BROWSER_RAW_MODE.md."
+        try:
+            from browser_use.agent.message_manager import utils as _bu_utils
+        except ImportError as e:  # pragma: no cover — import-level sanity
+            raise RuntimeError(
+                "install_tolerant_extractor requires browser_use to be "
+                "importable; failed with: " + str(e)
+            ) from e
+
+        if not hasattr(_bu_utils, "extract_json_from_model_output"):
+            raise RuntimeError(
+                "browser_use.agent.message_manager.utils no longer exposes "
+                "`extract_json_from_model_output`. The Qwen raw-mode parser "
+                "patch depends on this symbol. Pin browser_use==0.1.48 in "
+                "the environment or port the patch to the new location. "
+                "See docs/handoffs/HANDOFF_QWEN_BROWSER_RAW_MODE.md."
+            )
+
+        _ORIGINAL = _bu_utils.extract_json_from_model_output
+        _bu_utils.extract_json_from_model_output = tolerant_extract_json_from_model_output
+        _PATCHED = True
+        logger.info(
+            "[browser_json_extractor] installed tolerant extractor "
+            "(wrapping %s.%s)",
+            _bu_utils.__name__,
+            "extract_json_from_model_output",
         )
-
-    _ORIGINAL = _bu_utils.extract_json_from_model_output
-    _bu_utils.extract_json_from_model_output = tolerant_extract_json_from_model_output
-    _PATCHED = True
-    logger.info(
-        "[browser_json_extractor] installed tolerant extractor "
-        "(wrapping %s.%s)",
-        _bu_utils.__name__,
-        "extract_json_from_model_output",
-    )
 
 
 def _reset_for_tests() -> None:
@@ -252,14 +271,17 @@ def _reset_for_tests() -> None:
     guarantee no cross-test leakage (R8 in the plan).
     """
     global _ORIGINAL, _PATCHED
-    if _ORIGINAL is not None:
-        try:
-            from browser_use.agent.message_manager import utils as _bu_utils
-            _bu_utils.extract_json_from_model_output = _ORIGINAL
-        except ImportError:
-            pass
-    _ORIGINAL = None
-    _PATCHED = False
+    # Hold the install lock so a concurrent installer can't observe
+    # mid-reset state.
+    with _INSTALL_LOCK:
+        if _ORIGINAL is not None:
+            try:
+                from browser_use.agent.message_manager import utils as _bu_utils
+                _bu_utils.extract_json_from_model_output = _ORIGINAL
+            except ImportError:
+                pass
+        _ORIGINAL = None
+        _PATCHED = False
 
 
 def is_patched() -> bool:

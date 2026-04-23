@@ -12,7 +12,7 @@ Pass criteria
 1. `browser_use.Agent` reaches Step 1 + Step 2 (same baseline as
    Mistral E0 v3 — every browser_use session gets multi-step
    trajectories, per `full_mistral.log` count distribution).
-2. Extracted content ≥ 200 chars.
+2. Extracted content ≥ 100 chars.
 3. `tool_calling_method` is NOT passed to `Agent(...)` — Mistral takes
    browser_use's default auto-detection path (function_calling for
    ChatOpenAI).

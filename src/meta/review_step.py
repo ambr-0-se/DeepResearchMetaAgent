@@ -35,6 +35,7 @@ Error handling:
 """
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -44,14 +45,55 @@ from src.logger import LogLevel, logger
 from src.memory import ActionStep
 from src.meta.review_schema import (
     EscalateSpec,
+    ModifyAgentSpec,
     ProceedSpec,
+    RetrySpec,
     ReviewResult,
+    RootCauseCategory,
 )
 
 if TYPE_CHECKING:
     from src.base.async_multistep_agent import AsyncMultiStepAgent
     from src.meta.review_agent import ReviewAgent  # runtime import deferred
                                                     # (see _get_or_build_review_agent)
+
+
+# --- Retry cap table (per-root-cause) ---------------------------------------
+
+#: Asymmetric retry budgets by root cause. Cap=0 means RetrySpec for that
+#: cause is immediately coerced to ProceedSpec — rephrasing can't unlock
+#: paywalls (external), fix reasoning gaps (model_limit), or synthesise
+#: missing capabilities (missing_tool / wrong_tool). The advisory table
+#: in REVIEW_AGENT_SYSTEM_PROMPT mirrors these values.
+RETRY_CAP_BY_ROOT_CAUSE: dict[RootCauseCategory, int] = {
+    RootCauseCategory.INSUFFICIENT_INSTRUCTION: 2,  # bad_instruction
+    RootCauseCategory.TASK_MISUNDERSTANDING:    2,  # misread_task
+    RootCauseCategory.UNCLEAR_OBJECTIVE:        2,  # unclear_goal
+    RootCauseCategory.INCOMPLETE_OUTPUT:        1,  # incomplete
+    RootCauseCategory.EXTERNAL_FAILURE:         0,  # external
+    RootCauseCategory.MODEL_LIMITATION:         0,  # model_limit
+    RootCauseCategory.MISSING_TOOL:             0,  # missing_tool
+    RootCauseCategory.WRONG_TOOL_SELECTION:     0,  # wrong_tool
+}
+
+#: Default cap for unknown root causes (defensive — the pydantic enum should
+#: prevent this, but a defensive 0 means "never retry" if somehow an unknown
+#: string slips through).
+_DEFAULT_RETRY_CAP: int = 0
+
+
+#: Ordered list of metric keys. Used by on_task_start to reset and by
+#: tests to assert the schema. Must match the plan's §Layer 2 table.
+_METRIC_KEYS: tuple[str, ...] = (
+    "retry_chains_started",
+    "retry_chains_capped",
+    "retry_coercions_to_proceed",
+    "blocklist_coercions",
+    "modify_agent_emitted",
+    "escalate_emitted",
+    "proceed_emitted",
+    "max_chain_length",
+)
 
 
 # --- DelegationContext ------------------------------------------------------
@@ -88,6 +130,23 @@ class PriorAttempt:
     verdict: str                    # "satisfactory" | "partial" | "unsatisfactory"
     root_cause: Optional[str]       # str value of RootCauseCategory, or None
     revised_task_digest: str        # task_given truncated to PRIOR_ATTEMPT_DIGEST_MAX
+
+
+# --- ChainState (retry-ledger node) -----------------------------------------
+
+@dataclass
+class ChainState:
+    """
+    Per-lineage retry-chain state. Keyed by (agent_name, intent_anchor) in
+    ReviewStep._chains. A chain starts fresh on a new delegation to an agent
+    without a pending retry flag; continues on the next delegation that
+    inherits the anchor via _pending_retry_anchor.
+    """
+    anchor: str                              # UUID, the chain id
+    count: int = 0                           # retries consumed
+    capped: bool = False                     # True once count reaches the cap
+    last_root_cause: Optional[str] = None    # str value of last emitted root cause
+    prior: list[PriorAttempt] = field(default_factory=list)
 
 
 # --- Fallback ReviewResults -------------------------------------------------
@@ -137,6 +196,55 @@ class ReviewStep:
         #: sub-task" from "planner gave wrong sub-task". Empty string when
         #: not yet initialised — harmless (the rendering guards on it).
         self._original_user_task: str = ""
+        #: Chain ledger: (agent_name, intent_anchor) -> ChainState.
+        #: New delegations without a pending retry flag mint a fresh anchor;
+        #: review-driven continuations inherit the anchor from
+        #: _pending_retry_anchor. See _resolve_anchor.
+        self._chains: dict[tuple[str, str], ChainState] = {}
+        #: When the prior ReviewResult for `agent_name` was a RetrySpec,
+        #: the chain's anchor is stashed here so the NEXT delegation to
+        #: that agent inherits it (same logical intent). Popped on read.
+        self._pending_retry_anchor: dict[str, str] = {}
+        #: Chains that have reached their per-root-cause cap. Any RetrySpec
+        #: targeting a key in this set is coerced to ProceedSpec.
+        self._capped_anchors: set[tuple[str, str]] = set()
+        #: Task-wide blocklist: (agent_name, root_cause_str). Once an agent
+        #: has failed with a cap=0 root cause, ALL future delegations to
+        #: that (agent, root_cause) combination are blocked — regardless of
+        #: whether the delegation is review-driven (pending_retry_anchor)
+        #: or planner-initiated (fresh anchor). Closes the planner re-entry
+        #: bypass described in the plan.
+        self._task_blocklist: set[tuple[str, str]] = set()
+        #: Per-task metrics. Flushed by the caller (run_gaia.py) from
+        #: `agent.review_step._metrics` after the task completes — see
+        #: plan §Layer 3.
+        self._metrics: dict[str, int] = {k: 0 for k in _METRIC_KEYS}
+
+    # -- task lifecycle -----------------------------------------------------
+
+    def on_task_start(self, original_user_task: str) -> None:
+        """
+        Initialise per-task state for a new GAIA question.
+
+        Called at the top of `AdaptivePlanningAgent.run()`. Idempotent —
+        safe to call multiple times in succession; all state is cleared
+        each call. In practice the planner is re-created per question, so
+        this method is primarily a (a) init hook for `_original_user_task`,
+        (b) metric zero-ing hook, and (c) defensive cleanup in case a
+        future refactor reuses a single planner across tasks.
+
+        Intentionally does NOT call `_flush_metrics` — metric extraction
+        happens at the caller level (run_gaia.py) after `agent.run()`
+        returns, because under P1 the agent task may be cancelled before
+        any in-agent `finally` could fire.
+        """
+        self._chains.clear()
+        self._pending_retry_anchor.clear()
+        self._capped_anchors.clear()
+        self._task_blocklist.clear()
+        self._review_agent = None   # rebuild on next use (fresh Monitor/AgentLogger)
+        self._metrics = {k: 0 for k in _METRIC_KEYS}
+        self._original_user_task = original_user_task or ""
 
     # -- public API ----------------------------------------------------------
 
@@ -172,8 +280,36 @@ class ReviewStep:
                 next_action=ProceedSpec(),
             )
 
+        # Resolve the chain for this delegation BEFORE the LLM call so we
+        # can inject prior_attempts and blocklist directives into the
+        # reviewer's task text. Chains are identified by (agent_name, anchor)
+        # where anchor is a UUID inherited on pending retries or fresh
+        # otherwise.
+        anchor, is_new_chain = self._resolve_anchor(ctx.agent_name)
+        chain_key = (ctx.agent_name, anchor)
+        if is_new_chain:
+            self._chains[chain_key] = ChainState(anchor=anchor)
+            self._metrics["retry_chains_started"] += 1
+        chain = self._chains[chain_key]
+
+        # Compose directives for the reviewer.
+        task_blocklist_directive = self._render_task_blocklist_directive(ctx.agent_name)
+        chain_capped_directive = (
+            self._render_chain_capped_directive(chain)
+            if chain_key in self._capped_anchors
+            else ""
+        )
+
         # Full review via the sealed ReviewAgent.
-        return await self._run_review_agent(ctx)
+        result = await self._run_review_agent(
+            ctx,
+            prior_attempts=list(chain.prior),
+            task_blocklist_directive=task_blocklist_directive,
+            chain_capped_directive=chain_capped_directive,
+        )
+
+        # Dispatch on next_action to update the chain ledger.
+        return self._dispatch_review_result(result, ctx, chain_key, chain)
 
     # -- context extraction --------------------------------------------------
 
@@ -255,6 +391,205 @@ class ReviewStep:
         if obs:
             return str(obs)[:2000]
         return "(no response captured)"
+
+    # -- chain ledger --------------------------------------------------------
+
+    def _resolve_anchor(self, agent_name: str) -> tuple[str, bool]:
+        """
+        Return (intent_anchor, is_new_chain) for a delegation to `agent_name`.
+
+        If the prior ReviewResult for this agent was a RetrySpec targeting
+        the same agent, `_pending_retry_anchor[agent_name]` holds the
+        anchor from that chain; we pop and reuse it (continuation). Else
+        we mint a new UUID (fresh chain).
+        """
+        pending = self._pending_retry_anchor.pop(agent_name, None)
+        if pending is not None:
+            return pending, False
+        return str(uuid.uuid4()), True
+
+    def _retry_cap_for(self, root_cause: Optional[RootCauseCategory]) -> int:
+        """Look up the retry cap for a root cause; default 0 for unknown/None."""
+        if root_cause is None:
+            return _DEFAULT_RETRY_CAP
+        return RETRY_CAP_BY_ROOT_CAUSE.get(root_cause, _DEFAULT_RETRY_CAP)
+
+    def _render_task_blocklist_directive(self, agent_name: str) -> str:
+        """
+        Render a directive listing all (root_cause)s this agent is blocked
+        for in the current task. Empty string when the agent has no block.
+        """
+        blocked = sorted(rc for (a, rc) in self._task_blocklist if a == agent_name)
+        if not blocked:
+            return ""
+        causes = ", ".join(blocked)
+        return (
+            f"IMPORTANT: agent '{agent_name}' previously failed in this task with "
+            f"root_cause(s)=[{causes}]. Retry is unavailable for this combination; "
+            f"choose modify_agent, escalate, or proceed."
+        )
+
+    @staticmethod
+    def _render_chain_capped_directive(chain: ChainState) -> str:
+        """Render a directive noting the chain has reached its retry cap."""
+        rc = chain.last_root_cause or "unknown"
+        return (
+            f"CHAIN CAPPED: this delegation lineage has reached its retry cap "
+            f"(last root_cause={rc}, attempts={chain.count}). Any further "
+            f"RetrySpec will be coerced to proceed. Choose modify_agent, "
+            f"escalate, or proceed."
+        )
+
+    def _dispatch_review_result(
+        self,
+        result: ReviewResult,
+        ctx: DelegationContext,
+        chain_key: tuple[str, str],
+        chain: ChainState,
+    ) -> ReviewResult:
+        """
+        Update chain ledger + task blocklist + metrics based on the
+        reviewer's `next_action`. Coerces invalid RetrySpec emissions to
+        ProceedSpec (cap=0 root causes, already-capped chains, blocklisted
+        (agent, cause) combinations). Returns the possibly-rewritten
+        ReviewResult.
+        """
+        agent_name = ctx.agent_name
+        next_action = result.next_action
+
+        # --- RetrySpec: the path that drives most chain mutation -----------
+        if isinstance(next_action, RetrySpec):
+            root_cause = result.root_cause_primary
+            cap = self._retry_cap_for(root_cause)
+            rc_str = root_cause.value if root_cause is not None else None
+
+            # Check blocklist (task-wide) BEFORE cap — blocklist is the
+            # broader guard that also covers planner-initiated re-entry.
+            if rc_str is not None and (agent_name, rc_str) in self._task_blocklist:
+                self._metrics["blocklist_coercions"] += 1
+                return self._coerce_to_proceed(
+                    result,
+                    summary=(
+                        f"Retry cap hit for chain on '{agent_name}' "
+                        f"(task-blocklist for root_cause={rc_str}); coerced to proceed. "
+                        f"Original summary: {result.summary}"
+                    ),
+                )
+
+            # Check per-chain cap.
+            if chain_key in self._capped_anchors:
+                self._metrics["blocklist_coercions"] += 1
+                return self._coerce_to_proceed(
+                    result,
+                    summary=(
+                        f"Retry cap hit for chain on '{agent_name}' "
+                        f"(anchor capped, last_root_cause={chain.last_root_cause}); "
+                        f"coerced to proceed. Original summary: {result.summary}"
+                    ),
+                )
+
+            # cap == 0: this root cause never allows retry.
+            if cap == 0:
+                if rc_str is not None:
+                    self._task_blocklist.add((agent_name, rc_str))
+                self._metrics["retry_coercions_to_proceed"] += 1
+                chain.capped = True
+                chain.last_root_cause = rc_str
+                self._capped_anchors.add(chain_key)
+                return self._coerce_to_proceed(
+                    result,
+                    summary=(
+                        f"Retry unavailable for root_cause={rc_str or 'unknown'} "
+                        f"on '{agent_name}'; coerced to proceed. "
+                        f"Original summary: {result.summary}"
+                    ),
+                )
+
+            # cap > 0: increment and check if we've now reached the cap.
+            chain.count += 1
+            chain.last_root_cause = rc_str
+            chain.prior.append(
+                PriorAttempt(
+                    attempt_idx=chain.count,
+                    verdict=result.verdict,
+                    root_cause=rc_str,
+                    revised_task_digest=self._digest_task(next_action.revised_task),
+                )
+            )
+            # Bound history size.
+            if len(chain.prior) > self.PRIOR_ATTEMPTS_KEEP_LAST:
+                chain.prior = chain.prior[-self.PRIOR_ATTEMPTS_KEEP_LAST:]
+            if chain.count > self._metrics["max_chain_length"]:
+                self._metrics["max_chain_length"] = chain.count
+            # Pending flag so the next delegation to this agent inherits the anchor.
+            self._pending_retry_anchor[agent_name] = chain.anchor
+
+            if chain.count >= cap:
+                chain.capped = True
+                self._capped_anchors.add(chain_key)
+                if rc_str is not None:
+                    self._task_blocklist.add((agent_name, rc_str))
+                self._metrics["retry_chains_capped"] += 1
+            return result
+
+        # --- EscalateSpec: chain terminates; escalate implies "stop this agent" ---
+        if isinstance(next_action, EscalateSpec):
+            from_agent = next_action.from_agent
+            if result.root_cause_primary is not None:
+                self._task_blocklist.add(
+                    (from_agent, result.root_cause_primary.value)
+                )
+            # Mark the CURRENT chain as capped (not the escalate target's chain;
+            # target gets a fresh chain on its next delegation).
+            if from_agent == agent_name:
+                self._capped_anchors.add(chain_key)
+                chain.capped = True
+            self._pending_retry_anchor.pop(from_agent, None)
+            self._metrics["escalate_emitted"] += 1
+            return result
+
+        # --- ModifyAgentSpec: chain terminates; next delegation is fresh ----
+        if isinstance(next_action, ModifyAgentSpec):
+            self._pending_retry_anchor.pop(next_action.agent_name, None)
+            # followup_retry=True: next delegation mints a new chain; we do
+            # NOT pre-seed _pending_retry_anchor, so _resolve_anchor on the
+            # follow-up will report is_new_chain=True. Task blocklist is
+            # NOT auto-cleared by modify (modify doesn't prove the prior
+            # root cause is fixed).
+            self._metrics["modify_agent_emitted"] += 1
+            return result
+
+        # --- ProceedSpec: chain terminates cleanly ---------------------------
+        if isinstance(next_action, ProceedSpec):
+            self._pending_retry_anchor.pop(agent_name, None)
+            self._metrics["proceed_emitted"] += 1
+            return result
+
+        # Unknown next_action type — should be unreachable given the
+        # discriminated union, but be defensive.
+        logger.log(
+            f"[ReviewStep] unknown next_action type {type(next_action).__name__}; "
+            f"treating as proceed.",
+            level=LogLevel.WARNING,
+        )
+        self._metrics["proceed_emitted"] += 1
+        return result
+
+    @staticmethod
+    def _coerce_to_proceed(original: ReviewResult, *, summary: str) -> ReviewResult:
+        """
+        Rewrite a ReviewResult's next_action to ProceedSpec while preserving
+        the verdict / confidence / root_cause fields for downstream logging.
+        """
+        return ReviewResult(
+            verdict=original.verdict,
+            confidence=original.confidence,
+            summary=summary,
+            root_cause_primary=original.root_cause_primary,
+            root_cause_secondary=original.root_cause_secondary,
+            root_cause_detail=original.root_cause_detail,
+            next_action=ProceedSpec(),
+        )
 
     # -- step-budget check ---------------------------------------------------
 

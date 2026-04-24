@@ -184,3 +184,7 @@ gaia-benchmark/
 
 # Evaluation runtime output (per-run dra.jsonl + log.txt + skills/)
 workdir/
+
+# Agent-downloaded artifacts (GAIA benchmark byproducts — root level only)
+/*.pdf
+/slurm-*.out

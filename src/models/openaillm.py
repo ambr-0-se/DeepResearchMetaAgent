@@ -709,6 +709,7 @@ class KeyRotatingChatOpenAI:
         model: str,
         api_keys: list[str],
         base_url: str | None = None,
+        chat_cls: type | None = None,
         **kwargs,
     ) -> None:
         if not api_keys:
@@ -716,9 +717,16 @@ class KeyRotatingChatOpenAI:
 
         from langchain_openai import ChatOpenAI
 
+        # `chat_cls` lets the caller plug in a ChatOpenAI subclass — e.g.
+        # `ToolChoiceDowngradingChatOpenAI` for Qwen-on-OR models, where
+        # `tool_choice='required'` must be rewritten to 'auto' before the
+        # request leaves the process. Defaults to plain ChatOpenAI.
+        if chat_cls is None:
+            chat_cls = ChatOpenAI
+
         self._pool = _KeyPoolState(api_keys)
         self._instances = [
-            ChatOpenAI(model=model, api_key=k, base_url=base_url, **kwargs)
+            chat_cls(model=model, api_key=k, base_url=base_url, **kwargs)
             for k in api_keys
         ]
         self._model = model

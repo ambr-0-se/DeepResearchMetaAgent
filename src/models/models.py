@@ -878,13 +878,27 @@ class ModelManager(metaclass=Singleton):
             self.registed_models[f"langchain-{model_name}"] = langchain_model
 
     def _register_openrouter_models(self):
-        api_key = os.getenv("OPENROUTER_API_KEY", PLACEHOLDER)
-        if api_key == PLACEHOLDER:
+        # Multi-key round-robin: mirrors the Mistral pattern. Reads
+        # `OPENROUTER_API_KEY`, `OPENROUTER_API_KEY_2`, `_3`, … contiguously.
+        # When ≥2 keys, both the native and LangChain registrations switch
+        # to `KeyRotating*` wrappers so per-key rate-limit headroom is
+        # multiplied. With 1 key the single-client path below runs
+        # unchanged — zero behavioural diff for existing single-key users.
+        from src.models.openaillm import (
+            KeyRotatingChatOpenAI,
+            KeyRotatingOpenAIServerModel,
+            _load_suffix_keys,
+        )
+
+        api_keys = _load_suffix_keys("OPENROUTER_API_KEY", placeholder=PLACEHOLDER)
+        if not api_keys:
             logger.warning("OPENROUTER_API_KEY is not set, skipping OpenRouter models")
             return
+        # Keep a scalar alias for the 1-key path below.
+        api_key = api_keys[0]
 
         api_base = os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1")
-        logger.info("Registering OpenRouter models")
+        logger.info(f"Registering OpenRouter models ({len(api_keys)} key(s))")
 
         models = [
             # Free 117B MoE model with native tool use and configurable reasoning depth
@@ -973,18 +987,30 @@ class ModelManager(metaclass=Singleton):
             model_id = model["model_id"]
             extra_body = model.get("extra_body")
 
-            client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=api_base,
-            )
-            openai_kwargs: dict[str, Any] = {
-                "model_id": model_id,
-                "http_client": client,
-                "custom_role_conversions": custom_role_conversions,
-            }
-            if extra_body is not None:
-                openai_kwargs["extra_body"] = extra_body
-            registered_model = OpenAIServerModel(**openai_kwargs)
+            # Native path: KeyRotating when ≥2 keys, plain when 1.
+            if len(api_keys) > 1:
+                rot_kwargs: dict[str, Any] = {
+                    "model_id": model_id,
+                    "api_keys": api_keys,
+                    "api_base": api_base,
+                    "custom_role_conversions": custom_role_conversions,
+                }
+                if extra_body is not None:
+                    rot_kwargs["extra_body"] = extra_body
+                registered_model = KeyRotatingOpenAIServerModel(**rot_kwargs)
+            else:
+                client = AsyncOpenAI(
+                    api_key=api_key,
+                    base_url=api_base,
+                )
+                openai_kwargs: dict[str, Any] = {
+                    "model_id": model_id,
+                    "http_client": client,
+                    "custom_role_conversions": custom_role_conversions,
+                }
+                if extra_body is not None:
+                    openai_kwargs["extra_body"] = extra_body
+                registered_model = OpenAIServerModel(**openai_kwargs)
             self.registed_models[model_name] = registered_model
 
             # LangChain wrapper required by auto_browser_use_tool.
@@ -1016,18 +1042,37 @@ class ModelManager(metaclass=Singleton):
             # langchain-openai ChatOpenAI accepts `extra_body` as a
             # first-class constructor parameter (verified against
             # langchain-openai==0.3.11, base.py:522).
-            langchain_kwargs: dict[str, Any] = dict(
-                model=model_id,
-                api_key=api_key,
-                base_url=api_base,
-            )
+            # LangChain path. Build extras (extra_body for qwen) once,
+            # then pick the underlying ChatOpenAI subclass based on
+            # tool_choice dispatch, then branch on multi- vs single-key.
+            langchain_extras: dict[str, Any] = dict(base_url=api_base)
             if model_id.startswith("qwen/"):
-                langchain_kwargs["extra_body"] = {"reasoning": {"enabled": False}}
+                langchain_extras["extra_body"] = {"reasoning": {"enabled": False}}
             if pick_tool_choice(model_id, default="required") == "auto":
-                _Downgrading = make_tool_choice_downgrading_chat_openai()
-                langchain_model = _Downgrading(**langchain_kwargs)
+                chat_cls = make_tool_choice_downgrading_chat_openai()
             else:
-                langchain_model = ChatOpenAI(**langchain_kwargs)
+                chat_cls = ChatOpenAI
+
+            if len(api_keys) > 1:
+                # KeyRotatingChatOpenAI uses `base_url` kw; extract it from
+                # `langchain_extras` to avoid the duplicate-kwarg collision.
+                base_url_arg = langchain_extras.pop("base_url")
+                langchain_model = KeyRotatingChatOpenAI(
+                    model=model_id,
+                    api_keys=api_keys,
+                    base_url=base_url_arg,
+                    chat_cls=chat_cls,
+                    **langchain_extras,
+                )
+                # Restore base_url for consistency with the downstream dict.
+                langchain_extras["base_url"] = base_url_arg
+            else:
+                langchain_kwargs = dict(
+                    model=model_id,
+                    api_key=api_key,
+                    **langchain_extras,
+                )
+                langchain_model = chat_cls(**langchain_kwargs)
             self.registed_models[f"langchain-{model_name}"] = langchain_model
 
     def _register_qwen_failover_models(self):

@@ -1,3 +1,5 @@
+import sys
+
 web_fetcher_tool_config = dict(
     type="web_fetcher_tool",
 )
@@ -38,7 +40,10 @@ mcp_tools_config = {
     "mcpServers" :  {
         # Local stdio server
         "LocalMCP": {
-            "command": "python",
+            # Use the parent interpreter so the subprocess inherits the same
+            # env (PATH-resolved `python` picks up base conda, which lacks
+            # `fastmcp` and crashes the stdio transport on every Q).
+            "command": sys.executable,
             "args": ["src/mcp/server.py"],
             "env": {"DEBUG": "true"}
         },

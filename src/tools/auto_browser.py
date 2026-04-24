@@ -25,7 +25,7 @@ from src.models import model_manager
 # consuming the full 1200s per-Q timeout despite `max_steps=3`. This cap
 # surfaces a stuck iteration as a clean `TimeoutError` → tool reports
 # "no extracted content" via the existing fallback path.
-_PER_STEP_TIMEOUT_S = 60
+_PER_STEP_TIMEOUT_S = 45  # was 60; tightened 2026-04-25 to bound stuck-step wall (Fix D)
 
 
 # Wire-id prefixes that require `tool_calling_method='raw'` in browser_use.

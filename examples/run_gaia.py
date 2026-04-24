@@ -274,11 +274,46 @@ async def answer_single_question(config, example):
 
         except asyncio.TimeoutError:
             logger.warning(f"Question timed out after {per_question_timeout}s: {augmented_question[:80]}")
-            output = None
-            intermediate_steps = []
+            # Fix A (2026-04-25): graceful degradation. Instead of discarding
+            # all agent progress on timeout, reformulate a best-guess final
+            # answer from the agent's partial memory. A wrong answer is
+            # still a scored GAIA row; a timeout with output=None is not.
             iteration_limit_exceeded = True
             exception = asyncio.TimeoutError(f"Per-question timeout ({per_question_timeout}s) exceeded")
             raised_exception = True
+            output = None
+            intermediate_steps = []
+            try:
+                if agent is not None and getattr(agent, "memory", None) is not None:
+                    partial_memory = await agent.write_memory_to_messages(summary_mode=True)
+                    reformulation_model_id = getattr(config.agent_config, 'model_id', 'gpt-4.1')
+                    salvage_question = (
+                        augmented_question
+                        + "\n\n[GRACEFUL TIMEOUT NOTICE] The sub-agent work was TIME-CAPPED before "
+                        "a natural stopping point. Review the evidence in the memory above and COMMIT "
+                        "to a concrete best-guess answer in the exact format the task requires. "
+                        "DO NOT reply 'Unable to determine' — make your best guess from the evidence "
+                        "gathered and general knowledge, even if incomplete."
+                    )
+                    final_result = await prepare_response(
+                        salvage_question,
+                        partial_memory,
+                        reformulation_model=model_manager.registed_models[reformulation_model_id],
+                    )
+                    output = str(final_result)
+                    for memory_step in agent.memory.steps:
+                        memory_step.model_input_messages = None
+                    intermediate_steps = _serialize_steps(agent.memory.steps)
+                    logger.info(
+                        f"Graceful-timeout salvage produced a prediction "
+                        f"({len(output)} chars) for {example['task_id']}."
+                    )
+            except Exception as salvage_err:
+                logger.warning(
+                    f"Graceful-timeout salvage failed for {example['task_id']}: "
+                    f"{str(salvage_err)[:200]}"
+                )
+                # Fall back to the original timeout behavior (output stays None).
             break
 
         except Exception as e:

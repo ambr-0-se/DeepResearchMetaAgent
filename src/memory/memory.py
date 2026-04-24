@@ -114,10 +114,22 @@ class ActionStep(MemoryStep):
                     )
                 )
             if self.error is not None:
-                error_message = (
-                    "Error:\n"
-                    + str(self.error)
-                    + "\nNow let's retry: take care not to repeat previous errors! If you have retried several times, try a completely different approach.\n"
+                # Fix E (2026-04-25): emit a non-retry-biased prompt so the
+                # agent leans toward final_answer_tool rather than cascading
+                # into more sub-agent / tool retries. When `action_output`
+                # is populated (max_steps path has already synthesized a
+                # best-guess summary), surface it as an observation as well.
+                error_message = "Error:\n" + str(self.error) + "\n"
+                if getattr(self, "action_output", None):
+                    error_message += (
+                        "\nProgress synthesized from work so far:\n"
+                        + str(self.action_output)
+                        + "\n"
+                    )
+                error_message += (
+                    "\nUse information gathered to commit to a concrete best-guess answer now via final_answer_tool. "
+                    "Only try ONE genuinely different approach (different tool, source, or search terms) before giving up. "
+                    "Do NOT repeat the same call, and do NOT reply 'Unable to determine'.\n"
                 )
                 message_content = f"Call id: {self.tool_calls[0].id}\n" if self.tool_calls else ""
                 message_content += error_message
@@ -171,10 +183,18 @@ class ActionStep(MemoryStep):
                 )
             )
         if self.error is not None:
-            error_message = (
-                "Error:\n"
-                + str(self.error)
-                + "\nNow let's retry: take care not to repeat previous errors! If you have retried several times, try a completely different approach.\n"
+            # Fix E (2026-04-25): see summary-mode branch above for rationale.
+            error_message = "Error:\n" + str(self.error) + "\n"
+            if getattr(self, "action_output", None):
+                error_message += (
+                    "\nProgress synthesized from work so far:\n"
+                    + str(self.action_output)
+                    + "\n"
+                )
+            error_message += (
+                "\nUse information gathered to commit to a concrete best-guess answer now via final_answer_tool. "
+                "Only try ONE genuinely different approach (different tool, source, or search terms) before giving up. "
+                "Do NOT repeat the same call, and do NOT reply 'Unable to determine'.\n"
             )
             message_content = f"Call id: {self.tool_calls[0].id}\n" if self.tool_calls else ""
             message_content += error_message

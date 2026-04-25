@@ -39,6 +39,26 @@ _PER_STEP_TIMEOUT_S = 45  # was 60; tightened 2026-04-25 to bound stuck-step wal
 from src.models.tool_choice import _AUTO_WIRE_PREFIXES as _RAW_MODE_WIRE_PREFIXES
 
 
+# Wire-id prefixes for models that do NOT accept image input. browser_use
+# defaults `use_vision=True` and includes screenshots in the LLM input;
+# text-only models 404 with "No endpoints found that support image input".
+# Detected slugs are switched to text-only mode while keeping the rest of
+# the browser_use config identical (DOM-based interaction still works).
+#
+# Each entry is matched via `str.startswith` so a base slug also matches
+# its variants (e.g. ``-fp8``, ``-2509``). 2026-04-26: added the
+# qwen3-next-80b-a3b-instruct family.
+_NO_VISION_WIRE_PREFIXES: tuple[str, ...] = (
+    "qwen/qwen3-next-80b-a3b-instruct",
+)
+
+
+def _model_supports_vision(wire_id: str) -> bool:
+    if wire_id and wire_id.startswith(_NO_VISION_WIRE_PREFIXES):
+        return False
+    return True
+
+
 def _resolve_wire_id(model) -> str:
     """Return the wire id for a LangChain-compatible model wrapper.
 
@@ -222,6 +242,13 @@ class AutoBrowserUseTool(AsyncTool):
         )
         if tool_calling_method is not None:
             agent_kwargs["tool_calling_method"] = tool_calling_method
+        # Phase 1 (2026-04-26): disable vision when the chosen model is
+        # text-only on its OR endpoint (e.g. qwen3-next-80b-a3b-instruct).
+        # Without this, browser_use's default `use_vision=True` sends a
+        # screenshot in every step and the API 404s. DOM-based interaction
+        # still works without screenshots, just without visual fallback.
+        if not _model_supports_vision(wire_id):
+            agent_kwargs["use_vision"] = False
         browser_agent = Agent(**agent_kwargs)
 
         # Cap the browser_agent run so a silent LangChain-wrapper LLM hang

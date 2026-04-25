@@ -26,6 +26,67 @@ from src.registry import DATASET
 append_answer_lock = threading.Lock()
 
 
+_BANNED_ANSWER_PATTERNS = (
+    "unable to determine",
+    "i don't know",
+    "i do not know",
+    "i cannot answer",
+    "i can't answer",
+    "i'm sorry",
+    "i am sorry",
+    "no answer",
+)
+
+
+def _is_banned_answer(text) -> bool:
+    """True if the salvaged prediction is empty/whitespace or matches a banned refusal pattern."""
+    if text is None:
+        return True
+    t = str(text).strip().lower()
+    if not t:
+        return True
+    return any(p in t for p in _BANNED_ANSWER_PATTERNS)
+
+
+async def _force_concrete_guess(question: str, model) -> str:
+    """Second-attempt strict prompt when first salvage matched a banned refusal pattern.
+
+    No memory context — just question + directive to commit. Shared by Fix A
+    (run_gaia.py timeout block) and the F0.2 post-hoc log salvage script.
+    """
+    from src.models import ChatMessage, MessageRole
+
+    messages = [
+        ChatMessage.from_dict({
+            "role": MessageRole.SYSTEM,
+            "content": [{"type": "text", "text": (
+                "You will be given a GAIA question. Output ONLY the FINAL ANSWER in the "
+                "format the question requires (number, short string, or comma-separated list). "
+                "NO preamble, NO apology, NO 'Unable to determine'. Make your best guess from "
+                "general knowledge if uncertain."
+            )}],
+        }),
+        ChatMessage.from_dict({
+            "role": MessageRole.USER,
+            "content": [{"type": "text", "text": (
+                f"Question: {question}\n\n"
+                "Output the FINAL ANSWER on one line with this template: "
+                "FINAL ANSWER: <answer>\n"
+                "Format rules: number with digits not words and no units; OR as few words as "
+                "possible (no articles, no abbreviations); OR a comma-separated list."
+            )}],
+        }),
+    ]
+    response = await model(messages)
+    text = response.content if hasattr(response, "content") else str(response)
+    if "FINAL ANSWER:" in text:
+        final_answer = text.split("FINAL ANSWER:")[-1].strip()
+    else:
+        final_answer = text.strip()
+    logger.info(f"> Forced concrete guess: {final_answer[:200]}")
+    return final_answer
+
+
 def _serialize_steps(steps) -> list:
     """Serialize memory steps to JSON-safe dicts, stripping large binary fields."""
     serialized = []
@@ -301,6 +362,21 @@ async def answer_single_question(config, example):
                         reformulation_model=model_manager.registed_models[reformulation_model_id],
                     )
                     output = str(final_result)
+                    if _is_banned_answer(output):
+                        logger.warning(
+                            f"Fix A salvage matched banned pattern for "
+                            f"{example['task_id']}; forcing concrete guess."
+                        )
+                        try:
+                            output = str(await _force_concrete_guess(
+                                augmented_question,
+                                model_manager.registed_models[reformulation_model_id],
+                            ))
+                        except Exception as fcg_err:
+                            logger.warning(
+                                f"Force-concrete-guess failed for {example['task_id']}: "
+                                f"{str(fcg_err)[:200]}"
+                            )
                     for memory_step in agent.memory.steps:
                         memory_step.model_input_messages = None
                     intermediate_steps = _serialize_steps(agent.memory.steps)

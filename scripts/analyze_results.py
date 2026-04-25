@@ -1258,6 +1258,16 @@ def main():
     parser.add_argument("--config", help="Path to config file for metadata extraction")
     parser.add_argument("--detail", action="store_true", help="Print per-question detail in terminal")
     parser.add_argument("-o", "--output", help="Output file path (default: auto-generated)")
+    parser.add_argument(
+        "--exclude-salvaged",
+        action="store_true",
+        help=(
+            "Filter out rows whose agent_error contains "
+            "'[post-hoc-log-salvage]' (i.e. rows whose prediction was "
+            "produced by scripts/salvage_blank_predictions.py rather than the "
+            "raw evaluation pipeline). Use this to compute 'Pure C0' accuracy."
+        ),
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.results_file):
@@ -1268,6 +1278,21 @@ def main():
     if not results:
         print("No results found in file.")
         sys.exit(1)
+
+    if args.exclude_salvaged:
+        before = len(results)
+        results = [
+            r for r in results
+            if "[post-hoc-log-salvage]" not in str(r.get("agent_error") or "")
+        ]
+        removed = before - len(results)
+        print(
+            f"[--exclude-salvaged] Filtered {removed} salvaged rows; "
+            f"{len(results)}/{before} remain."
+        )
+        if not results:
+            print("No results remain after filtering.")
+            sys.exit(1)
 
     workdir = str(Path(args.results_file).parent)
     config_path = args.config

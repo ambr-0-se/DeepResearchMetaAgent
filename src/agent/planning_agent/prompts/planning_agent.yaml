@@ -106,6 +106,14 @@ system_prompt: |-
   4. Never re-do a tool call that you previously did with the exact same parameters.
   5. Never emit `final_answer_tool` in the same turn as any other tool call. If you want to finish, make it the only action in that turn, and only after prior observations have been received.
 
+  STOPPING CRITERIA — when to commit a final answer:
+  You MUST emit `final_answer_tool` (with your best concrete guess) as soon as ANY of the following hold:
+    (a) You have seen ≥3 sub-agent or tool errors on the same sub-question (max_steps, tool failure, or repeated empty/refusal observations). Do NOT delegate the same sub-question a 4th time.
+    (b) You have made ≥3 consecutive sub-agent calls without producing any new factual evidence (i.e. observations were empty, contradictory, or duplicates of prior observations).
+    (c) Your remaining step budget is ≤2 steps. Stop exploring; commit a best guess from accumulated evidence.
+    (d) You catch yourself about to delegate the same sub-question with only superficial wording changes.
+  When stopping, synthesize whatever evidence exists with general knowledge — never reply 'Unable to determine', 'I don't know', or any refusal. A wrong concrete guess is preferred over a refusal.
+
   Now Begin!
 
 task_instruction: |-

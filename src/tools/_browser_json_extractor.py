@@ -91,29 +91,72 @@ def _flatten_anthropic_blocks(raw: Any) -> str:
 
 
 def _strip_fences(text: str) -> str:
-    """Strip optional leading/trailing markdown code fences and the
-    leading ``json\\n`` prefix that Qwen emits when the opening fence is
-    missing.
+    """Strip optional leading/trailing markdown code fences, the leading
+    ``json\\n`` prefix that Qwen emits when the opening fence is missing,
+    and the ``<tool_call>...</tool_call>`` XML wrapper that
+    qwen3-next-80b-a3b-instruct emits on OpenRouter (probed 2026-04-26).
 
-    Order of operations matches what the raw probe observed:
-    ``"json\\n{...}\\n```"`` → strip trailing fence → strip leading
-    ``"json\\n"`` → parse.
+    Loops until the input stops shrinking so nested wrappers like
+    ``"```json\\n<tool_call>{...}</tool_call>\\n```"`` are handled in any
+    order. Bounded by max-iter to prevent pathological loops on
+    adversarial input.
+
+    Order within each pass:
+      - ``"<tool_call>...</tool_call>"`` XML wrapper
+      - ```` ```json ``` / ``` ``` ```` markdown fences
+      - bare ``"json\\n"`` language hint
+      - trailing ```` ``` ```` fence
     """
     t = text.strip()
-    # Leading fence variants (full or partial)
-    if t.startswith("```json"):
-        t = t[len("```json"):].lstrip("\n").strip()
-    elif t.startswith("```"):
-        t = t[len("```"):].lstrip("\n").strip()
-    # Leading bare language hint (Qwen quirk — see 2026-04-23 probe)
-    if t.startswith("json\n"):
-        t = t[len("json\n"):].strip()
-    elif t.startswith("json\r\n"):
-        t = t[len("json\r\n"):].strip()
-    # Trailing fence
-    if t.endswith("```"):
-        t = t[: -len("```")].rstrip()
+    for _ in range(4):  # bounded — wrappers seen so far nest at most 2 deep
+        before = t
+        # qwen3-next-80b XML wrapper. The model emits the OpenAI-style
+        # tool-call payload `{"name": "AgentOutput", "arguments": {...}}`
+        # inside; the unwrapping in `_unwrap_openai_toolcall_payload` below
+        # converts it to the bare AgentOutput shape browser_use expects.
+        if t.startswith("<tool_call>"):
+            t = t[len("<tool_call>"):].lstrip("\n").lstrip("\r\n").strip()
+        if t.endswith("</tool_call>"):
+            t = t[: -len("</tool_call>")].rstrip()
+        # Leading fence variants (full or partial)
+        if t.startswith("```json"):
+            t = t[len("```json"):].lstrip("\n").strip()
+        elif t.startswith("```"):
+            t = t[len("```"):].lstrip("\n").strip()
+        # Leading bare language hint (Qwen quirk — see 2026-04-23 probe)
+        if t.startswith("json\n"):
+            t = t[len("json\n"):].strip()
+        elif t.startswith("json\r\n"):
+            t = t[len("json\r\n"):].strip()
+        # Trailing fence
+        if t.endswith("```"):
+            t = t[: -len("```")].rstrip()
+        if t == before:
+            break
     return t
+
+
+def _unwrap_openai_toolcall_payload(d: dict) -> dict:
+    """Unwrap an OpenAI-style tool-call envelope to the inner AgentOutput.
+
+    qwen3-next-80b on OR emits content like::
+
+        <tool_call>
+        {"name": "AgentOutput", "arguments": {"current_state": {...}, "action": [...]}}
+        </tool_call>
+
+    After fence stripping + JSON parse we get the envelope dict. browser_use
+    expects the inner ``arguments`` shape (``{"current_state": ..., "action":
+    ...}``). Unwrap when the envelope is unambiguous; otherwise return the
+    input unchanged so well-formed direct outputs still pass through.
+    """
+    if (
+        isinstance(d, dict)
+        and set(d.keys()) == {"name", "arguments"}
+        and isinstance(d.get("arguments"), dict)
+    ):
+        return d["arguments"]
+    return d
 
 
 def _balanced_brace_span(text: str) -> str | None:
@@ -162,7 +205,8 @@ def tolerant_extract_json_from_model_output(content: Any) -> dict:
             # Fall through to tolerant strategies below.
             pass
 
-    # Strategy 1 — direct parse after stripping fences + Qwen prefix.
+    # Strategy 1 — direct parse after stripping fences + Qwen prefix +
+    # `<tool_call>` wrapper. Then unwrap OpenAI-style envelope if present.
     stripped = _strip_fences(text_input)
     if stripped:
         try:
@@ -170,7 +214,7 @@ def tolerant_extract_json_from_model_output(content: Any) -> dict:
             if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
                 result = result[0]  # browser_use quirk — upstream pattern at utils.py:44
             if isinstance(result, dict):
-                return result
+                return _unwrap_openai_toolcall_payload(result)
         except json.JSONDecodeError:
             pass
 
@@ -182,7 +226,7 @@ def tolerant_extract_json_from_model_output(content: Any) -> dict:
             if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
                 result = result[0]
             if isinstance(result, dict):
-                return result
+                return _unwrap_openai_toolcall_payload(result)
         except json.JSONDecodeError:
             pass
 
@@ -196,7 +240,7 @@ def tolerant_extract_json_from_model_output(content: Any) -> dict:
                 if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
                     result = result[0]
                 if isinstance(result, dict):
-                    return result
+                    return _unwrap_openai_toolcall_payload(result)
             except json.JSONDecodeError:
                 pass
 

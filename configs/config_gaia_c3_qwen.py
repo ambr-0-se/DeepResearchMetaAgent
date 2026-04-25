@@ -55,7 +55,10 @@ deep_analyzer_agent_config = dict(
 browser_use_agent_config = dict(
     type="browser_use_agent",
     name="browser_use_agent",
-    model_id='or-qwen3.6-plus',
+    # Phase 1 (2026-04-26): see config_gaia_c2_qwen.py — same override.
+    # qwen3.6-plus on OR has 67% empty-content rate in browser_use raw
+    # mode; qwen3-next-80b-a3b-instruct is project-verified working.
+    model_id='or-qwen3-next-80b-a3b-instruct',
     description="A browser use agent that can search relevant web pages and interact with them.",
     max_steps=5,
     template_path="src/agent/browser_use_agent/prompts/browser_use_agent.yaml",
@@ -112,7 +115,9 @@ deep_analyzer_tool_config = dict(
 # docs/handoffs/HANDOFF_TEST_EVAL.md "Browser step cap policy".
 auto_browser_use_tool_config = dict(
     type="auto_browser_use_tool",
-    model_id='langchain-or-qwen3.6-plus',
+    # Phase 1 (2026-04-26): see browser_use_agent_config above. Both
+    # slots must point at the same model.
+    model_id='langchain-or-qwen3-next-80b-a3b-instruct',
     max_steps=15,
 )
 

@@ -306,6 +306,14 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         # Store original state before task execution
         self._store_original_state()
 
+        # Phase 1 (2026-04-26): per-task counter for consecutive same-agent
+        # delegations. Used by _post_action_hook to inject a [PLANNER NOTE]
+        # when the planner hammers the same sub-agent repeatedly. Resets on
+        # every run() so the budget is task-scoped (matches the rest of
+        # AdaptivePlanningAgent's state-reset semantics).
+        self._consecutive_subagent_calls: tuple[str, int] = ("", 0)
+        self._planner_note_emitted_for: set[str] = set()
+
         # C3/C4: initialise the ReviewStep per-task ledger. Idempotent;
         # clears any stale chain/blocklist/metrics state and captures the
         # original user task for inclusion in the reviewer's context.
@@ -438,6 +446,13 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         that a broken reviewer cannot break the planner's run. This
         matches the contract documented on `AsyncMultiStepAgent._post_action_hook`.
         """
+        # Phase 1 (2026-04-26): repeated-delegation guard. Independent of
+        # ReviewStep — fires under C2/C3/C4 alike (anywhere this hook runs).
+        # Counts consecutive delegations to the same sub-agent in this task;
+        # once the threshold is reached, injects a one-shot [PLANNER NOTE]
+        # into observations so the next THINK sees the warning.
+        self._update_subagent_call_counter_and_maybe_inject_note(memory_step)
+
         if self.review_step is None:
             return
 
@@ -463,6 +478,70 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         # extraction in Phase 2 / C4). Uses setattr because ActionStep is
         # a dataclass without this field defined.
         setattr(memory_step, "review_result", review_result)
+
+    def _update_subagent_call_counter_and_maybe_inject_note(
+        self, memory_step: ActionStep
+    ) -> None:
+        """Track consecutive same-sub-agent delegations and inject a
+        [PLANNER NOTE] when the count reaches the threshold.
+
+        Phase 1 mitigation for the failure mode where the planner re-delegates
+        the same sub-agent indefinitely after errors. Threshold is 3 (≥3
+        consecutive calls to the same sub-agent triggers the note). The note
+        is injected once per (task, agent) pair to avoid spamming the
+        context window.
+        """
+        THRESHOLD = 3
+
+        tool_calls = getattr(memory_step, "tool_calls", None) or []
+        managed = getattr(self, "managed_agents", None) or {}
+        if not managed:
+            return
+
+        # Find the first sub-agent delegation in this step (planner may
+        # parallel-call multiple agents, but we count the canonical "this
+        # step delegated to X" event by the first match).
+        sub_name: Optional[str] = None
+        for tc in tool_calls:
+            name = getattr(tc, "name", None)
+            if name in managed:
+                sub_name = name
+                break
+
+        if sub_name is None:
+            # Non-delegation step → reset the streak.
+            self._consecutive_subagent_calls = ("", 0)
+            return
+
+        prev_name, prev_count = self._consecutive_subagent_calls
+        new_count = prev_count + 1 if prev_name == sub_name else 1
+        self._consecutive_subagent_calls = (sub_name, new_count)
+
+        if new_count < THRESHOLD:
+            return
+        if sub_name in self._planner_note_emitted_for:
+            return
+
+        note = (
+            f"[PLANNER NOTE] You have delegated to '{sub_name}' "
+            f"{new_count} times in a row. If the latest result did not "
+            "give you new factual evidence, STOP delegating to this agent. "
+            "Either (a) try a different sub-agent or a different "
+            "decomposition of the question, or (b) commit to a concrete "
+            "best-guess answer now via final_answer_tool. Do NOT reply "
+            "'Unable to determine' — a wrong concrete guess is preferred "
+            "over a refusal."
+        )
+        existing = memory_step.observations or ""
+        memory_step.observations = (
+            existing + ("\n\n" if existing else "") + note
+        )
+        self._planner_note_emitted_for.add(sub_name)
+        logger.log(
+            f"[AdaptivePlanningAgent] Injected [PLANNER NOTE] for "
+            f"'{sub_name}' after {new_count} consecutive delegations.",
+            level=LogLevel.INFO,
+        )
 
     def get_adaptive_status(self) -> dict:
         """

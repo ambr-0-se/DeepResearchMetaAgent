@@ -2,9 +2,99 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, TypedDict, Union, Optional
 
 from src.models import ChatMessage, MessageRole
-from src.exception import AgentError
+from src.exception import (
+    AgentError,
+    AgentMaxStepsError,
+    AgentParsingError,
+    AgentToolCallError,
+    AgentToolExecutionError,
+)
 from src.utils import make_json_serializable
 from src.logger import LogLevel, AgentLogger, Timing, TokenUsage
+
+
+_NO_REFUSAL_DIRECTIVE = (
+    "Do NOT reply 'Unable to determine', 'I don't know', or any refusal. "
+    "If evidence is incomplete, commit to your best-guess answer using "
+    "what you have plus general knowledge.\n"
+)
+
+
+def _render_error_message(
+    error: AgentError | BaseException,
+    action_output: Any = None,
+    tool_call_id: str | None = None,
+) -> str:
+    """Build a differentiated, actionable error message for the planner.
+
+    Dispatches on error type so the planner sees guidance tailored to the
+    failure mode (max_steps vs tool-call malformed vs tool runtime failure
+    vs parsing vs generation). Every branch ends with the no-refusal
+    directive so the planner cannot fall back to 'Unable to determine'.
+    """
+    err_str = str(error)
+    progress_block = ""
+    # Use `is not None` rather than truthy check so falsy-but-meaningful
+    # outputs (0, False, "", []) are still surfaced as progress.
+    if action_output is not None:
+        progress_block = (
+            "\nProgress synthesized from work so far:\n"
+            + str(action_output)
+            + "\n"
+        )
+
+    if isinstance(error, AgentMaxStepsError):
+        guidance = (
+            "The sub-agent hit its max_steps budget. Do NOT re-delegate the "
+            "same task verbatim. Synthesize what was gathered and either "
+            "(a) call final_answer_tool with a concrete best guess, or "
+            "(b) try ONE genuinely different decomposition (different "
+            "sub-agent, different sub-question). "
+        )
+    elif isinstance(error, AgentToolCallError):
+        guidance = (
+            "The tool call was malformed (bad arguments / schema). Fix the "
+            "arguments and retry the same tool ONCE. If it fails again, "
+            "switch to a different tool or commit a best-guess via "
+            "final_answer_tool. "
+        )
+    elif isinstance(error, AgentToolExecutionError):
+        guidance = (
+            "The tool ran but failed at execution (network error, parse "
+            "failure, upstream service issue). Do NOT immediately retry the "
+            "same call. Try ONE alternative (different tool, different "
+            "source, different query), then commit a best-guess answer "
+            "via final_answer_tool. "
+        )
+    elif isinstance(error, AgentParsingError):
+        guidance = (
+            "Your previous output failed to parse as a valid action. "
+            "Re-emit a single, well-formed tool call (or final_answer_tool) "
+            "in the required format. Do not repeat the malformed structure. "
+        )
+    # Note: AgentGenerationError is re-raised in async_multistep_agent.py and
+    # never stored in `action_step.error`, so an explicit branch here would
+    # be dead code. Generation failures fall through to the generic
+    # AgentError branch below if they ever reach this helper through a
+    # different path.
+    elif isinstance(error, AgentError):
+        guidance = (
+            "Use information gathered to commit to a concrete best-guess "
+            "answer now via final_answer_tool. Only try ONE genuinely "
+            "different approach (different tool, source, or search terms) "
+            "before giving up. Do not repeat the same call. "
+        )
+    else:
+        guidance = (
+            "An unexpected error occurred. Commit to a concrete best-guess "
+            "answer now via final_answer_tool, or try ONE genuinely "
+            "different approach before giving up. "
+        )
+
+    body = "Error:\n" + err_str + "\n" + progress_block + "\n" + guidance + _NO_REFUSAL_DIRECTIVE
+    if tool_call_id:
+        return f"Call id: {tool_call_id}\n" + body
+    return body
 
 
 
@@ -114,25 +204,15 @@ class ActionStep(MemoryStep):
                     )
                 )
             if self.error is not None:
-                # Fix E (2026-04-25): emit a non-retry-biased prompt so the
-                # agent leans toward final_answer_tool rather than cascading
-                # into more sub-agent / tool retries. When `action_output`
-                # is populated (max_steps path has already synthesized a
-                # best-guess summary), surface it as an observation as well.
-                error_message = "Error:\n" + str(self.error) + "\n"
-                if getattr(self, "action_output", None):
-                    error_message += (
-                        "\nProgress synthesized from work so far:\n"
-                        + str(self.action_output)
-                        + "\n"
-                    )
-                error_message += (
-                    "\nUse information gathered to commit to a concrete best-guess answer now via final_answer_tool. "
-                    "Only try ONE genuinely different approach (different tool, source, or search terms) before giving up. "
-                    "Do NOT repeat the same call, and do NOT reply 'Unable to determine'.\n"
+                # Phase 1 (2026-04-26): differentiated error rendering via
+                # _render_error_message dispatch. Replaces the previous
+                # one-size-fits-all Fix E block.
+                tc_id = self.tool_calls[0].id if self.tool_calls else None
+                message_content = _render_error_message(
+                    self.error,
+                    action_output=getattr(self, "action_output", None),
+                    tool_call_id=tc_id,
                 )
-                message_content = f"Call id: {self.tool_calls[0].id}\n" if self.tool_calls else ""
-                message_content += error_message
                 messages.append(
                     ChatMessage(role=MessageRole.TOOL_RESPONSE, content=[{"type": "text", "text": message_content}])
                 )
@@ -183,21 +263,13 @@ class ActionStep(MemoryStep):
                 )
             )
         if self.error is not None:
-            # Fix E (2026-04-25): see summary-mode branch above for rationale.
-            error_message = "Error:\n" + str(self.error) + "\n"
-            if getattr(self, "action_output", None):
-                error_message += (
-                    "\nProgress synthesized from work so far:\n"
-                    + str(self.action_output)
-                    + "\n"
-                )
-            error_message += (
-                "\nUse information gathered to commit to a concrete best-guess answer now via final_answer_tool. "
-                "Only try ONE genuinely different approach (different tool, source, or search terms) before giving up. "
-                "Do NOT repeat the same call, and do NOT reply 'Unable to determine'.\n"
+            # Phase 1 (2026-04-26): see Tier B branch above for rationale.
+            tc_id = self.tool_calls[0].id if self.tool_calls else None
+            message_content = _render_error_message(
+                self.error,
+                action_output=getattr(self, "action_output", None),
+                tool_call_id=tc_id,
             )
-            message_content = f"Call id: {self.tool_calls[0].id}\n" if self.tool_calls else ""
-            message_content += error_message
             messages.append(
                 ChatMessage(role=MessageRole.TOOL_RESPONSE, content=[{"type": "text", "text": message_content}])
             )

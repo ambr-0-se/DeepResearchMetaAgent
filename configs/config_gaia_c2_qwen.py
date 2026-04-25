@@ -55,7 +55,19 @@ deep_analyzer_agent_config = dict(
 browser_use_agent_config = dict(
     type="browser_use_agent",
     name="browser_use_agent",
-    model_id='or-qwen3.6-plus',
+    # Phase 1 (2026-04-26) override: switched from `or-qwen3.6-plus` to
+    # `or-qwen3-next-80b-a3b-instruct` for the browser_use slot only.
+    # Reason: qwen3.6-plus on OpenRouter+Alibaba reliably produces
+    # `content=''` + empty `tool_calls` responses in browser_use's
+    # multi-step raw mode (probed 2026-04-26: 67% empty-content rate,
+    # browser_use sessions exhausted max_steps then planner re-delegated,
+    # leading to 50% per-question wall-clock-timeout rate). qwen3-next-80b
+    # was project-verified working with multi-turn tool-call round-trip
+    # on 2026-04-18 (CLAUDE.md). Re-probe 2026-04-26: 40% empty-content
+    # but tasks COMPLETE via browser_use's 3-strike retry. Single-model
+    # constraint is intentionally relaxed for this sub-component;
+    # disclose in report. Rest of the agents stay on qwen3.6-plus.
+    model_id='or-qwen3-next-80b-a3b-instruct',
     description="A browser use agent that can search relevant web pages and interact with them.",
     max_steps=5,
     template_path="src/agent/browser_use_agent/prompts/browser_use_agent.yaml",
@@ -108,7 +120,10 @@ deep_analyzer_tool_config = dict(
 # docs/handoffs/HANDOFF_TEST_EVAL.md "Browser step cap policy".
 auto_browser_use_tool_config = dict(
     type="auto_browser_use_tool",
-    model_id='langchain-or-qwen3.6-plus',
+    # Phase 1 (2026-04-26): see browser_use_agent_config above. The tool
+    # is what runs the actual browser_use Agent loop; both must point at
+    # the same model to keep the slot consistent.
+    model_id='langchain-or-qwen3-next-80b-a3b-instruct',
     max_steps=15,
 )
 

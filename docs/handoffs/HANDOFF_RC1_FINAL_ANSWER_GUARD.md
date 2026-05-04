@@ -27,7 +27,7 @@
 
 - [ ] Pull on GPU farm: `ssh <gpu-farm> && cd DeepResearchMetaAgent && git pull` — confirm `git log -1 --oneline` shows `63486ca` (Pass 2) as head (last handoff in the RC1+Pass2 stack).
 - [ ] Run the 3 new test files under the `dra` env: `pytest tests/test_process_tool_calls_guard.py tests/test_max_steps_yield_order.py tests/test_rc2_diagnostic_hook.py -v`. Target: 18/18 pass.
-- [ ] Run a **10-question smoke**: `python examples/run_gaia.py --config configs/config_gaia_adaptive_qwen.py --cfg-options max_samples=10 dataset.split=validation`. Must-haves in the new `log.txt`:
+- [ ] Run a **10-question smoke**: `python examples/run_gaia.py --config configs/config_gaia_c1_qwen_local.py --cfg-options max_samples=10 dataset.split=validation`. Must-haves in the new `log.txt`:
   - ≥ 1 `[premature-final-answer guard]` log entry fires on the ping-pong riddle / Finding Nemo task (the two tasks that previously hallucinated `50` and `12345, 67890`).
   - No `cannot access local variable 'final_answer'` lines OR: the same lines but NOW accompanied by `[RC2 diagnostic] Scope error in sub-agent ... full exception chain follows:` with a real traceback — that's what Pass 3.2 needs.
   - The pre-fix one passing task (#6 Time-Parking 2) still passes.
@@ -41,7 +41,7 @@
 
 ## Original Problem
 
-GAIA test-set run `gaia_test_127877_20260327_230408` (config_gaia_adaptive_qwen.py, vLLM Qwen3-VL-4B, 301 tasks) scored 4.98% (15/301). Root-cause taxonomy:
+GAIA test-set run `gaia_test_127877_20260327_230408` (config_gaia_c1_qwen_local.py, vLLM Qwen3-VL-4B, 301 tasks) scored 4.98% (15/301). Root-cause taxonomy:
 
 | Cluster | Tasks | Mechanism |
 |---|---|---|
@@ -82,7 +82,7 @@ Expected: every `.yaml` parses; grep returns zero lines (contradiction gone ever
 ### 3. 10-question smoke on the adaptive Qwen config
 
 ```bash
-python examples/run_gaia.py --config configs/config_gaia_adaptive_qwen.py --cfg-options max_samples=10 dataset.split=validation
+python examples/run_gaia.py --config configs/config_gaia_c1_qwen_local.py --cfg-options max_samples=10 dataset.split=validation
 ```
 Output lands in `workdir/gaia_adaptive_qwen/`.
 
@@ -124,4 +124,4 @@ After step 4 (full test-set run), run `scripts/analyze_results.py` on the output
 - **Lone premature `final_answer_tool` still passes**: if Qwen emits a solitary `final_answer_tool` with a fabricated answer and no siblings, the guard does NOT fire (status `"none"`). This is deliberately deferred — a "require prior observation in memory" heuristic has FP risk on trivia / direct-knowledge tasks. Revisit if the baseline-forecast delta is smaller than expected.
 - **Duplicate-all-dropped has no in-memory recovery signal**: when the guard drops all calls in the `duplicate` branch, the model sees no feedback in memory on the next turn. Bounded by `max_steps=25` (worst case 25 wasted turns). Rare pattern in practice — the 63 failing cases were all mixed-turn, not duplicate-only.
 - **AST-based regression tests**: `test_max_steps_yield_order.py` and `test_rc2_diagnostic_hook.py` check identifier names and presence, not runtime behavior. A legitimate refactor that renames `final_memory_step` will break them even if semantics are preserved — update the test alongside the refactor.
-- **The matrix configs are not affected by this pass**: the 12 `config_gaia_<c0|c2|c3|c4>_<kimi|mistral|qwen>.py` files use `qwen3.6-plus-failover` (128k API context), not the vLLM 4B that produced the 4.98% baseline. The RC1 guard and the duplicate-yield fix are shared runtime code so the matrix benefits transparently, but the Qwen-4B-specific `max_steps` and pruning tuning in `HANDOFF_PASS2_QWEN_TUNING.md` only touches `configs/config_gaia_adaptive_qwen.py`.
+- **The matrix configs are not affected by this pass**: the 12 `config_gaia_<c0|c1|c2|c3>_<kimi|mistral|qwen>.py` files use `qwen3.6-plus-failover` (128k API context), not the vLLM 4B that produced the 4.98% baseline. The RC1 guard and the duplicate-yield fix are shared runtime code so the matrix benefits transparently, but the Qwen-4B-specific `max_steps` and pruning tuning in `HANDOFF_PASS2_QWEN_TUNING.md` only touches `configs/config_gaia_c1_qwen_local.py`.

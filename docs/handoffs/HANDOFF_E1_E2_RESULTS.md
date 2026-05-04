@@ -55,7 +55,7 @@ Kimi and Gemma are excluded from the active matrix (see `HANDOFF_TEST_EVAL.md` �
 
 | # | Check | Mistral | Qwen | Status |
 |---|-------|---------|------|--------|
-| 1 | Extractor NOT constructed (`grep -c "SkillExtractor active (C4 training mode)"`) | 0 | 0 | ✅ pass |
+| 1 | Extractor NOT constructed (`grep -c "SkillExtractor active (C3 training mode)"`) | 0 | 0 | ✅ pass |
 | 2 | No writes to snapshot (file count stable across run) | 14 | 9 | ✅ pass |
 | 3 | Skill bodies unchanged (body-only diff excluding frontmatter) | — | — | *not checked — no pre-run body snapshot was taken; add to launcher for E3* |
 | 4 | Library actually read (`activate_skill` **invoked** as a tool call) | 0 invocations on 3-Q smoke ([re-analysis 2026-04-22](#f2-activate_skill-invocation-rate-zero-on-e2-smoke-is-a-sample-size-artifact-e0-training-shows-the-library-is-used): **60 invocations / 26 Qs across the 80-Q E0 run**) | 0 invocations on 3-Q smoke (E0 = **10 invocations / 10 Qs**) | ⚠️ smoke uninformative (zero expected at these sample sizes); production-scale evidence confirms library is invoked — see F2 |

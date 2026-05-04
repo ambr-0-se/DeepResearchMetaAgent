@@ -4,7 +4,7 @@
 **Baseline eval:** `workdir/gaia_test_127877_20260327_230408/` (GAIA test set 15/301 = 4.98%)
 **Commit:** `63486ca` — `perf(qwen-4b): Pass 2 tuning — raise sub-agent max_steps, tighten pruning`
 **Branch:** `main` — **needs push** (see the index — all pending handoffs get pushed together)
-**Scope:** `configs/config_gaia_adaptive_qwen.py` only. NOT the 12 matrix configs. Stacks on top of `HANDOFF_RC1_FINAL_ANSWER_GUARD.md`; validate that one first, then this one.
+**Scope:** `configs/config_gaia_c1_qwen_local.py` only. NOT the 12 matrix configs. Stacks on top of `HANDOFF_RC1_FINAL_ANSWER_GUARD.md`; validate that one first, then this one.
 
 ---
 
@@ -45,7 +45,7 @@ Two clusters in the 4.98% baseline (same run as RC1):
 
 ### 2.1 — sub-agent max_steps 3/3/5 → 7/7/7
 
-`configs/config_gaia_adaptive_qwen.py`:
+`configs/config_gaia_c1_qwen_local.py`:
 - `deep_researcher_agent_config.max_steps`: 3 → 7
 - `deep_analyzer_agent_config.max_steps`: 3 → 7
 - `browser_use_agent_config.max_steps`: 5 → 7
@@ -82,7 +82,7 @@ git pull && git log -1 --oneline                        # confirm HEAD = 63486ca
 pytest tests/test_config_qwen_tuning.py -v              # 2/2 pass
 
 # 2. Smoke (stacks on RC1 smoke — run that first)
-python examples/run_gaia.py --config configs/config_gaia_adaptive_qwen.py --cfg-options max_samples=10 dataset.split=validation
+python examples/run_gaia.py --config configs/config_gaia_c1_qwen_local.py --cfg-options max_samples=10 dataset.split=validation
 
 # 3. Full GAIA test-set run (same script as the RC1 handoff)
 sbatch run_gaia_test_eval.sh

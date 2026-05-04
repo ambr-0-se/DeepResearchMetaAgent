@@ -18,7 +18,7 @@
 - [x] **Prompt enrichment:** `inputs` vs `forward` alignment note, input types line aligned with framework vocabulary, two reference examples (stdlib A + stdlib B or pandas B when data-science on).
 - [x] **`Tool.from_code(..., expected_tool_name=...)`** — deterministic subclass pick when multiple `Tool` subclasses exist in one module string.
 - [x] **`add_new_tool_to_agent`** passes `expected_tool_name`; **`_generate_tool_name`** appends SHA-256 prefix when `{base}_tool` already exists on target agent.
-- [x] **`ModifySubAgentTool.parameters`** + adaptive **C2/C3/C4 YAML** wording aligned with allowlist (no stale “stdlib-only” list).
+- [x] **`ModifySubAgentTool.parameters`** + adaptive **C1/C2/C3 YAML** wording aligned with allowlist (no stale “stdlib-only” list).
 - [x] **`tests/test_tool_generator.py`** (+ mock `add_new_tool_to_agent(**kwargs)` in `tests/test_eval_fixes.py`).
 - [x] Re-exports in `src/meta/__init__.py`: `allowed_top_level_modules`, `format_allowlist_for_prompt`.
 
@@ -69,7 +69,7 @@
 | [`src/meta/adaptive_mixin.py`](src/meta/adaptive_mixin.py) | `add_new_tool_to_agent(..., *, expected_tool_name=None)` forwarded to `from_code`. |
 | [`src/meta/modify_tool.py`](src/meta/modify_tool.py) | `_generate_tool_name(spec, agent)` collision suffix; `_add_new_tool` passes `expected_tool_name`; `specification` description updated. |
 | [`src/meta/__init__.py`](src/meta/__init__.py) | Export allowlist helpers. |
-| [`src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent.yaml`](src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent.yaml) (+ `_c3`, `_c4`) | Replace stale “stdlib-ish” import sentence with allowlist + `TOOL_GENERATOR_ALLOW_DATA_SCIENCE`; tweak CSV example spec line. |
+| [`src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent.yaml`](src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent.yaml) (+ `_c2`, `_c3`) | Replace stale “stdlib-ish” import sentence with allowlist + `TOOL_GENERATOR_ALLOW_DATA_SCIENCE`; tweak CSV example spec line. |
 | [`tests/test_tool_generator.py`](tests/test_tool_generator.py) | New unit tests (allowlist, AST, clean, validate, `from_code`, retry mock, collision naming). |
 | [`tests/test_eval_fixes.py`](tests/test_eval_fixes.py) | Mock `add_new_tool_to_agent` accepts `**kwargs`. |
 
@@ -104,7 +104,7 @@ pytest tests/test_tool_generator.py -q --tb=short
 
 ### Optional eval smoke (slow)
 
-Pick one C2/C3/C4 job that previously exercised `add_new_tool_to_agent`, or a 1-question harness. Grep logs:
+Pick one C1/C2/C3 job that previously exercised `add_new_tool_to_agent`, or a 1-question harness. Grep logs:
 
 ```bash
 grep -E "ToolGenerator|add_new_tool_to_agent|Multiple Tool subclasses" workdir/<run>/log.txt | tail -50

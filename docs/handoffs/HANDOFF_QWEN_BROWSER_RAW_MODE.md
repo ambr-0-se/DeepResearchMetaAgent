@@ -61,7 +61,7 @@ otherwise. Also adds a dict-shape `.get()` on
 - [x] Unit tests — 27/27 new + 140 prior = **167/167 green** in `scripts/run_handoff_pytest_sweep.sh` (2026-04-23).
 - [x] V2 — Qwen live probe reaches Step 2 reliably (pre-fix: 0/3,266). Content extraction is opportunistic (Qwen LLM-quality variance under complex system prompts; caveat logged below).
 - [x] V3 — Mistral regression **PASSES** (Steps 1/2/3 reached, 286 chars extracted, tolerant extractor not installed on Mistral path). This also fixes the silent pre-existing `KeyRotatingChatOpenAI` browser_use bug (P4 regression since 2026-04-22).
-- [x] V4 — Combined T3v3 matrix smoke (3 Q × 2 models × C4, validation split): **Qwen made 6 `🔗 Navigated to` events** in real GAIA traffic (pre-fix: 0 / 3,266 E0 v3 attempts). Mistral made 12 (also previously broken by the KeyRotating bug). Accuracy at tight smoke caps (agent_config.max_steps=4) was 0/3 for both models — expected at smoke budget; the V4 criterion is PATH UNBLOCK, not GAIA accuracy.
+- [x] V4 — Combined T3v3 matrix smoke (3 Q × 2 models × paper-C3 / config tag `c3`; legacy runbook “C4”, validation split): **Qwen made 6 `🔗 Navigated to` events** in real GAIA traffic (pre-fix: 0 / 3,266 E0 v3 attempts). Mistral made 12 (also previously broken by the KeyRotating bug). Accuracy at tight smoke caps (agent_config.max_steps=4) was 0/3 for both models — expected at smoke budget; the V4 criterion is PATH UNBLOCK, not GAIA accuracy.
 - [ ] Local commit (no push — user hasn't authorized).
 
 ## Original problem (log evidence)
@@ -92,7 +92,7 @@ extract_json_from_model_output failed: Expecting value:...    (B3)
 content='' with reasoning_tokens=534                          (L3 unblocker)
 ```
 
-**2026-04-23 live V4 T3v3 smoke** (3 Q × C4 × {mistral, qwen}, in flight during
+**2026-04-23 live V4 T3v3 smoke** (3 Q × paper-C3 `c3` × {mistral, qwen}; legacy label C4 — in flight during
 this handoff):
 
 - Qwen: **21+ Step 2 marks in log** — vs 0 across all of E0 v3 (3,266
@@ -175,7 +175,7 @@ bash scripts/run_handoff_pytest_sweep.sh
 
 # V2 — Qwen browser_use live probe (~45 s, ~$0.01 OR spend)
 /Users/ahbo/miniconda3/envs/dra/bin/python scripts/p5_live_validation.py
-# Pass: overall PASS ✓ — C1+C2+C3+C4 all green, step numbers ≥[1,2].
+# Pass: overall PASS ✓ — p5 gate phases 1–4 all green (script step indices; not GAIA experimental conditions C0–C3), step numbers ≥[1,2].
 
 # V3 — Mistral regression smoke (~45 s, ~$0.01 Mistral spend)
 /Users/ahbo/miniconda3/envs/dra/bin/python scripts/mistral_browser_use_regression.py
@@ -183,7 +183,7 @@ bash scripts/run_handoff_pytest_sweep.sh
 
 # V4 — combined T3v3 matrix smoke (~12 min, ~$0.15)
 DRA_RUN_ID=20260423_T3v3smoke caffeinate -dims bash scripts/run_eval_matrix.sh \
-  full '' c4 "max_samples=3 dataset.shuffle=True dataset.seed=42 \
+  full '' c3 "max_samples=3 dataset.shuffle=True dataset.seed=42 \
   per_question_timeout_secs=1800 agent_config.max_steps=15 \
   auto_browser_use_tool_config.max_steps=10 browser_use_agent_config.max_steps=3 \
   deep_researcher_tool_config.time_limit_seconds=45"
@@ -198,13 +198,13 @@ DRA_RUN_ID=20260423_T3v3smoke caffeinate -dims bash scripts/run_eval_matrix.sh \
 | V1b new tests isolated | `pytest tests/test_auto_browser_qwen_raw_mode.py -q` | 24 passed |
 | V2 Qwen live | `python scripts/p5_live_validation.py \| tail -5` | `overall: PASS ✓` |
 | V3 Mistral regression | `python scripts/mistral_browser_use_regression.py \| tail -5` | `overall: PASS ✓` |
-| V4 matrix smoke Qwen | `grep -c "📍 Step 2" workdir/gaia_c4_qwen_20260423_T3v3smoke/log.txt` | ≥ 1 |
-| V4 matrix smoke Mistral | `grep -c "📍 Step 2" workdir/gaia_c4_mistral_20260423_T3v3smoke/log.txt` | ≥ T3v2 baseline |
-| Fairness check | `grep "tool_calling_method" workdir/gaia_c4_mistral_*/log.txt` | empty (no Mistral uses raw mode) |
+| V4 matrix smoke Qwen | `grep -c "📍 Step 2" workdir/gaia_c3_qwen_20260423_T3v3smoke/log.txt` (legacy copy: `gaia_c4_qwen_*`) | ≥ 1 |
+| V4 matrix smoke Mistral | `grep -c "📍 Step 2" workdir/gaia_c3_mistral_20260423_T3v3smoke/log.txt` (legacy: `gaia_c4_mistral_*`) | ≥ T3v2 baseline |
+| Fairness check | `grep "tool_calling_method" workdir/gaia_c3_mistral_*/log.txt` (legacy: `gaia_c4_mistral_*`) | empty (no Mistral uses raw mode) |
 
 ## Methodology implications (E0 v3 → E3)
 
-E0 v3 Qwen C4 training ran on the broken path — 14/80 questions
+E0 v3 Qwen at paper-C3 (skill library; legacy workdir tag `gaia_c4_*`) training ran on the broken path — 14/80 questions
 involved silent `browser_use_agent` delegations that produced only
 `about:blank` trajectories. Consequences for the paper:
 
@@ -213,13 +213,13 @@ involved silent `browser_use_agent` delegations that produced only
    `escalate-on-browser-failure`) will now see a working browser at E3
    test time — evaluation may show them underfiring (a legit
    "capability–inference mismatch").
-2. **E3 Qwen C4 runs the fixed path**. Compare against the C3→C4
+2. **E3 Qwen paper-C3 (skills; legacy lettering C4) runs the fixed path**. Compare against the paper-C2→paper-C3
    accuracy delta, but disclose the asymmetry:
    > "Due to a latent interaction between `browser_use`'s schema-coerced
    > structured-output path and Alibaba's restricted `tool_choice`
-   > support (both discovered post-E0), Qwen C4's training library
+   > support (both discovered post-E0), Qwen paper-C3's training library
    > is not a like-for-like reflection of the test-time capability
-   > surface. Mistral C4 is unaffected — its browser path worked
+   > surface. Mistral paper-C3 is unaffected — its browser path worked
    > throughout. This is documented in `docs/handoffs/HANDOFF_QWEN_BROWSER_RAW_MODE.md`
    > with full root-cause + live-probe evidence."
 3. **No E0 re-run planned** (operator decision pre-dating this handoff;

@@ -17,7 +17,7 @@ supersedes or builds on the earlier one.
 docs/handoffs/
 ├── README.md                                   # this file
 ├── HANDOFF_SILENT_FAILURES.md                  # browser/analyzer silent-fail fixes
-├── HANDOFF_PROVIDER_MATRIX.md                  # Multi-provider + GAIA matrix (4 models × C0–C4; see index for 16-cell)
+├── HANDOFF_PROVIDER_MATRIX.md                  # Multi-provider + GAIA matrix (4 models × C0–C3; see HANDOFF_INDEX for 16-cell generated configs)
 ├── HANDOFF_MODIFY_SUBAGENT_GUIDANCE.md         # prompt + tool-description expansions
 ├── HANDOFF_C3_C4_IMPLEMENTATION.md             # ReviewStep + Skill library
 ├── HANDOFF_RC1_FINAL_ANSWER_GUARD.md           # RC1/RC2 final-answer guards
@@ -37,7 +37,7 @@ docs/handoffs/
    independent (revert-able separately), they get separate docs.
 3. **Research reproducibility.** This repo is an APAI4799 research project
    (see root `CLAUDE.md`); these docs are the paper-trail for how the
-   experimental conditions C0/C2/C3/C4 were built and validated.
+   experimental conditions C0/C1/C2/C3 were built and validated.
 
 ## Authoring conventions
 

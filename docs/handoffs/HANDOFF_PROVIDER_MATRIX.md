@@ -1,4 +1,4 @@
-# Handoff: Multi-Provider Integration + GAIA Eval Matrix (Mistral / Kimi / Qwen × C0–C4)
+# Handoff: Multi-Provider Integration + GAIA Eval Matrix (Mistral / Kimi / Qwen × C0–C3)
 
 **Session date:** 2026-04-17 → 2026-04-18
 **Branch:** `main` (pushed — both commits live on `origin/main`)
@@ -16,7 +16,7 @@
 - [x] **Fix A:** `reasoning_content` round-trip for DeepSeek-reasoner / Qwen3-thinking — `ChatMessage.reasoning_content` field, capture in `openaillm.py`, echo in `MessageManager`, role-merge skip when reasoning present
 - [x] **Fix B:** Moonshot Kimi sampling lock — strip `temperature/top_p/n/penalty/logprobs` after caller-kwargs merge in `MessageManager.get_clean_completion_kwargs`
 - [x] **Fix C:** DashScope `enable_thinking` injection — `extra_body` kwarg flows through `self.kwargs` to `chat.completions.create`
-- [x] Registered Kimi `kimi-k2.5-no-thinking` variant (extra_body disables thinking) — required for C3/C4 JSON output
+- [x] Registered Kimi `kimi-k2.5-no-thinking` variant (extra_body disables thinking) — required for C2/C3 JSON output (sealed review + skill library)
 - [x] Implemented `FailoverModel` (`src/models/failover.py`) — one-way DashScope→OpenRouter switch on quota-exhaustion errors, registered as `qwen3.6-plus-failover`
 - [x] Generated 12 single-model eval configs via `scripts/gen_eval_configs.py`
 - [x] Built parallel batch runner `scripts/run_eval_matrix.sh` (3 model streams parallel; conditions sequential per stream; smoke vs full modes)
@@ -29,8 +29,8 @@
 - [ ] `git pull origin main` on GPU farm; confirm HEAD = `9883a3a`
 - [ ] Populate `.env` with `MISTRAL_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `OPENROUTER_API_KEY`, `FIRECRAWL_API_KEY` (see "How to set up `.env`" below)
 - [ ] Tier 0–2 pre-flight (config sanity, model registration smoke, single-question per model)
-- [ ] Tier 3 — C3/C4 JSON-output validation per model (catches `response_format` conflicts early)
-- [ ] Tier 5 — `bash scripts/run_eval_matrix.sh smoke` (5 questions × 16 cells = 80 questions on validation split — see handoff #9 for the D4 matrix expansion to 4 models)
+- [ ] Tier 3 — C2/C3 JSON-output validation per model (catches `response_format` conflicts early)
+- [ ] Tier 5 — `bash scripts/run_eval_matrix.sh smoke` (5 questions × 12 cells = 60 questions on validation split for the 3-model × C0–C3 matrix; expand per future model rows)
 - [ ] Inspect Qwen failover trigger (look for `[FailoverModel:qwen3.6-plus-failover] primary ... quota exhausted` line)
 - [ ] If smoke passes, kick off `bash scripts/run_eval_matrix.sh full` for the test-split submission run
 - [ ] Score every cell with `scripts/analyze_results.py` and stash the per-cell numbers in this doc before promoting to Completed
@@ -61,7 +61,7 @@ DashScope accepts `enable_thinking=true` as a top-level request field on the Ope
 
 ### Problem C — Single-model eval constraint requires per-(model, condition) configs
 
-The user wants single-model GAIA runs (no mixed-model setups). With 4 models × 4 conditions (C0/C2/C3/C4) — post-handoff-#9 D4 expansion — that's 16 distinct configs, each pinning one `model_id` across the planner + 3 sub-agents + 3 tools + LangChain wrapper. mmengine config inheritance replaces dicts wholesale rather than deep-merging, so each file must redeclare every agent/tool config — too repetitive to hand-maintain, especially as model IDs change.
+The user wants single-model GAIA runs (no mixed-model setups). With **3 models × 4 conditions (C0–C3)** in the current matrix, that's **12** generated configs (paper: C0 baseline; C1 reactive modify; C2 + sealed review; C3 + skill library), each pinning one `model_id` across the planner + 3 sub-agents + 3 tools + LangChain wrapper. mmengine config inheritance replaces dicts wholesale rather than deep-merging, so each file must redeclare every agent/tool config — too repetitive to hand-maintain, especially as model IDs change.
 
 ### Problem D — Qwen on free DashScope tier needs auto-failover to OpenRouter
 
@@ -69,7 +69,7 @@ DashScope offers a generous free tier; OpenRouter offers paid Qwen access. The e
 
 ### Problem E — Kimi K2.5 thinking-on default breaks JSON output
 
-C3 ReviewAgent and C4 SkillExtractor both rely on `response_format={"type":"json_object"}`. Moonshot disallows this while thinking is on (default). Without an explicit thinking-disabled variant, C3/C4 silently degrade to C2-equivalent on Kimi.
+C2 ReviewAgent and C3 SkillExtractor both rely on `response_format={"type":"json_object"}`. Moonshot disallows this while thinking is on (default). Without an explicit thinking-disabled variant, C2/C3 silently degrade to C1-equivalent on Kimi.
 
 ---
 
@@ -95,7 +95,7 @@ Diff stats: 6 files, +673 / −16.
 | [src/models/failover.py](src/models/failover.py) | NEW — `FailoverModel` wrapper. Proxies `generate` / `generate_stream` / `model_id` / `_last_input_token_count` / arbitrary attribute access. One-way switch on quota-exhaustion errors only (DashScope free-tier patterns + HTTP 402/403). Conservative detection: bare 429 rate-limit messages do NOT trigger switch. Type-only imports of `OpenAIServerModel` / `ChatMessage` under `TYPE_CHECKING` so it's testable in isolation. |
 | [src/models/models.py](src/models/models.py) | Imports `FailoverModel`. `_register_qwen_failover_models` runs LAST in `init_models` — wraps `qwen3.6-plus` (DashScope) + `or-qwen3.6-plus` (OpenRouter) into `qwen3.6-plus-failover` when both keys are present. New `kimi-k2.5-no-thinking` variant via `extra_body={"thinking":{"type":"disabled"}}`. |
 | [scripts/gen_eval_configs.py](scripts/gen_eval_configs.py) | NEW — generator for the 12-config matrix. Single template; one row per (model_label, model_id, langchain_alias) × (condition, base_config). Run with `python scripts/gen_eval_configs.py` (or `--dry-run`). |
-| [configs/config_gaia_<c0\|c2\|c3\|c4>_<mistral\|kimi\|qwen>.py](configs/) | 12 NEW generated files. Each inherits from the matching C-condition base and overrides `tag` + every agent/tool `model_id` to the chosen model. Mistral uses `mistral-small`, Kimi uses `kimi-k2.5-no-thinking`, Qwen uses `qwen3.6-plus-failover`. Browser-use LangChain wrapper alias matches. `max_samples=None` and `concurrency=4` defaults — both overridable via `--cfg-options`. |
+| [configs/config_gaia_<c0\|c1\|c2\|c3>_<mistral\|kimi\|qwen>.py](configs/) | 12 NEW generated files. Each inherits from the matching C-condition base and overrides `tag` + every agent/tool `model_id` to the chosen model. Mistral uses `mistral-small`, Kimi uses `kimi-k2.5-no-thinking`, Qwen uses `qwen3.6-plus-failover`. Browser-use LangChain wrapper alias matches. `max_samples=None` and `concurrency=4` defaults — both overridable via `--cfg-options`. |
 | [scripts/run_eval_matrix.sh](scripts/run_eval_matrix.sh) | NEW — parallel batch runner. Three model streams (`mistral`, `kimi`, `qwen`) launched in parallel; the four conditions run sequentially within each stream so each model's API key is not contended. Modes: `smoke` (cap 5 questions on `validation` split) / `full` (no cap, default `test` split). Optional model / condition filters. Per-stream logs in `workdir/run_logs/`. |
 | [tests/test_failover_model.py](tests/test_failover_model.py) | NEW — 16 unit tests: quota-pattern detection (DashScope free-tier + 402 + response-body match), sticky one-way switch, transient 429 NOT switching, streaming failover before first chunk, attribute proxying, alias precedence over child `model_id`. Loads `failover.py` under unique module name to avoid sys.modules pollution. |
 | [CLAUDE.md](CLAUDE.md) | Documented new model registry, failover semantics, provider quirks, and matrix overview. |
@@ -204,14 +204,14 @@ python examples/run_gaia.py --config configs/config_gaia_c0_qwen.py    --cfg-opt
 
 Watch for the failure patterns in the table below.
 
-### Tier 3 — C3/C4 JSON-output validation (~5-10 min)
+### Tier 3 — C2/C3 JSON-output validation (~5-10 min)
 
-C3/C4 are most likely to surface provider-specific JSON issues — run each once before kicking off the matrix:
+C2 (sealed review) and C3 (skill library) are most likely to surface provider-specific JSON issues — run each once before kicking off the matrix:
 
 ```bash
-python examples/run_gaia.py --config configs/config_gaia_c3_kimi.py    --cfg-options max_samples=2 dataset.split=validation
-python examples/run_gaia.py --config configs/config_gaia_c3_qwen.py    --cfg-options max_samples=2 dataset.split=validation
-python examples/run_gaia.py --config configs/config_gaia_c4_mistral.py --cfg-options max_samples=2 dataset.split=validation
+python examples/run_gaia.py --config configs/config_gaia_c2_kimi.py    --cfg-options max_samples=2 dataset.split=validation
+python examples/run_gaia.py --config configs/config_gaia_c2_qwen.py    --cfg-options max_samples=2 dataset.split=validation
+python examples/run_gaia.py --config configs/config_gaia_c3_mistral.py --cfg-options max_samples=2 dataset.split=validation
 ```
 
 ### Tier 5 — Full smoke matrix (~30-90 min, 60 questions total)
@@ -303,9 +303,9 @@ done
 **Pass criterion (smoke):** every cell shows non-zero answered count. Any cell with 0 answers indicates a model-config mismatch — investigate that workdir's `log.txt` first.
 
 **Pass criterion (full submission):** Compare condition deltas within each model:
-- C2 should equal or beat C0 (reactive diagnose/modify helps or is neutral)
-- C3 should equal or beat C2 (review step adds signal)
-- C4 should equal or beat C3 (skill library compounds)
+- C1 should equal or beat C0 (reactive diagnose/modify helps or is neutral)
+- C2 should equal or beat C1 (review step adds signal)
+- C3 should equal or beat C2 (skill library compounds)
 - Cross-model: not directly comparable (different reasoning strengths) — report side-by-side, not as a single ranking
 
 ### Validation 6 — No regressions
@@ -371,17 +371,17 @@ grep -E "Input tokens: [0-9,]+ \| Output tokens: [0-9,]+" workdir/<run_dir>/log.
   awk -F'[|:,]' '{i+=$3; o+=$5} END {print "Input:", i, "Output:", o}'
 
 # Resume an interrupted cell — run_gaia.py reads dra.jsonl and skips done questions
-python examples/run_gaia.py --config configs/config_gaia_c4_qwen.py
+python examples/run_gaia.py --config configs/config_gaia_c3_qwen.py
 ```
 
 ### Known unknowns / caveats
 
 - **DashScope free-tier sizing:** the daily quota for `qwen3.6-plus` on the intl endpoint is not documented in stable form. First Qwen run will reveal it empirically — log the exact token count at which failover fires.
-- **C4 skill drift (resolved 2026-04-18):** every C4 run now writes its skill library to `workdir/gaia_c4_<model>_<DRA_RUN_ID>/skills/`, seeded fresh from `src/skills/` on first construction. Consequences for GPU-farm operators:
-    - Parallel Mistral/Kimi/Qwen C4 cells never race on a shared dir — cross-model contamination is impossible by construction.
-    - Every historical run is inspectable: `ls workdir/gaia_c4_*_<RUN_ID>/skills/` shows all three libraries after a matrix invocation; `diff -r` across RUN_IDs shows same-model skill evolution.
-    - Matrix runner auto-generates `DRA_RUN_ID=$(date +%Y%m%d_%H%M%S)` and exports it so parallel streams share the stamp. Operators resume a prior run by exporting it explicitly: `DRA_RUN_ID=<prior> bash scripts/run_eval_matrix.sh full '' c4`. The `.seeded` marker inside the skills dir makes seed-copy idempotent on resume (prior learned skills survive).
-    - Convenience: `workdir/gaia_c4_<model>_latest` is symlinked to the most recent run dir after each cell finishes.
+- **C3 skill drift (resolved 2026-04-18):** every C3 (skill-library) run writes its skill library to `workdir/gaia_c3_<model>_<DRA_RUN_ID>/skills/`, seeded fresh from `src/skills/` on first construction. Consequences for GPU-farm operators:
+    - Parallel Mistral/Kimi/Qwen C3 cells never race on a shared dir — cross-model contamination is impossible by construction.
+    - Every historical run is inspectable: `ls workdir/gaia_c3_*_<RUN_ID>/skills/` shows all three libraries after a matrix invocation; `diff -r` across RUN_IDs shows same-model skill evolution. (Pre–May 2026 matrix rows may still live under `workdir/gaia_c4_*` — same condition, legacy tag.)
+    - Matrix runner auto-generates `DRA_RUN_ID=$(date +%Y%m%d_%H%M%S)` and exports it so parallel streams share the stamp. Operators resume a prior run by exporting it explicitly: `DRA_RUN_ID=<prior> bash scripts/run_eval_matrix.sh full '' c3`. The `.seeded` marker inside the skills dir makes seed-copy idempotent on resume (prior learned skills survive).
+    - Convenience: `workdir/gaia_c3_<model>_latest` is symlinked to the most recent run dir after each cell finishes.
     - For a frozen-library evaluation (pre-trained seeds only, no online learning), still override with `--cfg-options enable_skill_extraction=False`. The per-run dir keeps results isolated; the library itself will match `src/skills/` exactly.
 - **MiniMax `<think>` pruning:** unrelated to the 3-model matrix (MiniMax not in scope here), but if MiniMax is added later, the `general_agent.py::_prune_messages_if_needed` at ≥85% context can truncate `<think>` blocks mid-string. Deferred — see "Not in either commit" above.
 - **Cost ceiling:** full matrix on test split is potentially expensive. Set a kill-switch — `pkill -f "config_gaia_.*_<model>"` will kill one stream without affecting the others.

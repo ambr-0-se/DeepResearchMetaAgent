@@ -4,7 +4,7 @@
 **Branch / HEAD push:** `main` at `e94f571` (includes `463d791` 16-cell smoke / `validate_handoffs` + handoff doc sync)
 **Scope:** Executes the GAIA submission run for the APAI4799 meta-agent paper.
 Produces **4 models × 4 conditions = 16 `dra.jsonl` files** on the GAIA test
-split (~300 questions each; ~4,800 Q total), plus the C4 training pass
+split (~300 questions each; ~4,800 Q total), plus the C3 training pass
 needed to harden the skill library before the scored evaluation.
 
 > **Matrix-size update (2026-04-18):** expanded from 12 cells to 16 after
@@ -27,18 +27,18 @@ include **Gemma** (16-cell grep matrix); see index **Progress snapshot**.
 
 ---
 
-## Glossary — splits, caps, official score, C4 extraction
+## Glossary — splits, caps, official score, C3 skill-library extraction
 
 | Term | Meaning |
 |------|---------|
-| **Integration track (I0–I3)** | “Does it run?” — cheap gates on validation smoke, configs, keys, and (optionally) the C4 train→snapshot→freeze *mechanism* for one model. |
-| **Evaluation track (E0–E3)** | “What is the GAIA **test** score?” — full validation C4 training for four models, snapshot, farm freeze check, then **test-split** 16-cell submission. |
-| **`dataset.split`** | In **full mode** `DATASET_SPLIT` is **required** and enforced by [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) — no implicit default, no escape hatch. Rules: **C4 in conditions ⇒ `validation`** (C4 trains here; test would be train-on-test leakage); **C0/C2/C3 alone ⇒ `test`** (reported scores are always on test). Both catastrophic misconfigs (`full '' c4` on test, `full '' c0` on validation) refuse to launch. Smoke mode is unaffected — always validation with `max_samples` cap. |
-| **Official paper score** | Accuracy from **E3** `dra.jsonl` on the **test** split, after **E0–E2** for any reported frozen-library C4 numbers. |
-| **C4 extraction ON** | Default in generated C4 configs; **I3a**, **I2** C4 cell, **E0** training. Mutates `skills_dir` during the run. |
-| **C4 extraction OFF** | Achieved via `--cfg-options agent_config.enable_skill_extraction=False` plus a pinned `agent_config.skills_dir` (snapshot). **I3c**, **E2**, **E3** C4 cells. |
-| **Smoke step caps** | `SMOKE_CFG_OPTIONS` in [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) (and the same defaults in [`scripts/integration_i3_c4_pipeline.sh`](../../scripts/integration_i3_c4_pipeline.sh)); **not** for E3. |
-| **`validate_handoffs.sh`** | Greps the **16-cell matrix** `workdir/gaia_*_<DRA_RUN_ID>/` layout from **I2 / E3** — it does **not** validate **I3** artifacts (`workdir/c4_i3_*`); I3 is a separate cheap C4 pipeline smoke. |
+| **Integration track (I0–I3)** | “Does it run?” — cheap gates on validation smoke, configs, keys, and (optionally) the C3 train→snapshot→freeze *mechanism* for one model. |
+| **Evaluation track (E0–E3)** | “What is the GAIA **test** score?” — full validation C3 training for four models, snapshot, farm freeze check, then **test-split** 16-cell submission. |
+| **`dataset.split`** | In **full mode** `DATASET_SPLIT` is **required** and enforced by [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) — no implicit default, no escape hatch. Rules: **C3 in conditions ⇒ `validation`** (C3 trains here; test would be train-on-test leakage); **C0/C1/C2 alone ⇒ `test`** (reported scores are always on test). Both catastrophic misconfigs (`full '' c3` on test, `full '' c0` on validation) refuse to launch. Smoke mode is unaffected — always validation with `max_samples` cap. |
+| **Official paper score** | Accuracy from **E3** `dra.jsonl` on the **test** split, after **E0–E2** for any reported frozen-library C3 numbers. |
+| **C3 extraction ON** | Default in generated C3 configs; **I3a**, **I2** C3 cell, **E0** training. Mutates `skills_dir` during the run. |
+| **C3 extraction OFF** | Achieved via `--cfg-options agent_config.enable_skill_extraction=False` plus a pinned `agent_config.skills_dir` (snapshot). **I3c**, **E2**, **E3** C3 cells. |
+| **Smoke step caps** | `SMOKE_CFG_OPTIONS` in [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) (and the same defaults in [`scripts/integration_i3_c3_pipeline.sh`](../../scripts/integration_i3_c3_pipeline.sh)); **not** for E3. |
+| **`validate_handoffs.sh`** | Greps the **16-cell matrix** `workdir/gaia_*_<DRA_RUN_ID>/` layout from **I2 / E3** — it does **not** validate **I3** artifacts (`workdir/c3_i3_*`); I3 is a separate cheap C3 pipeline smoke. |
 
 **Legacy aliases:** former **S0–S2** = **I0–I2**; former **S4** test submit = **E3**. “Post-S2 snapshot” in older notes = **E1 — snapshot after E0**.
 
@@ -48,11 +48,11 @@ flowchart LR
     I0[I0_preflight]
     I1[I1_canary]
     I2[I2_matrix_smoke]
-    I3[I3_C4_E2E_smoke_one_model]
+    I3[I3_C3_E2E_smoke_one_model]
     I0 --> I1 --> I2 --> I3
   end
   subgraph Etrack [Track_E_evaluation]
-    E0[E0_C4_val_train_4models]
+    E0[E0_C3_val_train_4models]
     E1[E1_snapshot]
     E2[E2_freeze_smoke]
     E3[E3_test_submit]
@@ -66,11 +66,11 @@ flowchart LR
 | **I0** | Preflight | `bash scripts/smoke_validate_handoffs_234.sh` |
 | **I1** | Single-cell canary | `sbatch run_matrix_slurm.sh smoke mistral c0` |
 | **I2** | 16-cell integration smoke | `sbatch run_matrix_slurm.sh smoke` |
-| **I3** | C4 E2E integration (subset → snapshot → few Q, **one model**, default Mistral) | `bash scripts/integration_i3_c4_pipeline.sh` |
-| **E0** | C4 val train (full val, **four** models) | `DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c4` |
+| **I3** | C3 E2E integration (subset → snapshot → few Q, **one model**, default Mistral) | `bash scripts/integration_i3_c3_pipeline.sh` |
+| **E0** | C3 val train (full val, **four** models) | `DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c3` |
 | **E1** | Snapshot trained `skills/` after E0 | `cp -a` loop → `workdir/c4_trained_libraries/<model>_skills_v<N>` (bump `N` each E0 iteration) |
 | **E2** | Freeze smoke (local `scripts/launch_e2_freeze_smoke.sh` or farm `sbatch` loop, real libraries) | `agent_config.skills_dir=<snapshot> agent_config.enable_skill_extraction=False` |
-| **E3** | Test-split submission (16 cells) | `DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' {c0,c2,c3}` (one per condition — matrix runner refuses the all-4-conditions shape on test to prevent C4 train-on-test) + per-model frozen C4 via `examples/run_gaia.py` with `agent_config.enable_skill_extraction=False` |
+| **E3** | Test-split submission (16 cells) | `DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' {c0,c1,c2}` (one per condition — matrix runner refuses the all-4-conditions shape on test to prevent C3 train-on-test) + per-model frozen C3 via `examples/run_gaia.py` with `agent_config.enable_skill_extraction=False` |
 
 ---
 
@@ -97,12 +97,12 @@ flowchart LR
 - [ ] **I0** pre-flight: `bash scripts/smoke_validate_handoffs_234.sh`
 - [ ] **I1** single-cell canary: `sbatch run_matrix_slurm.sh smoke mistral c0`
 - [ ] **I2** smoke matrix: `sbatch run_matrix_slurm.sh smoke` (default **3 Q/cell** + smoke step caps; **4 models in parallel**)
-- [ ] **I3** (optional, recommended when C4 code/config changes): `bash scripts/integration_i3_c4_pipeline.sh` — one-model C4 subset train → snapshot → freeze few-Q smoke under `workdir/c4_i3_*` (does not touch `c4_trained_libraries/`)
-- [ ] **E0** C4 validation training (see §E0 — C4 val train) — **required** before scored **C4** on `test` (four parallel model jobs)
-- [ ] **E1 — snapshot after E0** — `cp -a` each C4 `skills/` into
+- [ ] **I3** (optional, recommended when C3 code/config changes): `bash scripts/integration_i3_c3_pipeline.sh` — one-model C3 subset train → snapshot → freeze few-Q smoke under `workdir/c3_i3_*` (does not touch `c4_trained_libraries/`)
+- [ ] **E0** C3 validation training (see §E0 — C3 val train) — **required** before scored **C3** on `test` (four parallel model jobs)
+- [ ] **E1 — snapshot after E0** — `cp -a` each C3 `skills/` into
       `workdir/c4_trained_libraries/<model>_skills_v<N>` (§E1)
 - [ ] **E2** freeze smoke (~30 min, local `scripts/launch_e2_freeze_smoke.sh` or farm `sbatch` loop): `agent_config.*` freeze overrides against the `_skills_v<N>` snapshot. See `HANDOFF_E1_E2_RESULTS.md` for the 2026-04-20 pass and known findings (timeout overshoot, non-invocation of `activate_skill` on the 3-Q sample).
-- [ ] **E3** test-split submission: one `DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' <cN>` per C0/C2/C3, plus per-model frozen C4 via `examples/run_gaia.py` (see §E3). The matrix runner refuses the all-4-conditions shape on test by design.
+- [ ] **E3** test-split submission: one `DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' <cN>` per C0/C1/C2, plus per-model frozen C3 via `examples/run_gaia.py` (see §E3). The matrix runner refuses the all-4-conditions shape on test by design.
 - [ ] Collect `dra.jsonl` → run `scripts/analyze_results.py` per cell
 - [ ] `bash scripts/validate_handoffs.sh <DRA_RUN_ID>` → attach pass/info
       summary to this handoff when promoting to Completed
@@ -112,14 +112,14 @@ flowchart LR
 
 ## Matrix definition
 
-**Default matrix: 8 cells = 2 models × 4 conditions** (as of 2026-04-19; see "Kimi exclusion" and "Gemma exclusion" below for methodology notes).
+**Default matrix: 8 active cells = 2 models × 4 conditions** (as of 2026-04-19; see "Kimi exclusion" and "Gemma exclusion" below for methodology notes).
 
 | Condition | Meta-agent capability added | Configs / model slot |
 |-----------|------------------------------|----------------------|
 | **C0** | — (vanilla `PlanningAgent` baseline) | `configs/config_gaia_c0_<model>.py` |
-| **C2** | Reactive `diagnose_subagent` + `modify_subagent` | `configs/config_gaia_c2_<model>.py` |
-| **C3** | C2 + structural REVIEW step | `configs/config_gaia_c3_<model>.py` |
-| **C4** | C3 + cross-task skill library (pre-seeded + learned) | `configs/config_gaia_c4_<model>.py` |
+| **C1** | Reactive `diagnose_subagent` + `modify_subagent` | `configs/config_gaia_c1_<model>.py` |
+| **C2** | C1 + structural REVIEW step | `configs/config_gaia_c2_<model>.py` |
+| **C3** | C2 + cross-task skill library (pre-seeded + learned) | `configs/config_gaia_c3_<model>.py` |
 
 | Model slot | Real slug (model_id) | Cost (in/out /M) | tool_choice handling | Rationale / caveats |
 |------------|----------------------|-------------------|-----------------------|---------------------|
@@ -137,13 +137,13 @@ Kimi K2.5 via the `or-kimi-k2.5` slug (OpenRouter → Moonshot AI provider pin) 
 - Even after the cleanup-deadlock fix, Kimi's effective throughput during E0 was ~9% (14 valid rows out of the first 47 attempted, since `run_gaia.py`'s `filter_answers` drops errored rows on resume). Projecting a full validation sweep would have taken ~15h wall on Kimi alone while the other three models were on track for ~10-12h each.
 - These are **provider-side reliability issues** (Moonshot AI via OpenRouter), not code issues on our side. The `_CHAT_COMPLETION_TIMEOUT_S=120s` + retry fix (`fbd0dd1`) catches the stalls uniformly, but the underlying SSE layer is too flaky to produce reliable E0-training signal — and the same flakiness would contaminate E3 test scoring at identical ratios.
 
-**Paper language suggestion:** *"We excluded Kimi K2.5 from the evaluation matrix after persistent SSE streaming stalls on the OpenRouter→Moonshot AI routing path during E0 validation training (effective throughput ~9% after 5.8h, including a post-timeout cleanup deadlock requiring manual intervention). These are provider-side reliability issues; the other three models (Mistral Small 4, Qwen3.6-Plus, Gemma 4 31B) exhibited normal throughput and are retained for the full C0/C2/C3/C4 ablation."*
+**Paper language suggestion:** *"We excluded Kimi K2.5 from the evaluation matrix after persistent SSE streaming stalls on the OpenRouter→Moonshot AI routing path during E0 validation training (effective throughput ~9% after 5.8h, including a post-timeout cleanup deadlock requiring manual intervention). These are provider-side reliability issues; the other three models (Mistral Small 4, Qwen3.6-Plus, Gemma 4 31B) exhibited normal throughput and are retained for the full C0/C1/C2/C3 ablation."*
 
 **To re-enable Kimi** (e.g., after Moonshot AI stabilizes or for a follow-up study): pass `kimi` explicitly to `run_eval_matrix.sh` (`smoke kimi c0`, etc.) — the configs and registration remain in the repo.
 
 ### E0 training subset + shuffle (2026-04-20, methodology note)
 
-From 2026-04-20 onward, E0 C4 skill training uses a **random 80-question subsample** of the 165-question validation split, not the full validation split. The change is driven by:
+From 2026-04-20 onward, E0 C3 skill training uses a **random 80-question subsample** of the 165-question validation split, not the full validation split. The change is driven by:
 
 1. **Wall-time realism:** even after the tightened caps + HTTP timeout + cleanup fixes in commits `fbd0dd1`, `cf7e71d`, `aa78edc`, `a7d6842`, E0 v1+v2 error rates remained in the 25-45% range driven by Qs genuinely needing >1200s of LLM wall. Running the full validation split with per-Q 1800s cap would require ~24-36h of local compute per run; an 80-question subsample completes in ~8-12h.
 2. **Skill yield diminishing returns:** E0 v1 data shows skill extraction is heavily de-duplicated (3-8% skill-yield-per-Q across the 3 models that ran). After ~60-80 Qs, the extractor's LLM-as-judge dedup stage rejects most new candidates. Skill library size scales sub-linearly with Q count; 80 Qs captures ~60-70% of the total possible skill diversity at ~50% of the full-split cost.
@@ -164,12 +164,12 @@ FULL_CFG_OPTIONS="max_samples=80 dataset.shuffle=True dataset.seed=42 \
   per_question_timeout_secs=1800 agent_config.max_steps=15 \
   auto_browser_use_tool_config.max_steps=10 browser_use_agent_config.max_steps=3 \
   deep_researcher_tool_config.time_limit_seconds=45"
-caffeinate -dims bash scripts/run_eval_matrix.sh full '' c4
+caffeinate -dims bash scripts/run_eval_matrix.sh full '' c3
 ```
 
 **Skill-evolution instrumentation:** `SkillExtractor.extract_and_maybe_persist` now appends one JSON line per invocation to `<skills_dir>/../skill_evolution.jsonl`, recording the library state after each Q (seeded count, learned count, total count, newly-extracted skill name if any, task success signal, timestamp). This enables a "skill count over training Qs" plot for the paper without re-running E0.
 
-**Paper methodology sentence (draft):** *"Each C4 skill library was trained on a random 80-question subsample of the 165-question GAIA validation split (seed=42), preserving the validation split's natural difficulty distribution. Training Qs were presented in shuffled order so that skill-library growth over training is not confounded by Q difficulty drift. The `SkillExtractor` pipeline (worthiness heuristic → LLM propose → structural validation → entity blocklist → LLM-as-judge dedup → atomic persist) produced 6-12 learned skills per model on top of the 7 pre-seeded skills."*
+**Paper methodology sentence (draft):** *"Each C3 skill library was trained on a random 80-question subsample of the 165-question GAIA validation split (seed=42), preserving the validation split's natural difficulty distribution. Training Qs were presented in shuffled order so that skill-library growth over training is not confounded by Q difficulty drift. The `SkillExtractor` pipeline (worthiness heuristic → LLM propose → structural validation → entity blocklist → LLM-as-judge dedup → atomic persist) produced 6-12 learned skills per model on top of the 7 pre-seeded skills."*
 
 ---
 
@@ -183,7 +183,7 @@ Gemma-4 31B via the `or-gemma-4-31b-it` slug (OpenRouter → DeepInfra+Together 
 - **Not a code bug:** Gemma's config, registration, and tool_choice handling all work (Qs that did complete produced the correct 'Unable to determine' / answer). The issue is provider-side latency on DeepInfra's Gemma serving, which OR's `provider.order` pin does not mitigate.
 - **Dropped at E0 resume restart point** (2026-04-19 ~22:30 HKT), after 65 attempts over 13h. Matrix narrowed from 12 cells (3 models × 4 conditions) to **8 cells (2 models × 4 conditions)**.
 
-**Paper language suggestion:** *"Gemma 4 31B was additionally excluded after E0 training revealed provider-side per-step latency (DeepInfra p95 660s/step) incompatible with the per-question 1200s budget (12% valid-row rate, 0 learned skills in 13h). The final evaluation matrix retains Mistral Small 4 and Qwen3.6-Plus — a dense single-vendor model and a MoE multi-vendor-routed model — sufficient to support the C0/C2/C3/C4 ablation."*
+**Paper language suggestion:** *"Gemma 4 31B was additionally excluded after E0 training revealed provider-side per-step latency (DeepInfra p95 660s/step) incompatible with the per-question 1200s budget (12% valid-row rate, 0 learned skills in 13h). The final evaluation matrix retains Mistral Small 4 and Qwen3.6-Plus — a dense single-vendor model and a MoE multi-vendor-routed model — sufficient to support the C0/C1/C2/C3 ablation."*
 
 **To re-enable Gemma**: same pattern as Kimi — `model=gemma` explicit arg to `run_eval_matrix.sh`. The configs and registration remain in the repo.
 
@@ -202,13 +202,13 @@ hunts. A single stuck 50-step invocation burns ~$0.10–1.00 depending on
 model and 8–12 min wall; cap at 15 bounds it to ~$0.05 and ≤4 min.
 
 **Why uniform across all 16 cells:** different browser budgets per
-condition would contaminate the C0/C2/C3/C4 accuracy deltas the paper is
+condition would contaminate the C0/C1/C2/C3 accuracy deltas the paper is
 measuring. All cells share the same ceiling so condition differences
 reflect meta-agent capability, not browser headroom.
 
 **Local smoke override:** I-track (`SMOKE_CFG_OPTIONS` default in both
 [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) and
-[`scripts/integration_i3_c4_pipeline.sh`](../../scripts/integration_i3_c4_pipeline.sh))
+[`scripts/integration_i3_c3_pipeline.sh`](../../scripts/integration_i3_c3_pipeline.sh))
 now ships `auto_browser_use_tool_config.max_steps=4` plus tighter planner
 (`agent_config.max_steps=6`) and browser sub-agent (`browser_use_agent_config.max_steps=2`)
 caps — per-cell wall drops from ~5-10 min to ~1-3 min on stuck-browser
@@ -250,21 +250,21 @@ ls data/GAIA  # should contain 2023/ with validation + test subdirs
 
 ### Full chain through **E3** (final objective)
 
-Earlier summaries sometimes collapsed **I2 → E3** or **S2 → S4**. The **complete** path for publishable, non-contaminated **C4** results is:
+Earlier summaries sometimes collapsed **I2 → E3** or **S2 → S4**. The **complete** path for publishable, non-contaminated **C3** results is:
 
 **Integration (I-track)** — prove the stack runs before spending on evaluation:
 
 1. **I0 → I1 → I2** — preflight, canary, then **all 16 cells** on a **short** validation smoke (default **3 Q/cell** + smoke step caps; **four model streams in parallel** — see [`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh)).
-2. **I3** (optional but recommended when C4 code/config changes) — [`scripts/integration_i3_c4_pipeline.sh`](../../scripts/integration_i3_c4_pipeline.sh): one default model (**Mistral**), subset validation train → isolated snapshot under `workdir/c4_i3_*` → short frozen eval; **does not** replace I2 and **does not** populate `c4_trained_libraries/`.
+2. **I3** (optional but recommended when C3 code/config changes) — [`scripts/integration_i3_c3_pipeline.sh`](../../scripts/integration_i3_c3_pipeline.sh): one default model (**Mistral**), subset validation train → isolated snapshot under `workdir/c3_i3_*` → short frozen eval; **does not** replace I2 and **does not** populate `c4_trained_libraries/`.
 
-**Evaluation (E-track)** — three **named** production steps for C4 prep (not merged into one opaque command — auditability):
+**Evaluation (E-track)** — three **named** production steps for C3 prep (not merged into one opaque command — auditability):
 
-3. **E0** — **C4 × all four models** with extraction **on** on the **full validation split** (`DATASET_SPLIT=validation`; **not** the config default `test` from [`configs/config_gaia.py`](../../configs/config_gaia.py)), so each model’s library learns only from **validation** before any **test** scoring.
+3. **E0** — **C3 × all four models** with extraction **on** on the **full validation split** (`DATASET_SPLIT=validation`; **not** the config default `test` from [`configs/config_gaia.py`](../../configs/config_gaia.py)), so each model’s library learns only from **validation** before any **test** scoring.
 4. **E1 — snapshot after E0** — copy each model’s trained `skills/` tree into `workdir/c4_trained_libraries/{mistral,kimi,qwen,gemma}_skills/` (see §E0 below).
 5. **E2 — farm-side freeze smoke** — short validation jobs with **`agent_config.*` overrides** only (`skills_dir` snapshot + `enable_skill_extraction=False` + smoke caps); confirms extractor off and snapshot pinning on **farm** hardware against **real** trained libraries. **I3** validates the **mechanism** cheaply on one model; **E2** validates farm + four-model snapshots.
-6. **E3** — **full test-split** matrix (16 cells). **C4** cells must use the **frozen** snapshot + `enable_skill_extraction=False` overrides (§E3). This is the **final scored objective** once steps **3–5** pass.
+6. **E3** — **full test-split** matrix (16 cells). **C3** cells must use the **frozen** snapshot + `enable_skill_extraction=False` overrides (§E3). This is the **final scored objective** once steps **3–5** pass.
 
-Skipping **E0–E2** while still running **C4 on `test`** leaves order-dependent, extraction-on scoring (the failure mode §E0 explains). If you only need C0–C3 for a milestone, you can defer **E0–E2**, but any **C4 test-split claim** should complete **I0–I2** plus **E0–E3** as appropriate.
+Skipping **E0–E2** while still running **C3 on `test`** leaves order-dependent, extraction-on scoring (the failure mode §E0 explains). If you only need C0–C3 for a milestone, you can defer **E0–E2**, but any **C3 test-split claim** should complete **I0–I2** plus **E0–E3** as appropriate.
 
 ### Output retention
 
@@ -272,7 +272,7 @@ Skipping **E0–E2** while still running **C4 on `test`** leaves order-dependent
 
 ### Parallelism (built in)
 
-[`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) starts **four concurrent model workers** (Mistral, Kimi, Qwen, Gemma). Within each worker, conditions **C0 → C2 → C3 → C4** run **sequentially** (shared API identity per model). So different models always advance **in parallel** whenever the job selects all four.
+[`scripts/run_eval_matrix.sh`](../../scripts/run_eval_matrix.sh) starts **four concurrent model workers** (Mistral, Kimi, Qwen, Gemma). Within each worker, conditions **C0 → C1 → C2 → C3** run **sequentially** (shared API identity per model). So different models always advance **in parallel** whenever the job selects all four.
 
 ### I0 — Pre-flight (formerly S0; free, ~30 sec)
 
@@ -280,7 +280,7 @@ Skipping **E0–E2** while still running **C4 on `test`** leaves order-dependent
 bash scripts/smoke_validate_handoffs_234.sh
 ```
 
-Expected: all **16** matrix configs load (Mistral / Kimi / Qwen / Gemma × C0/C2/C3/C4), model registration covers the four matrix `model_id`s + langchain wrappers, C3 schema + C4 skill parser unit tests green.
+Expected: all **16** matrix configs load (Mistral / Kimi / Qwen / Gemma × C0/C1/C2/C3), model registration covers the four matrix `model_id`s + langchain wrappers, C2 schema + C3 skill parser unit tests green.
 
 ### I1 — Single-cell canary (formerly S1; ~10 min, <$0.50)
 
@@ -310,17 +310,17 @@ Pass criteria (check `logs/matrix_<JOBID>.out` via the auto-run
 - 16 `dra.jsonl` files written (one per cell)
 - `Handoff #2`: 0 Kimi sampling-lock 400s, 0 Qwen thinking-mode 400s
 - `Handoff #3`: >0 `modify_subagent` / `diagnose_subagent` mentions in
-  C2 / C3 / C4 cell logs
-- `Handoff #4 C3`: ≥1 `enable_review=True; building ReviewStep` banner per
-  C3 cell; ≥1 `[REVIEW]` marker once the planner delegates
-- `Handoff #4 C4`: **4** `SkillRegistry built at workdir/.../skills (C4)` banners (one per model);
-  `[seed_skills_dir] seeded ...` fires ≥ 7× per C4 cell (seed pack size; unchanged)
+  **C1 / C2 / C3** cell logs (not expected on C0 baseline)
+- `Handoff #4 C2+`: ≥1 `enable_review=True; building ReviewStep` banner per
+  **C2 and C3** cell; ≥1 `[REVIEW]` marker once the planner delegates (where review applies)
+- `Handoff #4 C3`: **4** `SkillRegistry built at workdir/.../skills (C3)` banners (one per model);
+  `[seed_skills_dir] seeded ...` fires ≥ 7× per C3 cell (seed pack size; unchanged)
 - 0 Python tracebacks in any per-cell `log.txt` (the stream-log MCP-stdio
   parse errors are known cosmetic noise — ignore)
 
 If **I2** fails for any cell, **stop** and diagnose before **E0** or **E3**.
 
-After **I2** succeeds, optionally run **I3** when C4 changed; then proceed in order: **E0 → E1 → E2** (below), then **E3**.
+After **I2** succeeds, optionally run **I3** when C3 changed; then proceed in order: **E0 → E1 → E2** (below), then **E3**.
 Typical triggers:
 - Mistral → `DeepResearchTool RetryError[ValueError]` usually means
   Firecrawl credits exhausted — run `python scripts/check_firecrawl_credits.py`.
@@ -337,28 +337,28 @@ Typical triggers:
 - Gemma → garbled content / `<|tool_call>` leak in text means a stale
   chat template on a specific provider; narrow the provider pin further.
 
-### I3 — C4 pipeline integration smoke (optional; one model, default Mistral)
+### I3 — C3 pipeline integration smoke (optional; one model, default Mistral)
 
-End-to-end **subset** validation train → **isolated** snapshot → **short** frozen validation eval, without running four parallel **E0** jobs or writing `workdir/c4_trained_libraries/`. Artifacts live under `workdir/c4_i3_<I3_RUN_ID>/` and per-phase `workdir/gaia_c4_<model>_<DRA_RUN_ID>/` (train/freeze ids are `i3train_*` / `i3frz_*` inside `I3_RUN_ID`).
+End-to-end **subset** validation train → **isolated** snapshot → **short** frozen validation eval, without running four parallel **E0** jobs or writing `workdir/c4_trained_libraries/`. Artifacts live under `workdir/c3_i3_<I3_RUN_ID>/` and per-phase `workdir/gaia_c3_<model>_<DRA_RUN_ID>/` (train/freeze ids are `i3train_*` / `i3frz_*` inside `I3_RUN_ID`).
 
 ```bash
 # Default: I3_MODEL=mistral, I3_TRAIN_SAMPLES=5, I3_EVAL_SAMPLES=2 (override via env)
-bash scripts/integration_i3_c4_pipeline.sh
+bash scripts/integration_i3_c3_pipeline.sh
 
 # One-off different model slot:
-#   I3_MODEL=kimi bash scripts/integration_i3_c4_pipeline.sh
+#   I3_MODEL=kimi bash scripts/integration_i3_c3_pipeline.sh
 ```
 
-**Pass criteria:** in the **I3c** run log (`workdir/gaia_c4_<model>_i3frz_<model>_<I3_RUN_ID>/log.txt`), `SkillExtractor active` count **0**; `building SkillRegistry` shows the **staging** path under `workdir/c4_i3_*/`. Not included in `scripts/validate_handoffs.sh` (16-cell **I2/E3** matrix only).
+**Pass criteria:** in the **I3c** run log (`workdir/gaia_c3_<model>_i3frz_<model>_<I3_RUN_ID>/log.txt`), `SkillExtractor active` count **0**; `building SkillRegistry` shows the **staging** path under `workdir/c3_i3_*/`. Not included in `scripts/validate_handoffs.sh` (16-cell **I2/E3** matrix only).
 
-### E0 — C4 validation training (~3-6 h, $5-15) — **required** before scored **C4** on `test`
+### E0 — C3 validation training (~3-6 h, $5-15) — **required** before scored **C3** on `test`
 
-Treat **E0** as **mandatory** whenever **C4** appears in the **E3** test-split submission. It is only “optional” if you are **not** reporting frozen-library C4 numbers (e.g. C0–C3-only milestone).
+Treat **E0** as **mandatory** whenever **C3** appears in the **E3** test-split submission. It is only “optional” if you are **not** reporting frozen-library C3 numbers (e.g. C0–C2-only milestone).
 
-**I3 vs E0:** [`scripts/integration_i3_c4_pipeline.sh`](../../scripts/integration_i3_c4_pipeline.sh) runs a **subset** train + isolated staging for **one** model (default Mistral) to gate C4 wiring before you launch **four** full-val **E0** jobs.
+**I3 vs E0:** [`scripts/integration_i3_c3_pipeline.sh`](../../scripts/integration_i3_c3_pipeline.sh) runs a **subset** train + isolated staging for **one** model (default Mistral) to gate C3 wiring before you launch **four** full-val **E0** jobs.
 
-**Why this matters.** C4's `enable_skill_extraction=True` mutates the
-`skills_dir` at the end of every task. If you run C4 on the test split with
+**Why this matters.** C3's `enable_skill_extraction=True` mutates the
+`skills_dir` at the end of every task. If you run C3 on the test split with
 extraction still enabled, then:
 
 1. The skill library grows **during scoring** — question N's result depends
@@ -374,11 +374,11 @@ Standard ML methodology → **train on validation → freeze → evaluate on tes
 
 ```bash
 # Full mode requires DATASET_SPLIT to be explicit (enforced by
-# scripts/run_eval_matrix.sh). For C4 training it must be `validation` —
-# the matrix runner refuses `test` with C4 in the conditions to prevent
+# scripts/run_eval_matrix.sh). For C3 training it must be `validation` —
+# the matrix runner refuses `test` with C3 in the conditions to prevent
 # train-on-test leakage. Use --export=ALL so sbatch forwards the var.
-DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c4
-# => workdir/gaia_c4_{mistral,kimi,qwen,gemma}_<TRAIN_RUN_ID>/
+DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c3
+# => workdir/gaia_c3_{mistral,kimi,qwen,gemma}_<TRAIN_RUN_ID>/
 #    each ends with a `skills/` dir containing seeded + learned SKILL.md.
 #
 # For the E3 submission below, export DATASET_SPLIT=test fresh per sbatch
@@ -392,12 +392,12 @@ DATASET_SPLIT=validation sbatch --export=ALL run_matrix_slurm.sh full '' c4
 TRAIN_RUN_ID=<copy from E0 logs>
 mkdir -p workdir/c4_trained_libraries
 for m in mistral kimi qwen gemma; do
-  cp -r workdir/gaia_c4_${m}_${TRAIN_RUN_ID}/skills \
+  cp -r workdir/gaia_c3_${m}_${TRAIN_RUN_ID}/skills \
         workdir/c4_trained_libraries/${m}_skills
 done
 ```
 
-For the **E3** scored run, pass an override so C4 cells load the trained
+For the **E3** scored run, pass an override so C3 cells load the trained
 library and **do not** extract further (see §E3 below).
 
 ### Freeze-smoke validation (2026-04-18, Mac — Mistral × 1 Q)
@@ -409,18 +409,18 @@ committing to any farm training pass, using a **synthetic "trained library"**
 bug in the override target.
 
 **Bug found.** The config file contains `agent_config = planning_agent_config`
-at its tail ([`configs/config_gaia_c4_mistral.py:84`](../../configs/config_gaia_c4_mistral.py)),
+at its tail ([`configs/config_gaia_c3_mistral.py:84`](../../configs/config_gaia_c3_mistral.py)),
 but `mmengine.Config.fromfile` materialises the two names as **independent
 `ConfigDict` instances** (different `id()`). `merge_from_dict` with a
 dotted key mutates only the keyed dict, so
 `planning_agent_config.skills_dir=<snapshot>` updates `planning_agent_config`
 while `agent_config` retains the file-load default
-`workdir/gaia_c4_<model>_<run_id>/skills`. `create_agent()` at
+`workdir/gaia_c3_<model>_<run_id>/skills`. `create_agent()` at
 [`src/agent/agent.py:108`](../../src/agent/agent.py) then reads
 `config.agent_config`, so the override is silently ignored. Result: the
-"frozen" run actually runs in **C4 training mode** (extraction ON, fresh
+"frozen" run actually runs in **C3 training mode** (extraction ON, fresh
 per-run `skills_dir` that re-seeds from `src/skills/`). Without this local
-validation, the farm C4 **E3** run would have produced order-dependent,
+validation, the farm C3 **E3** run would have produced order-dependent,
 extraction-contaminated numbers — exactly the failure mode the train/freeze
 protocol exists to prevent.
 
@@ -432,7 +432,7 @@ The corrected commands above (lines 207–229) reflect this.
 
 | # | Check | Command / site | Result |
 |---|-------|---------------|--------|
-| 1 | `SkillExtractor active (C4 training mode)` banner suppressed | `grep -c "SkillExtractor active" logs/c4_freeze_smoke_mistral.log` | **0** ✓ |
+| 1 | `SkillExtractor active (C3 training mode)` banner suppressed | `grep -c "SkillExtractor active" logs/c4_freeze_smoke_mistral.log` | **0** ✓ |
 | 2 | Snapshot skill dir count unchanged | `ls workdir/c4_trained_libraries/mistral_skills/ \| wc -l` | **8 / 8** ✓ (7 seeds + canary; identical pre/post) |
 | 3 | No writes to snapshot | implicit — `SkillExtractor` not constructed (line 120 gate) | ✓ |
 | 4 | Library was actually consumed | `grep -c "Calling tool: 'activate_skill'"` | **1** ✓ (`handling-file-attachments`) |
@@ -440,7 +440,7 @@ The corrected commands above (lines 207–229) reflect this.
 
 Additional positive signals in the log head:
 
-- `[AdaptivePlanningAgent] enable_skills=True; building SkillRegistry at workdir/c4_trained_libraries/mistral_skills (C4)` — override path honoured
+- `[AdaptivePlanningAgent] enable_skills=True; building SkillRegistry at workdir/c4_trained_libraries/mistral_skills (C3)` — override path honoured
 - `[seed_skills_dir] workdir/c4_trained_libraries/mistral_skills already seeded (marker present); skipping.` — `.seeded` correctly prevents re-seed over a pre-built snapshot
 - `[AdaptivePlanningAgent] Initialized with 5 tools, 3 managed agents, review_step=on, skill_registry=on`
 
@@ -456,7 +456,7 @@ wrapper puts the right `python` in PATH before the subprocess spawns.
 **What's NOT yet validated.** The synthetic library contained only seed
 skills + canary, so this run proves the override *mechanism* but not the
 full train-then-freeze *loop* with a genuinely trained library. The first
-farm C4 Train pass is still the first end-to-end test of real skill
+farm C3 Train pass is still the first end-to-end test of real skill
 extraction + later freeze. Reserve the 1 h budget slot mentioned in
 "Known unknowns" for that.
 
@@ -472,7 +472,7 @@ snapshot reflects the final extractor state. Use `cp -a` (preserves the
 
 ```bash
 for m in mistral qwen; do          # add kimi / gemma if re-enabled
-  src="workdir/gaia_c4_${m}_${TRAIN_RUN_ID}/skills"
+  src="workdir/gaia_c3_${m}_${TRAIN_RUN_ID}/skills"
   dst="workdir/c4_trained_libraries/${m}_skills_v${N}"   # bump N per E0 revision
   [ -d "$src" ] || { echo "MISSING $src — refusing"; exit 2; }
   [ -d "$dst" ] && { echo "REFUSING to overwrite $dst — pick a fresh v-suffix"; exit 2; }
@@ -531,7 +531,7 @@ for m in mistral kimi qwen gemma; do
          --wrap "source ~/anaconda3/etc/profile.d/conda.sh && conda activate dra \
                  && cd /userhome/cs2/ambr0se/DeepResearchMetaAgent \
                  && python examples/run_gaia.py \
-                      --config configs/config_gaia_c4_${m}.py \
+                      --config configs/config_gaia_c3_${m}.py \
                       --cfg-options \
                         max_samples=3 \
                         dataset.split=validation \
@@ -574,53 +574,53 @@ done
 
 | # | Check | Command | Expect |
 |---|-------|---------|--------|
-| 1 | Extractor not constructed | `grep -c "SkillExtractor active (C4 training mode)" logs/c4_freeze_smoke_${m}_*.out` | **0** |
+| 1 | Extractor not constructed | `grep -c "SkillExtractor active (C3 training mode)" logs/c4_freeze_smoke_${m}_*.out` | **0** |
 | 2 | No writes to snapshot | `find workdir/c4_trained_libraries/${m}_skills -name SKILL.md \| wc -l` before vs after | equal counts, same names |
 | 3 | Skill bodies unchanged | body-only `diff` of each snapshot `SKILL.md` (**including frontmatter** — `increment_verified_uses` is defined but **has no production call sites** as of 2026-04-22, so the library is strictly read-only during eval) | all empty |
-| 4 | Library actually read (canary-only) | `jq -r '.intermediate_steps[]?.tool_calls[]?.name // empty' workdir/gaia_c4_${m}_<FREEZE_RUN_ID>/dra.jsonl \| grep -c activate_skill` | **depends on sample size — see note below** |
+| 4 | Library actually read (canary-only) | `jq -r '.intermediate_steps[]?.tool_calls[]?.name // empty' workdir/gaia_c3_${m}_<FREEZE_RUN_ID>/dra.jsonl \| grep -c activate_skill` | **depends on sample size — see note below** |
 | 5 | Canary visible | `grep -c "freeze-canary-farm-${m}" logs/c4_freeze_smoke_${m}_*.out` | **> 0** |
-| 6 | Override banner landed | `grep "building SkillRegistry at" logs/c4_freeze_smoke_${m}_*.out` | shows the snapshot path, not `workdir/gaia_c4_${m}_<run>/skills` |
+| 6 | Override banner landed | `grep "building SkillRegistry at" logs/c4_freeze_smoke_${m}_*.out` | shows the snapshot path, not `workdir/gaia_c3_${m}_<run>/skills` |
 
 **Pass #4 note (added 2026-04-22).** E0 v3 measured per-Q `activate_skill` rates of **32.5% (Mistral)** and **12.5% (Qwen)** against real trained libraries with production caps (`max_steps=20`). On a 3-Q smoke with SMOKE caps (`max_steps=10`), zero activations is the *expected* outcome for Qwen (P≈67%) and plausible for Mistral (P≈31%). **Treat pass #4 as informational only at 3-Q + smoke caps;** require it only when the smoke is ≥ 10 Qs AND uses `max_steps=20` (i.e. drop `SMOKE_CFG_OPTIONS`). Canary (pass #5) is the cheap way to assert the consumer path works end-to-end under any sample size. See `HANDOFF_E1_E2_RESULTS.md` §F2 for the full re-analysis.
 
-**Fail → stop-gate.** If any model fails pass #1, #2, #3, #5 or #6, do NOT submit **E3** C4 cells. Most likely culprits: shell quoting swallowing the `--cfg-options` args in `--wrap` (switch to a standalone `script.sh` + `sbatch script.sh`), or a regression in the generated configs (regenerate from `scripts/gen_eval_configs.py` and retry).
+**Fail → stop-gate.** If any model fails pass #1, #2, #3, #5 or #6, do NOT submit **E3** C3 cells. Most likely culprits: shell quoting swallowing the `--cfg-options` args in `--wrap` (switch to a standalone `script.sh` + `sbatch script.sh`), or a regression in the generated configs (regenerate from `scripts/gen_eval_configs.py` and retry).
 
 **Pass → ready for E3.** Attach the 6-row pass table per model to this
 handoff before launching **E3**.
 
 ### E3 — Test-split submission (formerly S4; ~8-24 h, $30-100)
 
-Full matrix, **`dataset.split=test`** for **all 16 cells**. `DATASET_SPLIT=test` must be **explicitly** exported per sbatch — the matrix runner refuses full mode with `DATASET_SPLIT` unset. Additionally, the runner refuses the all-4-conditions shape (`ONLY_CONDITION=""`) on test because that would silently train C4 on test; submit C0/C2/C3 per-condition as shown below. Long job; use SLURM for disconnect-survival.
+Full matrix, **`dataset.split=test`** for **all 16 cells**. `DATASET_SPLIT=test` must be **explicitly** exported per sbatch — the matrix runner refuses full mode with `DATASET_SPLIT` unset. Additionally, the runner refuses the all-4-conditions shape (`ONLY_CONDITION=""`) on test because that would silently train C3 on test; submit **C0, C1, then C2** per-condition as shown below, then the frozen **C3** cells. Long job; use SLURM for disconnect-survival.
 
-**With frozen trained libraries (recommended for C4 paper numbers):**
-Override the **four** C4 cells' skill config via `--cfg-options`. Easiest path is a
-thin wrapper; submit each model's C4 cell individually:
+**With frozen trained libraries (recommended for C3 paper numbers):**
+Override the **four** C3 cells' skill config via `--cfg-options`. Easiest path is a
+thin wrapper; submit each model's C3 cell individually:
 
 ```bash
-# C0/C2/C3 for all four models → normal. DATASET_SPLIT=test is required
+# C0/C1/C2 for all four models → normal. DATASET_SPLIT=test is required
 # (matrix runner refuses full mode without it). --export=ALL so sbatch
 # forwards the env var into the job.
 DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c0
+DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c1
 DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c2
-DATASET_SPLIT=test sbatch --export=ALL run_matrix_slurm.sh full '' c3
 
-# C4 × {mistral, kimi, qwen, gemma} → one-off each, with the trained library pinned
+# C3 × {mistral, kimi, qwen, gemma} → one-off each, with the trained library pinned
 #
 # IMPORTANT — override namespace is `agent_config.*`, NOT `planning_agent_config.*`.
 # The config file aliases `agent_config = planning_agent_config` but mmengine's
 # Config.fromfile materialises the two names as independent dicts, and
 # create_agent() in src/agent/agent.py reads `config.agent_config`. A
 # `planning_agent_config.*` override merges successfully at the top level but
-# is silently ignored by the agent, leaving C4 running in training mode
+# is silently ignored by the agent, leaving C3 running in training mode
 # (extraction ON, fresh skills_dir). Validated locally on Mac 2026-04-18 —
 # see "Freeze-smoke validation" subsection below.
 for m in mistral kimi qwen gemma; do
-  sbatch --job-name=gaia-c4-$m --time=24:00:00 \
+  sbatch --job-name=gaia-c3-$m --time=24:00:00 \
          --output=logs/c4_${m}_%j.out --error=logs/c4_${m}_%j.err \
          --wrap "source ~/anaconda3/etc/profile.d/conda.sh && conda activate dra \
                  && cd /userhome/cs2/ambr0se/DeepResearchMetaAgent \
                  && python examples/run_gaia.py \
-                      --config configs/config_gaia_c4_${m}.py \
+                      --config configs/config_gaia_c3_${m}.py \
                       --cfg-options \
                         agent_config.skills_dir=workdir/c4_trained_libraries/${m}_skills \
                         agent_config.enable_skill_extraction=False"
@@ -657,11 +657,11 @@ bash scripts/validate_handoffs.sh <SUBMIT_RUN_ID> > validation_report_<SUBMIT_RU
 | #2 | `tool_choice ... thinking mode` in Qwen logs | `enable_thinking=False` didn't propagate. **Should be 0.** |
 | #2 | `AllocationQuota.FreeTierOnly` on Qwen | DashScope hit the exhausted tier. With the 2026-04-18 Qwen swap, configs no longer touch DashScope — if this appears, the operator is running a pre-swap config. |
 | #2 | `No endpoints found that support the provided 'tool_choice' value` | The Qwen matrix config is still on `or-qwen3.6-plus`. Regenerate configs from the latest `scripts/gen_eval_configs.py`. |
-| #3 | 0 `modify_subagent` / `diagnose_subagent` mentions in C2/C3/C4 | Prompt didn't reach the adaptive agent — check template_path override in the config. |
-| #4 C3 | 0 `enable_review=True; building ReviewStep` banners across C3 cells | C3 config flag broke; check `enable_review=True` in `planning_agent_config`. |
-| #4 C3 | 0 `[REVIEW]` markers despite the banner | Planner never delegated (agent timed out on step 1 only). Diagnose by reading the cell's log.txt — expected pattern is ≥3 delegations per question. |
-| #4 C4 | 0 `SkillRegistry built` / 0 `seed_skills_dir seeded` | C4 init broke. Check `enable_skills=True`, `skills_dir=workdir/{tag}/skills`, `DRA_RUN_ID` env var present. |
-| #4 C4 | Library has questions' content **inlined** (e.g. specific years / URLs / numeric constants) | Extractor entity-blocklist regressed. See `_extractor.py` stage 4. |
+| #3 | 0 `modify_subagent` / `diagnose_subagent` mentions in C1/C2/C3 | Prompt didn't reach the adaptive agent — check template_path override in the config. |
+| #4 C2+ | 0 `enable_review=True; building ReviewStep` banners across **C2 and C3** cells | C2+ config flag broke; check `enable_review=True` in `planning_agent_config`. |
+| #4 C2+ | 0 `[REVIEW]` markers despite the banner | Planner never delegated (agent timed out on step 1 only). Diagnose by reading the cell's log.txt — expected pattern is ≥3 delegations per question. |
+| #4 C3 | 0 `SkillRegistry built` / 0 `seed_skills_dir seeded` | C3 init broke. Check `enable_skills=True`, `skills_dir=workdir/{tag}/skills`, `DRA_RUN_ID` env var present. |
+| #4 C3 | Library has questions' content **inlined** (e.g. specific years / URLs / numeric constants) | Extractor entity-blocklist regressed. See `_extractor.py` stage 4. |
 | #5 | RC1 `premature-final-answer guard` fires | Normal — means the guard caught a mis-issued `final_answer_tool`. Should not BLOCK the run. |
 | #5 | `RC2 diagnostic scope error in sub-agent` | Also normal; means RC2's diagnostic hook caught a scoped error. Not a regression. |
 | #7 | `Error executing script for tool` in stream log | Dynamic tool failed to register. With MCP fence-extraction fix, the log should also say `skipped — fenced script missing closing \`\`\` marker` for the known-bad seed scripts. Non-fatal. |
@@ -701,9 +701,9 @@ DATASET_SPLIT=<validation|test> DRA_RUN_ID=<prior_id> bash scripts/run_eval_matr
 DATASET_SPLIT=<validation|test> DRA_RUN_ID=<prior_id> sbatch --export=ALL run_matrix_slurm.sh full '' <cond>
 ```
 
-For C4 cells specifically: resuming preserves the evolved `skills_dir` (the
+For C3 cells specifically: resuming preserves the evolved `skills_dir` (the
 `.seeded` marker blocks re-seeding — see `_seed.py`). If you intentionally
-want to start the C4 library fresh, clear `workdir/gaia_c4_<model>_<id>/skills/`
+want to start the C3 library fresh, clear `workdir/gaia_c3_<model>_<id>/skills/`
 before resubmitting.
 
 ---
@@ -714,8 +714,8 @@ before resubmitting.
   - 0 Handoff #1 red flags
   - 0 Handoff #2 sampling / thinking-mode 400s
   - >0 Handoff #3 adaptive-tool mentions
-  - 4 / 4 `SkillRegistry built` (Handoff #4 C4 — one per model's C4 cell)
-  - ≥1 `[REVIEW]` marker per C3 / C4 cell (Handoff #4 C3)
+  - 4 / 4 `SkillRegistry built` (Handoff #4 C3 — one per model's C3 cell)
+  - ≥1 `[REVIEW]` marker per C2 / C3 cell (Handoff #4 review)
   - 1+ `[tool_choice] qwen/qwen3.6-plus -> auto` INFO line per Qwen cell (Handoff #9 hybrid dispatch verification)
   - All 16 cells produce a non-empty `dra.jsonl`
 - Per-cell accuracy numbers computed via `scripts/analyze_results.py`
@@ -744,7 +744,7 @@ before resubmitting.
 
 ### Per-Q timeout policy (2026-04-20, updated)
 
-- **Every matrix config (C0/C2/C3/C4 × mistral/qwen/kimi/gemma) pins
+- **Every matrix config (C0/C1/C2/C3 × mistral/qwen/kimi/gemma) pins
   `per_question_timeout_secs = 1800`.** Same cap at training (E0) and
   test (E3) so the ablation between conditions isn't confounded by a
   wall-clock budget asymmetry.
@@ -757,7 +757,7 @@ before resubmitting.
   ran under 1200s, E0 v3 rows under 1800s. Any `Per-question timeout
   (1200s) exceeded` error signature is from a pre-2026-04-20 row and
   is expected; newer rows should only show the 1800s signature.
-- **C4 train/freeze protocol is the intended methodology**, but it was not
+- **C3 train/freeze protocol is the intended methodology**, but it was not
   exercised end-to-end locally because the local path has other issues.
   First farm run is the first real test of the train-then-freeze loop.
   Reserve a 1 h budget slot to diagnose if it misbehaves.
@@ -783,7 +783,7 @@ Current matrix-defining files (post-handoff-#9):
 | File | Role |
 |------|------|
 | `scripts/gen_eval_configs.py` | MODELS rows: mistral → `mistral-small`; kimi → `or-kimi-k2.5`; qwen → `or-qwen3.6-plus`; gemma → `or-gemma-4-31b-it` |
-| `configs/config_gaia_{c0,c2,c3,c4}_{mistral,kimi,qwen,gemma}.py` | 16 regenerated cell configs |
+| `configs/config_gaia_{c0,c1,c2,c3}_{mistral,kimi,qwen,gemma}.py` | 16 regenerated cell configs |
 | `scripts/run_eval_matrix.sh` | `ALL_MODELS=(mistral kimi qwen gemma)` with `GEMMA_CONCURRENCY` cap (default 4) |
 | `src/models/models.py` | OR registrations: Kimi (thinking off + Moonshot pin), Gemma (DeepInfra/Together pin + reasoning off) |
 | `src/models/tool_choice.py` | Hybrid dispatch for the Qwen family |

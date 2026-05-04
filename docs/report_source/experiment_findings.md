@@ -27,7 +27,7 @@ sections — anyone writing `methodology.tex`, `experiments.tex`,
 
 **Top-level table of contents**
 
-- [§ E0 v3 (GAIA C4 training, 80-Q validation subsample, 2026-04-20)](#e0-v3--gaia-c4-training-80-q-validation-subsample-2026-04-20)
+- [§ E0 v3 (GAIA C3 training, 80-Q validation subsample, 2026-04-20)](#e0-v3--gaia-c3-training-80-q-validation-subsample-2026-04-20)
 - _[E1 snapshot — pending]_
 - _[E2 freeze-smoke — pending]_
 - _[E3 test-split submission — pending]_
@@ -38,16 +38,16 @@ sections — anyone writing `methodology.tex`, `experiments.tex`,
 
 ---
 
-## E0 v3 — GAIA C4 training, 80-Q validation subsample, 2026-04-20
+## E0 v3 — GAIA C3 training, 80-Q validation subsample, 2026-04-20
 
 _Created: 2026-04-21_
-_Authoritative source: `workdir/gaia_c4_{mistral,qwen}_20260420_E0v3/`_
+_Authoritative source: `workdir/gaia_c4_{mistral,qwen}_20260420_E0v3/` — **paper condition C3** (skill library + extraction). The `gaia_c4_*` directory prefix predates the May 2026 rename to contiguous **C0–C3**; new runs use `workdir/gaia_c3_*`._
 
 **Run identity**
 
 | Field | Value |
 |---|---|
-| Condition | C4 training (enable_review=True, enable_skills=True, enable_skill_extraction=True) |
+| Condition | **C3** training (enable_review=True, enable_skills=True, enable_skill_extraction=True) |
 | Split | GAIA validation |
 | Sample | random 80 of 165 questions, seed=42 (`GAIADataset.shuffle` + `max_samples=80`) |
 | Concurrency | 4 (asyncio.gather batches) |
@@ -72,9 +72,9 @@ Scoring via `question_scorer` (byte-level port of the official HF leaderboard sc
 | L2 | 3/11 (27.3 %) | 7/14 (50.0 %) |
 | L3 | 1/6 (16.7 %) | 1/2 (50.0 %) |
 
-**Caveat:** these numbers are **not a C4-vs-baseline comparison**. E0 is a
-training phase; C0/C2/C3 on the same validation subsample are not run. The
-C4-over-C3 delta is decided by E3 on the test split.
+**Caveat:** these numbers are **not a C3-vs-baseline comparison**. E0 is a
+training phase; C0/C1/C2 on the same validation subsample are not run. The
+C3-over-C2 delta is decided by E3 on the test split.
 
 ### E0.2 Skill library — loading, retrieval, learning
 
@@ -123,7 +123,7 @@ Sub-agent scope (from `log.txt` — not in `dra.jsonl.intermediate_steps`):
 *selection* of learned entries against seeded ones. Plausible causes are
 (a) narrower / more task-specific learned titles, (b) late availability
 (skills extracted mid-run have fewer retrieval chances), (c) prompt-position
-anchoring of seed skills. **Any C4-over-C3 delta on E3 test split must be
+anchoring of seed skills. **Any C3-over-C2 delta on E3 test split must be
 attributed predominantly to *seed skills*, not to the extracted library.**
 Framing for the paper: E0 demonstrates end-to-end extractor functioning;
 test-time generalisation of learned entries is a separate question that
@@ -309,15 +309,15 @@ For `methodology.tex`:
 - The scorer used is a byte-identical port of the HF leaderboard scorer
   (with a `None` guard added for parity — see Cross-cutting section).
   Cite the leaderboard space URL.
-- C4 training-phase sample is 80 random questions, seed=42, drawn before
+- C3 training-phase sample is 80 random questions, seed=42, drawn before
   filtering, so the distribution across L1/L2/L3 matches validation.
 - Per-Q timeout is 1800 s, per-step caps: planner 15, sub-agents 3,
   auto_browser_use 10, deep_researcher time_limit 45 s.
 
 For `experiments.tex`:
 - E0 raw accuracy (Mistral 13.75 %, Qwen 20.0 % over 80) should NOT be
-  used as a C4 evaluation number — it is a training-phase sample. The
-  paper's C0/C2/C3/C4 deltas come from E3 test split.
+  used as a C3 evaluation number — it is a training-phase sample. The
+  paper's C0/C1/C2/C3 ablation deltas come from E3 test split.
 - Skill library grew 7 → 13 (Mistral) and 7 → 9 (Qwen) during E0.
 
 For `discussion.tex` / `limitations.tex`:
@@ -330,7 +330,7 @@ For `discussion.tex` / `limitations.tex`:
   (i) REVIEW-driven retry loops dominate both models (100 % of Mistral
   timeout batches, 71 % of Qwen timeout batches), and (ii) for Qwen only,
   cumulative DeepResearchTool 60 s sub-timeouts compound inside the
-  1800 s per-Q budget. Both are fairness-preserving across C0/C2/C3/C4
+  1800 s per-Q budget. Both are fairness-preserving across C0/C1/C2/C3
   when mitigations are applied uniformly.
 - REVIEW with `retry` verdicts is currently unbounded; 8 distinct
   rephrasings of the same delegation on task `0383a3ee` is the most
@@ -373,7 +373,7 @@ a primary cause, so provider-level mitigations drop off the list).
 5. ~~**`None` guard in `question_scorer`**~~ → **LANDED** 2026-04-21
    (see Cross-cutting scorer parity section).
 
-None of 1-4 affect ablation integrity; all apply uniformly to C0/C2/C3/C4
+None of 1-4 affect ablation integrity; all apply uniformly to C0/C1/C2/C3
 and both models.
 
 ### Status of item #1 (REVIEW retry hardening) — landed 2026-04-24

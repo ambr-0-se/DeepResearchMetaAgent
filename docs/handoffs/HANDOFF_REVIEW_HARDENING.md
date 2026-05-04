@@ -26,8 +26,8 @@ All three layers verified without a live API:
 2. **New test suite** — `pytest tests/test_review_*.py` runs 156 tests
    (11 new files, 116 new cases + 40 prior review-adjacent cases) all
    green.
-3. **C4 config load** — `configs/config_gaia_c4_mistral.py` and
-   `configs/config_gaia_c4_qwen.py` parse cleanly; `agent_config` has
+3. **C3 config load** — `configs/config_gaia_c3_mistral.py` and
+   `configs/config_gaia_c3_qwen.py` parse cleanly; `agent_config` has
    `enable_review=True`, `enable_skills=True`, `enable_skill_extraction=True`.
 4. **Simulated runaway task (mocked ReviewAgent)** — simulates the E0
    `ad2b4d70` Eva Draconis YouTube scenario where the reviewer
@@ -46,7 +46,7 @@ All three layers verified without a live API:
 ## Live-eval verification — 3-Q smoke (2026-04-24 04:08-04:40 HKT)
 
 **Result: PASS.** 3-Q smoke run on validation seed=42 (`max_samples=3`,
-per-Q timeout 1800 s, planner max_steps 15) against both C4 cells in
+per-Q timeout 1800 s, planner max_steps 15) against both **C3** (skill-library) cells in
 parallel. Tasks: `6f37996b` (Cayley table), `e961a717` (Chinese chess
 pieces), `023e9d44` (CA→ME drive).
 
@@ -79,7 +79,7 @@ pieces), `023e9d44` (CA→ME drive).
   the proceed path on every delegation.
 - ✅ Skill extraction still works (`verify-binary-operation-commutativity`
   was added to mistral library mid-smoke).
-- ✅ C0/C2 ablation intact by construction (not under test here, but
+- ✅ C0/C1 ablation intact by construction (not under test here, but
   `review_step is None` guard in `_post_action_hook` is unchanged).
 
 **New observation — reviewer leniency:** on this sample, the reviewer
@@ -105,19 +105,19 @@ cd /Users/ahbo/Desktop/APAI4799\ MetaAgent/DeepResearchMetaAgent
 DRA_RUN_ID=smoke_review_v1 DATASET_SPLIT=validation \
   FULL_CFG_OPTIONS="max_samples=5 dataset.shuffle=True dataset.seed=42 \
     per_question_timeout_secs=1800 agent_config.max_steps=15" \
-  bash scripts/run_eval_matrix.sh smoke mistral c4
+  bash scripts/run_eval_matrix.sh smoke mistral c3
 ```
 
 Then inspect the output:
 
 ```bash
 # Attribution — review_retry_loop per batch should drop from 40-70 to ≤ 5
-python scripts/timeout_analysis.py workdir/gaia_c4_mistral_smoke_review_v1/
+python scripts/timeout_analysis.py workdir/gaia_c3_mistral_smoke_review_v1/
 
 # Per-task metrics — confirm ledger emission worked
 python -c "
 import json
-for row in open('workdir/gaia_c4_mistral_smoke_review_v1/dra.jsonl'):
+for row in open('workdir/gaia_c3_mistral_smoke_review_v1/dra.jsonl'):
     r = json.loads(row)
     print(r['task_id'][:8], '→', r.get('review_metrics'))
 "
@@ -134,8 +134,8 @@ Expected for the 5-Q smoke:
 - One task with a previously-successful `modify_subagent` call — path
   still works.
 
-In every row, `review_metrics` dict is populated (None on C0/C2 rows;
-dict on C3/C4 rows). Key signals to look for:
+In every row, `review_metrics` dict is populated (None on C0/C1 rows;
+dict on C2/C3 rows). Key signals to look for:
 
 - `retry_coercions_to_proceed > 0` — the cap=0 path fired.
 - `blocklist_coercions > 0` — planner re-entry was blocked.
@@ -165,5 +165,5 @@ git checkout main
 git revert <commit-sha>
 ```
 
-All changes are additive and C3/C4-gated. C0/C2 rows are unaffected by
+All changes are additive and C2/C3-gated. C0/C1 rows are unaffected by
 construction (`review_step is None`); ablation integrity preserved.

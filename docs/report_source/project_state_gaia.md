@@ -1,10 +1,10 @@
 # Project State — DeepResearchMetaAgent (GAIA Track)
 
-_Last updated: 2026-04-19_
+_Last updated: 2026-05-04_
 
 ## 1. Summary
 
-DeepResearchMetaAgent is a research implementation of embedded, online meta-agent optimisation on the GAIA benchmark. It extends the open-source DeepResearchAgent hierarchical framework (planning agent + three specialised sub-agents: Deep Analyser, Browser User, Deep Researcher) with four increasingly sophisticated experimental conditions that test reactive adaptation, automatic review, and cross-task skill learning. The codebase runs a 4-model × 4-condition = 16-cell evaluation matrix (Mistral Small, Qwen 3.6, Gemini 4-31B, Kimi K2.5) across conditions C0 (baseline), C2 (reactive diagnose/modify), C3 (sealed structural review), and C4 (cross-task skill library). Conditions C2 through C4 all use `AdaptivePlanningAgent` with optional compositional components; all architectural modifications are task-scoped and reset after each question.
+DeepResearchMetaAgent is a research implementation of embedded, online meta-agent optimisation on the GAIA benchmark. It extends the open-source DeepResearchAgent hierarchical framework (planning agent + three specialised sub-agents: Deep Analyser, Browser User, Deep Researcher) with four increasingly sophisticated experimental conditions that test reactive adaptation, automatic review, and cross-task skill learning. The codebase runs a 4-model × 4-condition = 16-cell evaluation matrix (Mistral Small, Qwen 3.6, Gemini 4-31B, Kimi K2.5) across conditions C0 (baseline), C1 (reactive diagnose/modify), C2 (sealed structural review), and C3 (cross-task skill library). Conditions C1 through C3 all use `AdaptivePlanningAgent` with optional compositional components; all architectural modifications are task-scoped and reset after each question.
 
 ## 2. Architecture Inherited from DeepResearchAgent
 
@@ -19,7 +19,7 @@ DeepResearchMetaAgent is a downstream research fork of DeepResearchAgent (arXiv 
 
 This half of the project adds only the meta-agent layer (src/meta/, src/skills/) on top of the base hierarchy and introduces no structural changes to the three managed sub-agents themselves.
 
-## 3. Conditions C0 / C2 / C3 / C4
+## 3. Conditions C0 / C1 / C2 / C3
 
 ### C0 — Baseline
 
@@ -27,13 +27,13 @@ This half of the project adds only the meta-agent layer (src/meta/, src/skills/)
 
 **What it tests:** Vanilla `PlanningAgent` without any adaptive capabilities. The planner coordinates the three sub-agents but cannot diagnose failures or modify their behaviour at runtime.
 
-**Key design choice:** C0 serves as the lower bound to measure the value of each meta-agent increment (C2, C3, C4). Results are written to `workdir/gaia_c0_<RUN_ID>/dra.jsonl` so per-model runs (e.g. C0 on Mistral, C0 on Qwen) never collide.
+**Key design choice:** C0 serves as the lower bound to measure the value of each meta-agent increment (C1, C2, C3). Results are written to `workdir/gaia_c0_<RUN_ID>/dra.jsonl` so per-model runs (e.g. C0 on Mistral, C0 on Qwen) never collide.
 
 **Implementation:** No new code; uses inherited `PlanningAgent` class from DeepResearchAgent.
 
-### C2 — Reactive Runtime Modification
+### C1 — Reactive Runtime Modification
 
-**Configuration file:** `configs/config_gaia_adaptive.py`
+**Configuration file:** `configs/config_gaia_c1.py`
 
 **What it tests:** Agent-invoked reactive adaptation. The planner gets two new tools:
 - `diagnose_subagent` — inspect a sub-agent's execution history (memory steps, tool calls, reasoning) after a failure.
@@ -51,9 +51,11 @@ All architectural changes are task-scoped; `AdaptiveMixin._store_original_state(
 
 **Design choice defended in report:** Task-scoping ensures clean isolation between GAIA questions and no cross-question pollution from learned modifications. The seven actions cover the common failure patterns (missing capability, wrong tool, unclear instructions); agent creates tools dynamically from natural-language specifications.
 
-### C3 — Sealed Structural Review
+**Planner prompt:** `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent.yaml`
 
-**Configuration file:** `configs/config_gaia_c3.py`
+### C2 — Sealed Structural Review
+
+**Configuration file:** `configs/config_gaia_c2.py`
 
 **What it tests:** Automatic post-delegation assessment. After the planner delegates to any sub-agent, an internal sealed `ReviewAgent` runs automatically (at most 3 steps, not counting against planner budget). The reviewer produces a structured `ReviewResult` with:
 - **Verdict** (satisfactory / partial / unsatisfactory)
@@ -68,21 +70,21 @@ The review verdict and recommendation are injected into the planner's next THINK
 - `src/meta/review_schema.py` — Pydantic models: `ReviewResult`, `RootCauseCategory` (8-item enum), `NextAction` (discriminated union of 4 action specs)
 - `src/meta/review_agent.py` — the sealed internal ReviewAgent (in-source prompt, no YAML file, no registry entry)
 - `src/meta/review_step.py` — orchestrator that fires from `_post_action_hook` after each sub-agent delegation; includes fast-path skips (non-delegation steps, final answer, near max_steps) and error handling
-- `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c3.yaml` — planner prompt with guidance on the automatic `[REVIEW]` block
+- `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c2.yaml` — planner prompt with guidance on the automatic `[REVIEW]` block
 
 **Design choice:** Automatic review decouples detection of failure from remediation — the planner sees the verdict without needing to diagnose manually. Sealed apparatus prevents reward hacking. The 8-category taxonomy enables aggregate analysis across runs (fixed set, not free text).
 
-### C4 — Cross-Task Skill Library
+### C3 — Cross-Task Skill Library
 
-**Configuration file:** `configs/config_gaia_c4.py`
+**Configuration file:** `configs/config_gaia_c3.py`
 
-**What it tests:** Persistent, cross-task skill library following the agentskills.io specification. Seven pre-seeded skills (covering all four consumer scopes) are available from the first task. At task end, a `SkillExtractor` proposes new skills via a six-stage pipeline (worthiness heuristic → LLM propose JSON → structural validation → entity blocklist → LLM-as-judge dedup → disk persist). Extracted skills remain in the per-run `workdir/gaia_c4_<RUN_ID>/skills/` directory and are visible to subsequent tasks.
+**What it tests:** Persistent, cross-task skill library following the agentskills.io specification. Seven pre-seeded skills (covering all four consumer scopes) are available from the first task. At task end, a `SkillExtractor` proposes new skills via a six-stage pipeline (worthiness heuristic → LLM propose JSON → structural validation → entity blocklist → LLM-as-judge dedup → disk persist). Extracted skills remain in the per-run `workdir/gaia_c3_<RUN_ID>/skills/` directory and are visible to subsequent tasks.
 
 **Skill structure:** Each skill is a directory containing a `SKILL.md` file with YAML frontmatter + Markdown body. Frontmatter includes name, description, and metadata (consumer scope, skill_type, source, verified_uses). Each agent (planner + sub-agents) gets an `activate_skill` tool scoped to skills visible to it.
 
-**Per-run isolation:** Every C4 invocation writes its `dra.jsonl` AND its evolved skill library to a fresh `workdir/gaia_c4_<model>_<RUN_ID>/skills/` directory. Parallel runs cannot race; repeated runs preserve prior learned skills (via a `.seeded` marker that prevents re-seeding). Resume is supported: `DRA_RUN_ID=<prior_id> python examples/run_gaia.py --config configs/config_gaia_c4.py`.
+**Per-run isolation:** Every C3 invocation writes its `dra.jsonl` AND its evolved skill library to a fresh `workdir/gaia_c3_<model>_<RUN_ID>/skills/` directory. Parallel runs cannot race; repeated runs preserve prior learned skills (via a `.seeded` marker that prevents re-seeding). Resume is supported: `DRA_RUN_ID=<prior_id> python examples/run_gaia.py --config configs/config_gaia_c3.py`.
 
-**Frozen-library evaluation:** To measure a pre-trained library (without online learning), create a second config inheriting from C4 and set `enable_skill_extraction=False`. This requires `--cfg-options agent_config.enable_skill_extraction=False` override (the pair `agent_config` and `planning_agent_config` are separate ConfigDicts after `mmengine.Config.fromfile` materialises them).
+**Frozen-library evaluation:** To measure a pre-trained library (without online learning), create a second config inheriting from C3 and set `enable_skill_extraction=False`. This requires `--cfg-options agent_config.enable_skill_extraction=False` override (the pair `agent_config` and `planning_agent_config` are separate ConfigDicts after `mmengine.Config.fromfile` materialises them).
 
 **Key files:**
 - `src/meta/activate_skill_tool.py` — consumer-scoped read-only tool to retrieve full skill bodies
@@ -92,9 +94,11 @@ The review verdict and recommendation are injected into the planner's next THINK
 - `src/skills/_seed.py` — pre-seed 7 canonical skills on first run (no-op on resume)
 - `src/skills/validate.py` — CLI validator (`python -m src.skills.validate <dir>`)
 - 7 seed skill directories: `handling-file-attachments`, `task-decomposition-complex-queries`, `delegation-failure-recovery` (planner scope); `pdf-table-extraction`, `multi-hop-math-verification` (deep_analyzer_agent scope); `browser-paywall-recovery` (browser_use_agent scope); `research-fallback-sources` (deep_researcher_agent scope)
-- `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c4.yaml` — planner prompt with skill registry block + activate_skill guidance
+- `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c3.yaml` — planner prompt with skill registry block + activate_skill guidance
 
 **Design choice:** Consumer-scoped skills (routed to planner, specific sub-agents, or all) prevent information leakage and enable specialisation. Cross-task persistence tests whether agents can build and compound learned knowledge. Entity blocklist (years, currency, URLs, long numerics) guards against extracting overly-specific solutions.
+
+**Historical note:** Runs completed before the condition rename (2026-05) may still appear under legacy `workdir/` tags: `gaia_adaptive_*` and `gaia_c2_*` → paper **C1** (reactive modify); `gaia_c3_*` → paper **C2** (review); `gaia_c4_*` → paper **C3** (skill library).
 
 ## 4. Key Design Decisions with Citation Hooks
 
@@ -110,11 +114,11 @@ The review verdict and recommendation are injected into the planner's next THINK
 
 6. **Consumer-scoped skill injection** (`src/skills/_registry.py:metadata_for()`) — skills visible to a given agent depend on consumer scope (planner, named sub-agent, or all), preventing over-generalisation and information leakage.
 
-7. **Per-run skill directory + seeding strategy** (`src/skills/_seed.py`) — every C4 run gets its own `workdir/gaia_c4_<RUN_ID>/skills/` with a `.seeded` marker; on resume, the marker prevents re-seeding so learned skills survive; parallel runs never race.
+7. **Per-run skill directory + seeding strategy** (`src/skills/_seed.py`) — every C3 run gets its own `workdir/gaia_c3_<RUN_ID>/skills/` with a `.seeded` marker; on resume, the marker prevents re-seeding so learned skills survive; parallel runs never race.
 
 8. **Six-stage skill extraction pipeline** (`src/skills/_extractor.py`) — worthiness heuristic → LLM propose → structure validation → entity blocklist → LLM dedup → persist; contracts never to raise, so extraction failure is silent and graceful.
 
-9. **Config inheritance with per-run tagging** (`configs/config_gaia_c0.py` through `config_gaia_c4.py`) — each condition derives a unique `tag` from `DRA_RUN_ID` env var so results never collide; mmengine inheritance (`_base_ = ...`) avoids duplication.
+9. **Config inheritance with per-run tagging** (`configs/config_gaia_c0.py` through `config_gaia_c3.py`) — each condition derives a unique `tag` from `DRA_RUN_ID` env var so results never collide; mmengine inheritance (`_base_ = ...`) avoids duplication.
 
 10. **Tier B tool-message protocol** (inherited from DeepResearchAgent, used in memory + review diagnostics) — per-tool_call_id result tracking enables parallelisation and precise reconstruction of what each tool returned.
 
@@ -136,7 +140,7 @@ The review verdict and recommendation are injected into the planner's next THINK
 
 **Reliability hacks:** vLLM health watchdog (auto-restart if unresponsive); transient-error retry (429, 503, 504); token-budget-aware context pruning (85% threshold, keeps system + last 4 messages, truncates middle).
 
-**Analysis:** `scripts/analyze_results.py` produces terminal summaries and optional HTML reports; `scripts/compare_results.py` diffs two JSONL files (e.g. C0 vs C2 on the same subset).
+**Analysis:** `scripts/analyze_results.py` produces terminal summaries and optional HTML reports; `scripts/compare_results.py` diffs two JSONL files (e.g. C0 vs C1 on the same subset).
 
 ## 6. Test Coverage
 
@@ -155,28 +159,28 @@ The review verdict and recommendation are injected into the planner's next THINK
 ## 7. Experiments Status
 
 **Runs completed (visible in workdir):**
-- **2026-04-18 (phc = prior hand-crafted):** C0/C2/C3/C4 × Mistral/Kimi/Qwen, smoke size (~10 q per cell)
-- **2026-04-19 (latest):** C0 × Mistral/Kimi/Gemma; C2/C3 × Kimi; individual test runs for validation
+- **2026-04-18 (phc = prior hand-crafted):** C0 and adaptive conditions × Mistral/Kimi/Qwen under legacy tags, smoke size (~10 q per cell)
+- **2026-04-19 (latest):** C0 × Mistral/Kimi/Gemma; adaptive rows × Kimi; individual test runs for validation
 
 **Run layout:** Each directory `workdir/gaia_<cond>_<model>_<timestamp>/` contains:
 - `dra.jsonl` — per-question results (prediction, steps, errors)
 - `log.txt` — agent logs and config dump
-- `skills/` subdirectory (C4 only) — evolved skill library with `.seeded` marker
+- `skills/` subdirectory (C3 only, or legacy C4-tagged runs) — evolved skill library with `.seeded` marker
 
 **Missing / incomplete:**
 - No full matrix run on all 16 cells × full test split (resource-intensive; smoke has been run)
-- No frozen-library evaluation (`enable_skill_extraction=False` variant) — C4 results so far are training-mode (online learning enabled)
-- No per-model ablation (e.g. C2 on Mistral, then swap Mistral for Kimi within same run to isolate model effect)
+- No frozen-library evaluation (`enable_skill_extraction=False` variant) — C3 results so far are training-mode (online learning enabled)
+- No per-model ablation (e.g. C1 on Mistral, then swap Mistral for Kimi within same run to isolate model effect)
 
-**Resumption:** Prior runs can be resumed: `DRA_RUN_ID=<prior_timestamp> bash scripts/run_eval_matrix.sh full`. The existing `dra.jsonl` is appended to; for C4, the `.seeded` marker causes seed-copy to be skipped so prior learned skills survive.
+**Resumption:** Prior runs can be resumed: `DRA_RUN_ID=<prior_timestamp> bash scripts/run_eval_matrix.sh full`. The existing `dra.jsonl` is appended to; for C3 (or legacy C4-tagged runs), the `.seeded` marker causes seed-copy to be skipped so prior learned skills survive.
 
 ## 8. Open Gaps / Known Weaknesses
 
-1. **No external baseline comparison** — only internal ablation (C0 → C2 → C3 → C4). No direct comparison to published ADAS systems (Reflexion, DSPy, LangChain RAG), Reflexion, or multi-round LLM-as-optimizer work; this limits claims about SOTA.
+1. **No external baseline comparison** — only internal ablation (C0 → C1 → C2 → C3). No direct comparison to published ADAS systems (Reflexion, DSPy, LangChain RAG), Reflexion, or multi-round LLM-as-optimizer work; this limits claims about SOTA.
 
 2. **GAIA is short-horizon** — median task length < 1 minute. Does not evaluate "long-running autonomous sessions" mentioned in the literature review as underdeveloped; cannot observe whether architectural drift accumulates over hours of multi-task sessions.
 
-3. **C4 training-mode results conflate learning from skill extraction with the value of a pre-seeded library** — no frozen-library evaluation (`enable_skill_extraction=False`) has been run at scale. Cannot isolate the contribution of seeded skills vs. learned ones.
+3. **C3 training-mode results conflate learning from skill extraction with the value of a pre-seeded library** — no frozen-library evaluation (`enable_skill_extraction=False`) has been run at scale. Cannot isolate the contribution of seeded skills vs. learned ones.
 
 4. **Sealed ReviewAgent is not truly sealed against sophisticated agents** — the agent could theoretically learn to ignore [REVIEW] blocks or frame requests so they always trigger `proceed`. Only adversarial evaluation (not done) would catch this.
 
@@ -188,7 +192,7 @@ The review verdict and recommendation are injected into the planner's next THINK
 
 8. **Skill extractor has no human curation loop** — all extracted skills persist automatically (after dedup). No way for a human (or the meta-agent) to flag low-quality skills; once persisted, they accumulate across runs indefinitely.
 
-9. **Matrix runner uses 4 models but no statistical significance testing** — differences in accuracy (e.g. C0 66% vs. C2 71% on Mistral) are reported as point estimates; no confidence intervals or cross-validation.
+9. **Matrix runner uses 4 models but no statistical significance testing** — differences in accuracy (e.g. C0 66% vs. C1 71% on Mistral) are reported as point estimates; no confidence intervals or cross-validation.
 
 10. **Resume protocol assumes config immutability** — if a config changes between runs with the same `DRA_RUN_ID`, the appended JSONL will have inconsistent metadata. No validation of this assumption.
 
@@ -215,17 +219,17 @@ The review verdict and recommendation are injected into the planner's next THINK
 | `src/skills/validate.py` | CLI validator for SKILL.md files |
 | `src/skills/{7 skill dirs}` | Canonical pre-seeded skills (handling-file-attachments, pdf-table-extraction, browser-paywall-recovery, etc.) |
 | `src/agent/adaptive_planning_agent/adaptive_planning_agent.py` | AdaptivePlanningAgent class: extends PlanningAgent with review_step, skill_registry, skill_extractor (optional) |
-| `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent.yaml` | C2 prompt template (reactive tools guidance) |
-| `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c3.yaml` | C3 prompt template (documents [REVIEW] block) |
-| `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c4.yaml` | C4 prompt template (documents [REVIEW] + activate_skill) |
+| `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent.yaml` | C1 prompt template (reactive tools guidance) |
+| `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c2.yaml` | C2 prompt template (documents [REVIEW] block) |
+| `src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c3.yaml` | C3 prompt template (documents [REVIEW] + activate_skill) |
 | `configs/config_gaia_c0.py` | C0 baseline (vanilla PlanningAgent); retags output to gaia_c0_<RUN_ID> |
-| `configs/config_gaia_adaptive.py` | C2 configuration (reactive diagnose/modify tools) |
-| `configs/config_gaia_c3.py` | C3 configuration (C2 + enable_review=True) |
-| `configs/config_gaia_c4.py` | C4 configuration (C3 + enable_skills=True + enable_skill_extraction=True) |
-| `configs/config_gaia.py` | Base GAIA config (inherited by C0, C2, C3, C4) |
+| `configs/config_gaia_c1.py` | C1 configuration (reactive diagnose/modify tools) |
+| `configs/config_gaia_c2.py` | C2 configuration (C1 + enable_review=True) |
+| `configs/config_gaia_c3.py` | C3 configuration (C2 + enable_skills=True + enable_skill_extraction=True) |
+| `configs/config_gaia.py` | Base GAIA config (inherited by C0, C1, C2, C3) |
 | `examples/run_gaia.py` | GAIA evaluation entry point; dataset loader, per-question loop, timeout/retry handling |
 | `scripts/analyze_results.py` | Result analysis: terminal summary + optional HTML report, per-tool stats, adaptive-tool usage patterns |
-| `scripts/compare_results.py` | Diff two JSONL result files (e.g. C0 vs C2) with accuracy breakdown by difficulty |
+| `scripts/compare_results.py` | Diff two JSONL result files (e.g. C0 vs C1) with accuracy breakdown by difficulty |
 | `scripts/gen_eval_configs.py` | Generate all 16 cell configs (4 models × 4 conditions) from template |
 | `scripts/run_eval_matrix.sh` | Parallel matrix runner (smoke / full modes, per-model model slot routing, vLLM watchdog) |
 | `tests/test_review_schema.py` | Unit tests for ReviewResult Pydantic models and next_action variants |

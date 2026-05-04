@@ -2,26 +2,30 @@
 """
 Export a GAIA evaluation JSONL (dra.jsonl) to the leaderboard submission format.
 
-The GAIA leaderboard expects a JSONL file with exactly two fields per line:
+The GAIA leaderboard expects each JSON line to include at least:
     {"task_id": "...", "model_answer": "..."}
+Optional key: `reasoning_trace`.
 
 This script reads the agent's output JSONL, maps `prediction` -> `model_answer`
-(intentional abstentions such as `Unable to determine` stay as non-empty `model_answer`),
-and validates the result against the expected test-split question counts
-(Level 1: 93, Level 2: 159, Level 3: 49 = 301 total).
+(intentional abstentions such as `Unable to determine` stay as non-empty `model_answer`).
+By default it strips markdown blobs by taking the segment after the last `FINAL ANSWER`
+marker when present (`--no-sanitize` keeps predictions verbatim).
+
+Validates against the official 2023 test split counts (Level 1: 93, 2: 159, 3: 49 = 301).
 
 Usage:
     python scripts/export_gaia_submission.py workdir/<run_dir>/dra.jsonl
 
-    # Custom output path
     python scripts/export_gaia_submission.py workdir/<run_dir>/dra.jsonl -o submission.jsonl
 
-    # Skip validation (e.g. partial runs)
     python scripts/export_gaia_submission.py workdir/<run_dir>/dra.jsonl --no-validate
+
+    python scripts/export_gaia_submission.py run.jsonl --reasoning-trace
 """
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from collections import Counter
@@ -29,12 +33,64 @@ from collections import Counter
 EXPECTED_COUNTS = {"1": 93, "2": 159, "3": 49}
 EXPECTED_TOTAL = sum(EXPECTED_COUNTS.values())  # 301
 
+_FINAL_ANSWER_SPLIT_RE = re.compile(r"(?is)\bfinal\s+answer\s*:?\s*")
+
+
+def sanitize_prediction_to_model_answer(raw: str) -> str:
+    """
+    If `prediction` contains a FINAL ANSWER template (possibly markdown-wrapped),
+    take the span after the *last* occurrence — mirrors reformulator / run_gaia salvage.
+
+    Short predictions without that marker are returned stripped unchanged.
+    """
+    s = raw.strip()
+    if not s:
+        return ""
+    lower = s.lower()
+    if "final answer" not in lower:
+        return s
+
+    parts = _FINAL_ANSWER_SPLIT_RE.split(s)
+    if len(parts) < 2:
+        return s
+
+    tail = parts[-1].strip()
+    # First logical line often holds the benchmark answer
+    line = tail.split("\n")[0].strip()
+    # Trim wrapping markdown emphasis / bullets
+    line = re.sub(r"^\*+\s*", "", line)
+    line = re.sub(r"\*+$", "", line).strip()
+    return line if line else s
+
 
 def main():
     parser = argparse.ArgumentParser(description="Export GAIA results to leaderboard submission format")
     parser.add_argument("input", help="Path to dra.jsonl from evaluation run")
     parser.add_argument("-o", "--output", help="Output submission JSONL path (default: <input_dir>/submission.jsonl)")
     parser.add_argument("--no-validate", action="store_true", help="Skip question count validation")
+    parser.add_argument(
+        "--sanitize",
+        action="store_true",
+        default=True,
+        help="Extract text after the last 'FINAL ANSWER:' when present (default: on)",
+    )
+    parser.add_argument(
+        "--no-sanitize",
+        dest="sanitize",
+        action="store_false",
+        help="Use prediction verbatim (strip only outer whitespace)",
+    )
+    parser.add_argument(
+        "--reasoning-trace",
+        action="store_true",
+        help="Include optional reasoning_trace from intermediate_steps (JSON text; large)",
+    )
+    parser.add_argument(
+        "--reasoning-max-chars",
+        type=int,
+        default=50000,
+        help="Truncate each reasoning_trace to this many chars (default 50000)",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -49,6 +105,7 @@ def main():
     level_counts = Counter()
     errors = 0
     no_answer = 0
+    sanitized_rows = 0
     task_ids_seen = set()
 
     for r in results:
@@ -72,10 +129,24 @@ def main():
             no_answer += 1
             model_answer = ""
         else:
-            model_answer = str(prediction).strip()
+            raw = str(prediction).strip()
+            if args.sanitize:
+                model_answer = sanitize_prediction_to_model_answer(raw)
+                if model_answer != raw:
+                    sanitized_rows += 1
+            else:
+                model_answer = raw
 
+        row = {"task_id": task_id, "model_answer": model_answer}
+        if args.reasoning_trace:
+            steps = r.get("intermediate_steps")
+            if steps is not None:
+                trace = json.dumps(steps, ensure_ascii=False)
+                if len(trace) > args.reasoning_max_chars:
+                    trace = trace[: args.reasoning_max_chars] + "…[truncated]"
+                row["reasoning_trace"] = trace
+        submission_lines.append(row)
         level_counts[level] += 1
-        submission_lines.append({"task_id": task_id, "model_answer": model_answer})
 
     output_path = Path(args.output) if args.output else input_path.parent / "submission.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +160,7 @@ def main():
     print(f"  With answers:   {len(submission_lines) - no_answer}")
     print(f"  No answer:      {no_answer}")
     print(f"  Agent errors:   {errors}")
+    print(f"  Sanitized rows: {sanitized_rows}" if args.sanitize else "  Sanitize:       off")
     print(f"  Per level:      {dict(sorted(level_counts.items()))}")
 
     if not args.no_validate:

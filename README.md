@@ -32,12 +32,12 @@ The system adopts a two-layer structure:
 * Breaks down tasks into manageable sub-tasks and assigns them to appropriate lower-level agents.
 * Dynamically coordinates the collaboration among agents to ensure smooth task completion.
 
-**Adaptive Planning Agent** — An extended variant that adds runtime self-modification capabilities, used in experimental conditions C2/C3/C4:
+**Adaptive Planning Agent** — An extended variant that adds runtime self-modification capabilities, used in experimental conditions **C1/C2/C3**:
 * Uses a THINK-ACT-OBSERVE loop (same as the base `PlanningAgent`) augmented with reactive self-modification tools.
-* Can diagnose sub-agent failures at runtime via `diagnose_subagent` and dynamically modify sub-agent tools, instructions, and capabilities via `modify_subagent` (condition **C2**, and inherited by C3/C4).
+* Can diagnose sub-agent failures at runtime via `diagnose_subagent` and dynamically modify sub-agent tools, instructions, and capabilities via `modify_subagent` (condition **C1**, and inherited by C2/C3).
 * All architectural modifications are task-scoped and reset after each task.
-* **C3**: adds a structural REVIEW step — an automatic post-delegation assessment that produces a structured verdict with a root-cause taxonomy and a recommended `next_action` (proceed / retry / modify_agent / escalate). The review apparatus is sealed from `modify_subagent` to prevent reward hacking. See `configs/config_gaia_c3.py`.
-* **C4**: adds a cross-task skill library following the [agentskills.io](https://agentskills.io/specification) spec. Each agent (planner and sub-agents) gets a consumer-scoped `activate_skill` tool. Seven pre-seeded skills ship with the repo under `src/skills/`; every C4 invocation copies them into a per-run `workdir/gaia_c4_<model>_<DRA_RUN_ID>/skills/` (see `src/skills/_seed.py`) so parallel runs and repeated runs never collide. An end-of-task `SkillExtractor` proposes new skills during training runs (with an entity blocklist + LLM-judge dedup). Disable extraction via `enable_skill_extraction=False` for frozen-library evaluation. See `configs/config_gaia_c4.py` and `src/skills/`.
+* **C2**: adds a structural REVIEW step — an automatic post-delegation assessment that produces a structured verdict with a root-cause taxonomy and a recommended `next_action` (proceed / retry / modify_agent / escalate). The review apparatus is sealed from `modify_subagent` to prevent reward hacking. See `configs/config_gaia_c2.py`.
+* **C3**: adds a cross-task skill library following the [agentskills.io](https://agentskills.io/specification) spec. Each agent (planner and sub-agents) gets a consumer-scoped `activate_skill` tool. Seven pre-seeded skills ship with the repo under `src/skills/`; every C3 invocation copies them into a per-run `workdir/gaia_c3_<model>_<DRA_RUN_ID>/skills/` (see `src/skills/_seed.py`) so parallel runs and repeated runs never collide. An end-of-task `SkillExtractor` proposes new skills during training runs (with an entity blocklist + LLM-judge dedup). Disable extraction via `enable_skill_extraction=False` for frozen-library evaluation. See `configs/config_gaia_c3.py` and `src/skills/`.
 
 ### 2. Specialized Lower-Level Agents
 
@@ -84,10 +84,10 @@ Image and Video Examples:
 </p>
 
 ## Updates
-* **2026.04**: Ship conditions **C3** and **C4** for the ADAS GAIA experiments.
-  * **C3 — structural REVIEW step**: automatic post-delegation assessment via a sealed internal `ReviewAgent`. Produces a Pydantic `ReviewResult` with a verdict, 8-category root-cause taxonomy, and a polymorphic `next_action` that maps directly onto `modify_subagent` arguments when remediation is needed. Review findings are injected into the next THINK's observations with a `[REVIEW]` marker. Apparatus is sealed from `modify_subagent` to prevent reward hacking. See `src/meta/review_*.py` and `configs/config_gaia_c3.py`.
-  * **C4 — cross-task skill library**: filesystem-backed skill registry following the [agentskills.io](https://agentskills.io/specification) standard. Each agent (planner + sub-agents) gets a consumer-scoped `activate_skill` tool. Seven pre-seeded skills cover all four consumer scopes. A six-stage `SkillExtractor` proposes new skills at task end (worthiness heuristic → LLM propose → entity blocklist → dedup → persist); frozen-library mode available for evaluation. See `src/skills/` and `configs/config_gaia_c4.py`.
-* **2026.04**: Reorganise GAIA eval into four experimental conditions (C0/C2/C3/C4). Correct misleading THINK-ACT-OBSERVE-REFLECT naming (the base loop is plain THINK-ACT-OBSERVE; structural REVIEW is introduced by C3). Extract shared `src/meta/_memory_format.py` helpers for reuse across diagnose/review components.
+* **2026.04**: Ship conditions **C2** and **C3** for the ADAS GAIA experiments (sealed review + cross-task skill library), building on **C1** reactive tools.
+  * **C2 — structural REVIEW step**: automatic post-delegation assessment via a sealed internal `ReviewAgent`. Produces a Pydantic `ReviewResult` with a verdict, 8-category root-cause taxonomy, and a polymorphic `next_action` that maps directly onto `modify_subagent` arguments when remediation is needed. Review findings are injected into the next THINK's observations with a `[REVIEW]` marker. Apparatus is sealed from `modify_subagent` to prevent reward hacking. See `src/meta/review_*.py` and `configs/config_gaia_c2.py`.
+  * **C3 — cross-task skill library**: filesystem-backed skill registry following the [agentskills.io](https://agentskills.io/specification) standard. Each agent (planner + sub-agents) gets a consumer-scoped `activate_skill` tool. Seven pre-seeded skills cover all four consumer scopes. A six-stage `SkillExtractor` proposes new skills at task end (worthiness heuristic → LLM propose → entity blocklist → dedup → persist); frozen-library mode available for evaluation. See `src/skills/` and `configs/config_gaia_c3.py`.
+* **2026.04**: Reorganise GAIA eval into four experimental conditions (**C0/C1/C2/C3**). Correct misleading THINK-ACT-OBSERVE-REFLECT naming (the base loop is plain THINK-ACT-OBSERVE; structural REVIEW is introduced by C2). Extract shared `src/meta/_memory_format.py` helpers for reuse across diagnose/review components.
 * **2026.02**: Codebase cleanup — remove obsolete scripts, improve eval reporting (retry tracking, per-tool results, broader error classification), and update documentation.
 * **2026.02**: GAIA evaluation robustness — vLLM health watchdog with auto-restart, transient error retry in eval runner, token-budget-aware context pruning, and planning tool auto-ID generation.
 * **2026.02**: Add OpenAI-native Tier B tool message protocol for parallel tool call tracking.
@@ -171,14 +171,15 @@ git clone https://huggingface.co/datasets/gaia-benchmark/GAIA
 # Run baseline evaluation
 python examples/run_gaia.py --config configs/config_gaia.py
 
-# Run adaptive agent evaluation
-python examples/run_gaia.py --config configs/config_gaia_adaptive.py
+# Run adaptive agent evaluation (reactive diagnose + modify) — paper **C1**
+python examples/run_gaia.py --config configs/config_gaia_c1.py
+# Deprecated alias for the same stack: configs/config_gaia_adaptive.py
 
 # Override config options (e.g. model, sample count)
 python examples/run_gaia.py --config configs/config_gaia.py --cfg-options model_id=gpt-4.1 max_samples=10
 
 # Compare baseline vs adaptive results
-python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_adaptive/dra.jsonl
+python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_c1_<RUN_ID>/dra.jsonl
 
 # Analyze results and generate HTML report
 python scripts/analyze_results.py workdir/gaia/dra.jsonl
@@ -189,7 +190,7 @@ For GPU cluster evaluation with vLLM (SLURM), see [INSTRUCTIONS_RUN_EVAL.md](./I
 ### ADAS evaluation matrix (16 cells — 4 models × 4 conditions)
 
 The APAI4799 meta-agent research project adds a 16-cell GAIA evaluation matrix
-comparing **C0 / C2 / C3 / C4** (defined above) across **4 frontier models**.
+comparing **C0 / C1 / C2 / C3** (defined above) across **4 frontier models**.
 All configs are generated by [`scripts/gen_eval_configs.py`](./scripts/gen_eval_configs.py)
 and launched in parallel by [`scripts/run_eval_matrix.sh`](./scripts/run_eval_matrix.sh).
 
@@ -201,8 +202,8 @@ python scripts/gen_eval_configs.py
 # (integration track **I2**; see docs/handoffs/HANDOFF_TEST_EVAL.md)
 bash scripts/run_eval_matrix.sh smoke
 
-# Optional one-model C4 train→snapshot→freeze few-Q smoke (**I3**)
-# bash scripts/integration_i3_c4_pipeline.sh
+# Optional one-model C3 train→snapshot→freeze few-Q smoke (**I3**)
+# bash scripts/integration_i3_c3_pipeline.sh
 
 # Full submission run — test split, all 16 cells (evaluation track **E3**)
 bash scripts/run_eval_matrix.sh full
@@ -222,7 +223,7 @@ Model slots (see [`scripts/gen_eval_configs.py`](./scripts/gen_eval_configs.py)
 | Gemma | `or-gemma-4-31b-it` | OpenRouter → `google/gemma-4-31b-it` | `"required"` passes through | Dense 31B, Apache 2.0 (only non-MoE in the matrix). Provider pin `["DeepInfra","Together"]` + `reasoning.enabled=false` + concurrency cap 4 in [`scripts/run_eval_matrix.sh`](./scripts/run_eval_matrix.sh) avoids the vLLM gemma4 parser pad-bug under parallel load. `:free` variant intentionally excluded. |
 
 Extended protocol (**I0–I3** integration vs **E0–E3** evaluation: pre-flight,
-16-cell smoke, optional C4 **I3** pipeline smoke, C4 val train / snapshot /
+16-cell smoke, optional C3 **I3** pipeline smoke, C3 val train / snapshot /
 freeze / test submit, resume, triage): see [`docs/handoffs/HANDOFF_TEST_EVAL.md`](./docs/handoffs/HANDOFF_TEST_EVAL.md).
 Per-model provider routing is declared in
 [`src/models/models.py`](./src/models/models.py) `_register_openrouter_models`.

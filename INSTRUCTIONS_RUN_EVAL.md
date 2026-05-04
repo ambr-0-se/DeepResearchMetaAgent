@@ -96,7 +96,7 @@ python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl --html
 python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl --detail
 
 # With explicit config for richer metadata
-python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl --html --config configs/config_gaia_adaptive_qwen.py
+python scripts/analyze_results.py workdir/<run_dir>/dra.jsonl --html --config configs/config_gaia_c1_qwen_local.py
 ```
 
 ## Monitoring a Running Job
@@ -117,7 +117,7 @@ wc -l workdir/gaia_eval_<JOBID>_*/dra.jsonl
 
 ## Configuration
 
-The eval config is `configs/config_gaia_adaptive_qwen.py`. Key settings:
+The eval config is `configs/config_gaia_c1_qwen_local.py`. Key settings:
 
 | Setting | Value | Description |
 |---------|-------|-------------|
@@ -130,11 +130,11 @@ The eval config is `configs/config_gaia_adaptive_qwen.py`. Key settings:
 ### Overriding Config at Runtime
 ```bash
 # Limit to N questions (useful for quick tests)
-python examples/run_gaia.py --config configs/config_gaia_adaptive_qwen.py \
+python examples/run_gaia.py --config configs/config_gaia_c1_qwen_local.py \
     --cfg-options max_samples=5
 
 # Change tag (affects output directory)
-python examples/run_gaia.py --config configs/config_gaia_adaptive_qwen.py \
+python examples/run_gaia.py --config configs/config_gaia_c1_qwen_local.py \
     --cfg-options tag=my_experiment
 ```
 

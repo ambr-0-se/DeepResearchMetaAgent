@@ -187,4 +187,6 @@ workdir/
 
 # Agent-downloaded artifacts (GAIA benchmark byproducts — root level only)
 /*.pdf
+# Browser saves where the filename includes a literal ?query=… (not matched by /*.pdf)
+/*[?]*
 /slurm-*.out

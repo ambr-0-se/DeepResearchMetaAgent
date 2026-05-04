@@ -414,7 +414,7 @@ async def answer_single_question(config, example):
     # itself remains in scope here (it was assigned by `create_agent(config)`
     # inside the retry loop, not to the abandoned task), so its
     # `review_step._metrics` dict is still accessible. Defensive getattr so
-    # that C0/C2 (review_step=None) and any pre-agent crash produce None
+    # that C0/C1 (review_step=None) and any pre-agent crash produce None
     # cleanly without breaking the row write.
     review_metrics = None
     try:

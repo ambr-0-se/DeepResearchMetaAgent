@@ -124,6 +124,17 @@ task_instruction: |-
       - If not, use `deep_researcher_agent` for broader web search and synthesis.
   * Run verification when the task requires it; prioritize correctness.
   * Use `planning_tool` to record your plan (`create` with steps). When observations change your next steps, use `update` to revise the plan and `mark_step` to track progress.
+  {%- if skill_registry_block %}
+
+  **Skill library (available before you start)**
+  {{ skill_registry_block }}
+
+  * Each listed skill is a tested pattern for a specific situation. Before writing your plan, scan the list and decide whether ANY skill applies to this task.
+  * To use a skill, call `activate_skill` with the exact `skill_name` and a one-sentence `reason` explaining why it applies. The tool returns the skill's full workflow as its output; follow it step by step.
+  * You can activate multiple skills if several apply (e.g. one for decomposition + one for failure recovery).
+  * Skills are orchestration patterns for the planner. The sub-agents have their own separate skill libraries injected at delegation time — you do NOT need to pass skill content through to them.
+  * If no skill in the registry fits, proceed with your own plan. Not every task matches a pre-seeded skill.
+  {%- endif %}
 
   **After each team member response — an automatic REVIEW is appended**
   * A REVIEW component runs automatically after every sub-agent delegation and appends a `[REVIEW]` block to the observation. The block looks like this:

@@ -1,5 +1,5 @@
 """
-Tests for the skill registry (condition C4).
+Tests for the skill registry (condition C3 skill library).
 
 Covers:
 - Skill.from_skill_md parsing (valid + malformed)

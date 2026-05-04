@@ -24,7 +24,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIGS_DIR = REPO_ROOT / "configs"
 
-CONDITIONS = ("c0", "c2", "c3", "c4")
+CONDITIONS = ("c0", "c1", "c2", "c3")
 
 # Expected per-model concurrency in the generated configs as of 2026-04-22.
 # Update this when the MODELS tuple in `scripts/gen_eval_configs.py` changes.

@@ -44,7 +44,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
     - State management for task-scoped changes
 
     Note: a structural REVIEW step (automatic post-delegation assessment) is added by the
-    C3 variant via the optional `review_step` component; see `src/meta/review_step.py`.
+    C2 variant via the optional `review_step` component; see `src/meta/review_step.py`.
 
     All modifications made during a task are automatically reset after task completion,
     ensuring isolation between tasks.
@@ -70,8 +70,8 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
             config: Agent configuration. Two optional flags selected by
                 the experimental condition:
                 - `enable_review` (bool, default False): if True, a
-                  `ReviewStep` is built and attached; this is the C3 flag.
-                - `enable_skills` (bool, default False): reserved for C4.
+                  `ReviewStep` is built and attached; this is the C2 flag.
+                - `enable_skills` (bool, default False): reserved for C3.
             tools: List of tools for the agent
             model: LLM model to use
             prompt_templates: Optional custom prompt templates
@@ -100,9 +100,9 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         self._add_adaptive_tools()
 
         # Optional compositional components, selected by config:
-        # C2 -> both None (reactive tools only)
-        # C3 -> review_step is built; skill_registry is None
-        # C4 -> both are built
+        # C1 -> both None (reactive tools only)
+        # C2 -> review_step is built; skill_registry is None
+        # C3 -> both are built
         self.review_step: Optional[ReviewStep] = review_step or self._build_review_step_from_config()
         self.skill_registry: Optional[SkillRegistry] = (
             skill_registry or self._build_skill_registry_from_config()
@@ -113,7 +113,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         if self.skill_registry is not None:
             self._install_skill_tools()
 
-        # Skill extractor (optional — C4 training mode). Frozen-library
+        # Skill extractor (optional — C3 training mode). Frozen-library
         # eval mode leaves this as None; extraction runs only when the
         # `enable_skill_extraction` flag is set.
         self.skill_extractor: Optional[SkillExtractor] = None
@@ -125,7 +125,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
             )
             logger.log(
                 "[AdaptivePlanningAgent] enable_skill_extraction=True; "
-                "SkillExtractor active (C4 training mode)",
+                "SkillExtractor active (C3 training mode)",
                 level=LogLevel.INFO,
             )
 
@@ -144,7 +144,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         """
         Consult `self.config.enable_review` and build a ReviewStep if set.
 
-        Returns None when the flag is missing or False, so C0/C2 behaviour
+        Returns None when the flag is missing or False, so C0/C1 behaviour
         is unchanged. The `config` object may be an mmengine Config
         (attribute access) or a plain dict-like; we use `getattr` with a
         default so both work.
@@ -153,7 +153,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         if not enable_review:
             return None
         logger.log(
-            "[AdaptivePlanningAgent] enable_review=True; building ReviewStep (C3)",
+            "[AdaptivePlanningAgent] enable_review=True; building ReviewStep (C2)",
             level=LogLevel.INFO,
         )
         return ReviewStep(parent_agent=self)
@@ -162,7 +162,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         """
         Consult `self.config.enable_skills` and build a SkillRegistry if set.
 
-        Returns None when the flag is missing or False, so C0/C2/C3 behaviour
+        Returns None when the flag is missing or False, so C0/C1/C2 behaviour
         is unchanged. Reads `config.skills_dir` for the on-disk location;
         defaults to `src/skills`.
         """
@@ -173,11 +173,11 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         skills_path = Path(skills_dir)
         logger.log(
             f"[AdaptivePlanningAgent] enable_skills=True; building SkillRegistry "
-            f"at {skills_path} (C4)",
+            f"at {skills_path} (C3)",
             level=LogLevel.INFO,
         )
         # Per-run seeding: when `skills_dir` is a fresh run directory
-        # (e.g. `workdir/gaia_c4_<model>_<run_id>/skills`), the canonical
+        # (e.g. `workdir/gaia_c3_<model>_<run_id>/skills`), the canonical
         # seed set from `src/skills/` is copied in on first construction.
         # A marker inside `skills_dir` makes subsequent constructions
         # (resume, same run id) a no-op so learned skills survive.
@@ -239,7 +239,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         time.
 
         Called before every `run()` (see the override below) because:
-        - C4 training extracts new skills at task end, so the registry
+        - C3 training extracts new skills at task end, so the registry
           contents change between tasks.
         - The block is not refreshed mid-task — within a single task the
           consumer sees a fixed snapshot, avoiding distracting registry
@@ -314,17 +314,17 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         self._consecutive_subagent_calls: tuple[str, int] = ("", 0)
         self._planner_note_emitted_for: set[str] = set()
 
-        # C3/C4: initialise the ReviewStep per-task ledger. Idempotent;
+        # C2/C3: initialise the ReviewStep per-task ledger. Idempotent;
         # clears any stale chain/blocklist/metrics state and captures the
         # original user task for inclusion in the reviewer's context.
-        # No-op under C0/C2 (review_step is None). Metrics extracted by
+        # No-op under C0/C1 (review_step is None). Metrics extracted by
         # run_gaia.py at the caller level after run() returns (see plan
         # §Layer 3 — finally-branch is unreliable under P1 semantics, so
         # we do NOT add a reset here in run()'s finally).
         if self.review_step is not None:
             self.review_step.on_task_start(task)
 
-        # C4: refresh skill registry blocks so newly-extracted skills from
+        # C3: refresh skill registry blocks so newly-extracted skills from
         # prior tasks are visible to the planner and sub-agents this run.
         # Must happen AFTER _store_original_state (which captures tools)
         # and BEFORE super().run() (which renders task_instruction).
@@ -347,7 +347,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
                 max_steps=max_steps,
             )
 
-            # C4 training: extract a new skill from this trajectory if the
+            # C3 training: extract a new skill from this trajectory if the
             # extractor is enabled and the pipeline decides it's worthwhile.
             # Runs BEFORE _reset_to_original_state so self.memory still has
             # the full trajectory. Never raises — returns None on failure.
@@ -369,7 +369,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         Gather the inputs the SkillExtractor needs and invoke it.
 
         Pulls the last REVIEW verdict/root-cause from the most recent
-        ActionStep (if REVIEW is active — C3+). Passes `task_success=None`
+        ActionStep (if REVIEW is active — C2+). Passes `task_success=None`
         because the planning agent has no access to a ground-truth scorer
         at this point; the extractor will fall back to the REVIEW verdict
         as its success signal.
@@ -380,7 +380,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         last_review_root_cause: Optional[str] = None
 
         # Walk memory.steps backwards for the most recent action step
-        # with an attached review_result (set by _post_action_hook under C3).
+        # with an attached review_result (set by _post_action_hook under C2).
         for step in reversed(getattr(self.memory, "steps", [])):
             review_result = getattr(step, "review_result", None)
             if review_result is not None:
@@ -428,10 +428,10 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
     
     async def _post_action_hook(self, memory_step: ActionStep) -> None:
         """
-        Fire the structural REVIEW step (C3) after each action step.
+        Fire the structural REVIEW step (C2) after each action step.
 
         Overrides the no-op hook in `AsyncMultiStepAgent`. If
-        `self.review_step` is None (conditions C0/C2), this is effectively
+        `self.review_step` is None (conditions C0/C1), this is effectively
         still a no-op — matching baseline behaviour.
 
         ReviewStep may:
@@ -447,7 +447,9 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
         matches the contract documented on `AsyncMultiStepAgent._post_action_hook`.
         """
         # Phase 1 (2026-04-26): repeated-delegation guard. Independent of
-        # ReviewStep — fires under C2/C3/C4 alike (anywhere this hook runs).
+        # ReviewStep — fires under C2/C3 alike (when review_step is non-None),
+        # not under C1 (review disabled). The delegation counter below runs for
+        # all adaptive conditions C1+ (anywhere this hook runs).
         # Counts consecutive delegations to the same sub-agent in this task;
         # once the threshold is reached, injects a one-shot [PLANNER NOTE]
         # into observations so the next THINK sees the warning.
@@ -475,7 +477,7 @@ class AdaptivePlanningAgent(AdaptiveMixin, PlanningAgent):
             existing + ("\n\n" if existing else "") + f"[REVIEW]\n{rendered}"
         )
         # Attach the raw ReviewResult for downstream analysis (e.g. skill
-        # extraction in Phase 2 / C4). Uses setattr because ActionStep is
+        # extraction in Phase 2 / C3). Uses setattr because ActionStep is
         # a dataclass without this field defined.
         setattr(memory_step, "review_result", review_result)
 

@@ -28,7 +28,7 @@ tag = f"gaia_c3_qwen_{_RUN_ID}"
 # ---- model overrides --------------------------------------------------------
 
 # All four agents use the SAME model_id under the single-model evaluation
-# constraint. C3/C4 reviewer + skill extractor inherit this id via the planner.
+# constraint. C2/C3 reviewer + skill extractor inherit this id via the planner.
 
 deep_researcher_agent_config = dict(
     type="deep_researcher_agent",
@@ -55,10 +55,7 @@ deep_analyzer_agent_config = dict(
 browser_use_agent_config = dict(
     type="browser_use_agent",
     name="browser_use_agent",
-    # Phase 1 (2026-04-26): see config_gaia_c2_qwen.py — same override.
-    # qwen3.6-plus on OR has 67% empty-content rate in browser_use raw
-    # mode; qwen3-next-80b-a3b-instruct is project-verified working.
-    model_id='or-qwen3-next-80b-a3b-instruct',
+    model_id='or-qwen3.6-plus',
     description="A browser use agent that can search relevant web pages and interact with them.",
     max_steps=5,
     template_path="src/agent/browser_use_agent/prompts/browser_use_agent.yaml",
@@ -71,8 +68,8 @@ planning_agent_config = dict(
     name="adaptive_planning_agent",
     model_id='or-qwen3.6-plus',
     description=(
-        "An adaptive planning agent with reactive diagnose/modify tools "
-        "plus a structural REVIEW step (condition C3)."
+        "An adaptive planning agent with reactive diagnose/modify tools, a "
+        "structural REVIEW step, and a cross-task skill library (C3)."
     ),
     max_steps=25,
     template_path="src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c3.yaml",
@@ -80,6 +77,9 @@ planning_agent_config = dict(
     tools=["planning_tool"],
     managed_agents=["deep_analyzer_agent", "browser_use_agent", "deep_researcher_agent"],
     enable_review=True,
+    enable_skills=True,
+    enable_skill_extraction=True,
+    skills_dir=f"workdir/{tag}/skills",
 )
 agent_config = planning_agent_config
 
@@ -109,15 +109,13 @@ deep_analyzer_tool_config = dict(
 # dominated by stuck-loop waste (CAPTCHA retries, cookie-modal fights,
 # infinite scrolls). A single stuck 50-step invocation burns ~$0.10-1.00
 # and 8-12 min wall. Applied uniformly across all 16 cells so
-# C0/C2/C3/C4 deltas aren't contaminated by per-condition browser budget
+# C0/C1/C2/C3 deltas aren't contaminated by per-condition browser budget
 # differences. For local smoke tests, override via --cfg-options
 # (auto_browser_use_tool_config.max_steps=8). See
 # docs/handoffs/HANDOFF_TEST_EVAL.md "Browser step cap policy".
 auto_browser_use_tool_config = dict(
     type="auto_browser_use_tool",
-    # Phase 1 (2026-04-26): see browser_use_agent_config above. Both
-    # slots must point at the same model.
-    model_id='langchain-or-qwen3-next-80b-a3b-instruct',
+    model_id='langchain-or-qwen3.6-plus',
     max_steps=15,
 )
 
@@ -132,6 +130,6 @@ concurrency = 8
 # Per-question wall clock timeout (secs). Pinned 2026-04-20 after the
 # E0 v3 resume surfaced an asymmetry: training had been running at 1800s
 # but test-time configs silently fell back to the run_gaia.py default of
-# 1200s, biasing the C0-C3 vs C4 ablation at test time. Now uniformly
+# 1200s, biasing the C0-C2 vs C3 ablation at test time. Now uniformly
 # 1800s across training (E0) and test (E3) for every (model, condition).
 per_question_timeout_secs = 1800

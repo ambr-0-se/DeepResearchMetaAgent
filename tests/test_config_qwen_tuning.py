@@ -1,6 +1,6 @@
 """Pass 2 regression test: Qwen-4B (vLLM) config tuning.
 
-Guards the three Pass 2 values on `configs/config_gaia_adaptive_qwen.py`:
+Guards the three Pass 2 values on `configs/config_gaia_c1_qwen_local.py`:
 - Sub-agent max_steps raised from 3/3/5 to 7/7/7 (was the cap Qwen-4B kept
   hitting — 56+ AgentMaxStepsError lines in the 4.98% test-set run).
 - context_prune_threshold_ratio=0.75 on every agent config dict (earlier
@@ -16,7 +16,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CFG = ROOT / "configs/config_gaia_adaptive_qwen.py"
+CFG = ROOT / "configs/config_gaia_c1_qwen_local.py"
 
 EXPECTED_MAX_STEPS = {
     "deep_researcher_agent_config": 7,

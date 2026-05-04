@@ -12,7 +12,7 @@ After evaluation, export the submission file:
     python scripts/export_gaia_submission.py workdir/<run_dir>/dra.jsonl
 """
 
-_base_ = './config_gaia_adaptive_qwen.py'
+_base_ = './config_gaia_c1_qwen_local.py'
 
 tag = "gaia_test_qwen"
 

@@ -1,17 +1,20 @@
 """
-Configuration for AdaptivePlanningAgent with Qwen3-VL-4B-Instruct on vLLM.
+Configuration for AdaptivePlanningAgent with Qwen3-VL-4B-Instruct on vLLM (local).
+
+Extends configs/config_gaia_c1.py (reactive C1 stack) but overrides all models
+to Qwen (vLLM). Fixed tag `gaia_c1_qwen_local` — distinct from matrix API configs
+`config_gaia_c1_qwen.py`.
 
 Usage:
-    # Run evaluation with adaptive agent using Qwen
-    python examples/run_gaia.py --config configs/config_gaia_adaptive_qwen.py
-    
+    python examples/run_gaia.py --config configs/config_gaia_c1_qwen_local.py
+
     # Compare with baseline
-    python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_adaptive_qwen/dra.jsonl
+    python scripts/compare_results.py workdir/gaia/dra.jsonl workdir/gaia_c1_qwen_local/dra.jsonl
 """
 
-_base_ = './config_gaia.py'
+_base_ = './config_gaia_c1.py'
 
-tag = "gaia_adaptive_qwen"
+tag = "gaia_c1_qwen_local"
 
 dataset = dict(
     type="gaia_dataset",

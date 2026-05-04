@@ -4,7 +4,7 @@ Tests for per-task lifecycle + metric emission (commits 4 + 5).
 Covers:
 - on_task_start idempotence and state clearing
 - Metric extraction path from `agent.review_step._metrics`
-- C0/C2 guard: review_step is None → extraction returns None cleanly
+- C0/C1 guard: review_step is None → extraction returns None cleanly
 - Simulation of post-timeout extraction (agent object survives after
   `asyncio.TimeoutError`, so _metrics is still accessible)
 """
@@ -71,8 +71,8 @@ class TestMetricExtraction:
             return None
         return None
 
-    def test_c0_c2_guard_returns_none(self):
-        """Agents built under C0/C2 have review_step=None."""
+    def test_c0_c1_guard_returns_none(self):
+        """Agents built under C0/C1 have review_step=None."""
         agent = MagicMock()
         agent.review_step = None
         assert self._extract(agent) is None
@@ -81,7 +81,7 @@ class TestMetricExtraction:
         """If agent is None (e.g. create_agent raised), extraction is safe."""
         assert self._extract(None) is None
 
-    def test_c3_c4_returns_dict_matching_metric_schema(self):
+    def test_c2_c3_returns_dict_matching_metric_schema(self):
         agent = MagicMock()
         rs = ReviewStep(_fake_parent())
         rs.on_task_start("task")

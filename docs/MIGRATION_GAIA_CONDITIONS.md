@@ -29,7 +29,7 @@ Config flags on the adaptive planner:
 
 | Old | New |
 |-----|-----|
-| `configs/config_gaia_adaptive.py` | Still exists as shared adaptive base; **per-condition entrypoints** are `config_gaia_c1.py`, `config_gaia_c2.py`, `configs/config_gaia_c3.py` |
+| `configs/config_gaia_adaptive.py` | **Stub:** inherits `config_gaia_c1.py` only for backward-compatible `--config configs/config_gaia_adaptive.py` — **prefer `config_gaia_c1.py`** in new work |
 | `configs/config_gaia_adaptive_qwen.py` | `configs/config_gaia_c1_qwen_local.py` (local/Qwen-focused C1) |
 | `configs/config_gaia_c4.py` | **Removed** — use `config_gaia_c3.py` |
 | `configs/config_gaia_c4_{gemma,kimi,mistral,qwen}.py` | `configs/config_gaia_c1_{gemma,kimi,mistral,qwen}.py` (same variants, **C1** slot) |

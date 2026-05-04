@@ -1,5 +1,7 @@
 # Running GAIA Evaluation on GPU Node
 
+**Experimental conditions:** the adaptive matrix is **C0** (baseline) and **C1 / C2 / C3** (reactive → +REVIEW → +skills). If you have older notes or jobs that reference **C2/C3/C4** for that stack, read **[docs/MIGRATION_GAIA_CONDITIONS.md](./docs/MIGRATION_GAIA_CONDITIONS.md)** before editing Slurm `TAG`s or config paths.
+
 ## Quick Start
 
 ### Single-question test (sanity check)

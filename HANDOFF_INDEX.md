@@ -9,6 +9,8 @@ original problem, changes, test commands, and validation criteria.
 > index stays at the repo root because the operator is trained to open it
 > first.
 
+**Label migration (May 2026):** older notes and external docs may still say **C2/C3/C4** for the reactive → REVIEW → skills progression. The repo standard is **C1/C2/C3** (`C0` baseline unchanged). See **[docs/MIGRATION_GAIA_CONDITIONS.md](docs/MIGRATION_GAIA_CONDITIONS.md)**.
+
 ---
 
 ## Pending Handoffs

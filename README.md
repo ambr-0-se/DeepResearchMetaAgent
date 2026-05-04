@@ -38,6 +38,7 @@ The system adopts a two-layer structure:
 * All architectural modifications are task-scoped and reset after each task.
 * **C2**: adds a structural REVIEW step — an automatic post-delegation assessment that produces a structured verdict with a root-cause taxonomy and a recommended `next_action` (proceed / retry / modify_agent / escalate). The review apparatus is sealed from `modify_subagent` to prevent reward hacking. See `configs/config_gaia_c2.py`.
 * **C3**: adds a cross-task skill library following the [agentskills.io](https://agentskills.io/specification) spec. Each agent (planner and sub-agents) gets a consumer-scoped `activate_skill` tool. Seven pre-seeded skills ship with the repo under `src/skills/`; every C3 invocation copies them into a per-run `workdir/gaia_c3_<model>_<DRA_RUN_ID>/skills/` (see `src/skills/_seed.py`) so parallel runs and repeated runs never collide. An end-of-task `SkillExtractor` proposes new skills during training runs (with an entity blocklist + LLM-judge dedup). Disable extraction via `enable_skill_extraction=False` for frozen-library evaluation. See `configs/config_gaia_c3.py` and `src/skills/`.
+* **Condition renumber (May 2026):** older checkouts used **C2/C3/C4** for the same stack (reactive → REVIEW → skills). The repo now uses **C1/C2/C3** for those three levels (`C0` unchanged). Config filenames, `workdir/` tags, and Slurm/matrix scripts were updated accordingly — see **[docs/MIGRATION_GAIA_CONDITIONS.md](./docs/MIGRATION_GAIA_CONDITIONS.md)**.
 
 ### 2. Specialized Lower-Level Agents
 

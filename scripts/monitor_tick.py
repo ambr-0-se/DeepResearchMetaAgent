@@ -5,6 +5,10 @@ E0 v3 monitor tick — comprehensive per-fire assessment.
 Emits a structured multi-line report to stdout AND appends a snapshot to
 `workdir/E0_MONITORING_STATE.jsonl` so deltas are computable across fires.
 
+Workdir paths for DRA_RUN_ID=20260420_E0v3 use the legacy tag `gaia_c4_*`
+on disk for runs completed before the paper/code rename (paper condition C3).
+New C3 runs use `workdir/gaia_c3_*`.
+
 READ-ONLY: this script never edits source/config/tests, never kills procs,
 never runs git mutating commands. All it does is read + append-log.
 
@@ -126,7 +130,7 @@ def _recent_activity(m: str) -> str:
 
 def _proc_count() -> int:
     out = subprocess.getoutput(
-        "pgrep -fl 'run_gaia.py --config configs/config_gaia_c4_' 2>/dev/null"
+        "pgrep -fl 'run_gaia.py --config configs/config_gaia_c3_' 2>/dev/null"
     )
     return sum(1 for l in out.splitlines() if "run_gaia.py" in l)
 
@@ -199,7 +203,7 @@ def snapshot() -> dict:
         }
 
     # Cross-model shared-wrong task_ids — the "inherently hard" set and a
-    # direct signal for the C4 skill library's value add.
+    # direct signal for the C3 skill library's value add.
     if len(MODELS) >= 2:
         shared = set.intersection(*wrong_task_ids_by_model.values()) if wrong_task_ids_by_model else set()
         snap["shared_wrong_task_ids"] = sorted(shared)
@@ -304,14 +308,14 @@ def main() -> int:
                 print(f"           + {e!r}")
         print(f"         last_activity: {cur['recent_activity']}")
 
-    # Cross-model analysis — the C4 skill-library-target set.
+    # Cross-model analysis — the C3 skill-library-target set.
     shared = snap.get("shared_wrong_task_ids", [])
     if shared:
         prev_shared = set(prev.get("shared_wrong_task_ids", []) if prev else [])
         new_shared = [t for t in shared if t not in prev_shared]
         print(
             f"cross-model: {len(shared)} task_ids wrong under BOTH models "
-            f"(C4 skill-library target set){'  +' + str(len(new_shared)) + ' new' if new_shared else ''}"
+            f"(C3 skill-library target set){'  +' + str(len(new_shared)) + ' new' if new_shared else ''}"
         )
         for tid in shared[:5]:
             print(f"           {tid[:8]}")

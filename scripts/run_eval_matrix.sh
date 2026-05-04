@@ -2,23 +2,23 @@
 # Parallel GAIA evaluation runner.
 #
 # DEFAULT MATRIX (2026-04-19 onward): **2 models × 4 conditions = 8 cells**
-# (mistral / qwen × C0/C2/C3/C4). Kimi K2.5 dropped first (Moonshot AI
+# (mistral / qwen × C0/C1/C2/C3). Kimi K2.5 dropped first (Moonshot AI
 # SSE streaming stalls), then Gemma-4 31B (DeepInfra p95 per-step wall
 # 4-5× slower than Mistral/Qwen → 12% valid-row rate in E0). Both configs
 # remain in the repo — pass `model=kimi` or `model=gemma` explicitly to
 # re-enable.
 #
 # Track naming (see docs/handoffs/HANDOFF_TEST_EVAL.md): **`smoke`** = integration
-# **I2** (12-cell default validation matrix); **`full`** (default test split) =
-# evaluation **E3** submission when scoring the official matrix. C4 val
-# training before E3 is **E0** (`DATASET_SPLIT=validation`, `full '' c4`).
+# **I2** (8-cell default validation matrix when using 2 models); **`full`** (default test split) =
+# evaluation **E3** submission when scoring the official matrix. C3 val
+# training before E3 is **E0** (`DATASET_SPLIT=validation`, `full '' c3`).
 #
 # Strategy: 4 model streams run in parallel (different API keys, no rate-limit
 # contention between streams). WITHIN each model stream, the four conditions
-# C0/C2/C3/C4 run sequentially because they share one API key per model.
+# C0/C1/C2/C3 run sequentially because they share one API key per model.
 #
 # Usage:
-#   # Smoke test — default 3 validation-split Q/cell, all 12 cells (3 model streams in parallel):
+#   # Smoke test — default 3 validation-split Q/cell, all 8 cells (2 model streams in parallel):
 #   bash scripts/run_eval_matrix.sh smoke
 #
 #   # Include Kimi (opt-in — slow/flaky on OR):
@@ -43,17 +43,17 @@
 #   DATASET_SPLIT — **REQUIRED** in `full` mode. Must be explicitly set to one of
 #                   {`validation`, `test`}; no implicit default. The script refuses
 #                   to launch otherwise. Rules (enforced, not advisory):
-#                     - If C4 is among the selected conditions → must be
-#                       `validation` (C4 runs in extraction-on / training mode here;
+#                     - If C3 is among the selected conditions → must be
+#                       `validation` (C3 runs in extraction-on / training mode here;
 #                       training on `test` would leak the test set into the learned
 #                       skill library and invalidate every downstream test score).
-#                       Frozen-C4 test evaluation does not go through this runner —
+#                       Frozen-C3 test evaluation does not go through this runner —
 #                       see `docs/handoffs/HANDOFF_TEST_EVAL.md` §E2/E3.
-#                     - If C4 is NOT among the selected conditions (`c0` | `c2` | `c3`
+#                     - If C3 is NOT among the selected conditions (`c0` | `c1` | `c2`
 #                       alone) → must be `test` (all reported evaluation scores live
 #                       on the test split).
-#                   Rationale: the two catastrophic misconfigurations ("train C4 on
-#                   test" and "score C0–C3 on validation") are structurally
+#                   Rationale: the two catastrophic misconfigurations ("train C3 on
+#                   test" and "score C0–C2 on validation") are structurally
 #                   indistinguishable from valid invocations except for this env
 #                   var, so the operator must commit to a split before the job
 #                   starts spending money. Smoke mode is unaffected — it always
@@ -69,14 +69,14 @@
 #                       tokens non-deterministically under parallel load).
 #
 # Parallelism: one bash process per model (mistral / kimi / qwen / gemma) runs in the
-# background; conditions C0→C2→C3→C4 are sequential within a model. Four models ⇒ four
+# background; conditions C0→C1→C2→C3 are sequential within a model. Four models ⇒ four
 # parallel streams whenever all models are selected.
 
 set -uo pipefail   # -e omitted on purpose: a failure in one cell shouldn't kill others
 
 MODE="${1:-smoke}"            # smoke | full
 ONLY_MODEL="${2:-}"           # mistral | kimi | qwen | gemma | '' (all)
-ONLY_CONDITION="${3:-}"       # c0 | c2 | c3 | c4 | '' (all)
+ONLY_CONDITION="${3:-}"       # c0 | c1 | c2 | c3 | '' (all)
 
 PYTHON="${PYTHON:-python}"
 LIMIT="${LIMIT:-3}"
@@ -98,7 +98,7 @@ fi
 
 # Shared run id for every cell in this invocation. Every generated config
 # reads this env var (with a fresh-timestamp fallback at config load) to
-# stamp its output directory. Exporting it here guarantees all 12 cells of
+# stamp its output directory. Exporting it here guarantees all cells of
 # one default matrix invocation share a single RUN_ID so results correlate cleanly.
 # Without it each cell would generate its own timestamp. Operators resume
 # a prior run by exporting DRA_RUN_ID before invocation.
@@ -109,7 +109,7 @@ export DRA_RUN_ID="${DRA_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 # during E0 training (58-min post-timeout cleanup deadlocks, 9% effective
 # throughput across 5.8h). Provider-side reliability issues — outside our
 # code's control — would have carried into E3 test scoring and contaminated
-# the C0/C2/C3/C4 ablation deltas.
+# the C0/C1/C2/C3 ablation deltas.
 #
 # Gemma-4 31B via OpenRouter → DeepInfra excluded 2026-04-19 as well.
 # Same class of provider-side issue: p95 per-step wall 660s (vs. Mistral
@@ -121,7 +121,7 @@ export DRA_RUN_ID="${DRA_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 # Configs for both excluded models remain in the repo; opt in via
 # explicit `model=kimi` or `model=gemma` arguments.
 ALL_MODELS=(mistral qwen)
-ALL_CONDITIONS=(c0 c2 c3 c4)
+ALL_CONDITIONS=(c0 c1 c2 c3)
 
 [[ -n "$ONLY_MODEL" ]] && ALL_MODELS=("$ONLY_MODEL")
 [[ -n "$ONLY_CONDITION" ]] && ALL_CONDITIONS=("$ONLY_CONDITION")
@@ -129,16 +129,16 @@ ALL_CONDITIONS=(c0 c2 c3 c4)
 # --- Full-mode split mandate -------------------------------------------------
 # `DATASET_SPLIT` is required and must match the condition set. This block
 # enforces the two invariants the eval protocol depends on:
-#   (1) never train on test   — C4 (extraction-on here) ⇒ split must be validation
-#   (2) always score on test  — c0 | c2 | c3           ⇒ split must be test
+#   (1) never train on test   — C3 (extraction-on here) ⇒ split must be validation
+#   (2) always score on test  — c0 | c1 | c2           ⇒ split must be test
 # There is intentionally NO escape hatch: both misconfigurations silently
 # invalidate the entire experimental matrix, and neither is recoverable after
 # the run has spent compute. Smoke mode is exempt (always validation + capped
 # via max_samples).
 if [[ "$MODE" == "full" ]]; then
-  c4_in_run=0
+  c3_in_run=0
   for _c in "${ALL_CONDITIONS[@]}"; do
-    [[ "$_c" == "c4" ]] && c4_in_run=1
+    [[ "$_c" == "c3" ]] && c3_in_run=1
   done
 
   if [[ -z "${DATASET_SPLIT:-}" ]]; then
@@ -146,8 +146,8 @@ if [[ "$MODE" == "full" ]]; then
       echo "ERROR: DATASET_SPLIT is not set."
       echo ""
       echo "Full-mode runs must commit to a split explicitly. Required values:"
-      echo "  - C4 in conditions (training)  → export DATASET_SPLIT=validation"
-      echo "  - C0/C2/C3 alone (evaluation)  → export DATASET_SPLIT=test"
+      echo "  - C3 in conditions (training)  → export DATASET_SPLIT=validation"
+      echo "  - C0/C1/C2 alone (evaluation)  → export DATASET_SPLIT=test"
       echo ""
       echo "Selected conditions: ${ALL_CONDITIONS[*]}"
       echo "See docs/handoffs/HANDOFF_TEST_EVAL.md §E0 / §E3."
@@ -163,29 +163,29 @@ if [[ "$MODE" == "full" ]]; then
       ;;
   esac
 
-  if [[ "$c4_in_run" == "1" && "$DATASET_SPLIT" != "validation" ]]; then
+  if [[ "$c3_in_run" == "1" && "$DATASET_SPLIT" != "validation" ]]; then
     {
-      echo "ERROR: C4 is in the selected conditions (${ALL_CONDITIONS[*]}) but DATASET_SPLIT=$DATASET_SPLIT."
+      echo "ERROR: C3 is in the selected conditions (${ALL_CONDITIONS[*]}) but DATASET_SPLIT=$DATASET_SPLIT."
       echo ""
-      echo "C4 runs with skill extraction ON via this matrix runner (training mode)."
+      echo "C3 runs with skill extraction ON via this matrix runner (training mode)."
       echo "Training on the test split leaks test content into the learned skill"
       echo "library and invalidates every downstream test score."
       echo ""
       echo "Fix one of:"
-      echo "  (a) export DATASET_SPLIT=validation  # if this is an E0 C4 training run"
-      echo "  (b) drop c4 from the conditions and rerun C0/C2/C3 on test"
-      echo "      (frozen C4 test evaluation goes through examples/run_gaia.py"
+      echo "  (a) export DATASET_SPLIT=validation  # if this is an E0 C3 training run"
+      echo "  (b) drop c3 from the conditions and rerun C0/C1/C2 on test"
+      echo "      (frozen C3 test evaluation goes through examples/run_gaia.py"
       echo "       with agent_config.enable_skill_extraction=False overrides —"
       echo "       see HANDOFF_TEST_EVAL.md §E2/§E3, not this script)"
     } >&2
     exit 2
   fi
 
-  if [[ "$c4_in_run" == "0" && "$DATASET_SPLIT" != "test" ]]; then
+  if [[ "$c3_in_run" == "0" && "$DATASET_SPLIT" != "test" ]]; then
     {
-      echo "ERROR: Conditions ${ALL_CONDITIONS[*]} do not include C4 but DATASET_SPLIT=$DATASET_SPLIT."
+      echo "ERROR: Conditions ${ALL_CONDITIONS[*]} do not include C3 but DATASET_SPLIT=$DATASET_SPLIT."
       echo ""
-      echo "Reported evaluation scores are on the test split only. Running C0/C2/C3"
+      echo "Reported evaluation scores are on the test split only. Running C0/C1/C2"
       echo "at full scale on validation burns budget without producing a submittable"
       echo "number."
       echo ""
@@ -315,6 +315,6 @@ echo ""
 echo "All streams finished. Per-stream logs in $LOG_DIR/."
 echo "Results:"
 echo "  All cells: workdir/gaia_<cond>_<model>_${DRA_RUN_ID}/dra.jsonl"
-echo "  C4 skills: workdir/gaia_c4_<model>_${DRA_RUN_ID}/skills/"
+echo "  C3 skills: workdir/gaia_c3_<model>_${DRA_RUN_ID}/skills/"
 echo "  Latest:    workdir/gaia_<cond>_<model>_latest  (symlink to most recent run)"
 exit "$fail"

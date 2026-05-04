@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Resume an in-flight E0 v3 C4 training run.
+# Resume an in-flight E0 v3 C3 (skill-library) training run.
 #
 # Why this wrapper exists:
 #   On 2026-04-20 a resume was attempted from a cold `nohup bash` shell
@@ -27,8 +27,8 @@
 # Preconditions:
 #   - `dra` conda env exists at /Users/ahbo/miniconda3/envs/dra/bin/python
 #     with `fastmcp`, `pandas`, `mmengine`, `crawl4ai` installed.
-#   - Existing workdir/gaia_c4_{mistral,qwen}_<DRA_RUN_ID>/dra.jsonl
-#     carries the rows to preserve.
+#   - Existing workdir/gaia_c3_{mistral,qwen}_<DRA_RUN_ID>/dra.jsonl, or legacy
+#     gaia_c4_* dirs (migrated to gaia_c3_* on first launch after the rename).
 #   - No other run_gaia.py / run_eval_matrix.sh procs alive.
 
 set -euo pipefail
@@ -75,11 +75,19 @@ echo "[resume_e0] DRA_RUN_ID: $DRA_RUN_ID"
 echo "[resume_e0] log:        $LOG"
 echo "[resume_e0] rows preserved:"
 for m in mistral qwen; do
-  f="workdir/gaia_c4_${m}_${DRA_RUN_ID}/dra.jsonl"
-  [ -f "$f" ] && printf "  %-8s %4s rows\n" "$m" "$(wc -l <"$f")" || printf "  %-8s no dra.jsonl yet\n" "$m"
+  w="workdir/gaia_c3_${m}_${DRA_RUN_ID}"
+  leg="workdir/gaia_c4_${m}_${DRA_RUN_ID}"
+  if [[ -f "${w}/dra.jsonl" ]]; then
+    f="${w}/dra.jsonl"
+  elif [[ -f "${leg}/dra.jsonl" ]]; then
+    f="${leg}/dra.jsonl"
+  else
+    f=""
+  fi
+  [ -n "$f" ] && printf "  %-8s %4s rows\n" "$m" "$(wc -l <"$f")" || printf "  %-8s no dra.jsonl yet\n" "$m"
 done
 
-# Target rows per model. E0 v3 methodology: 80 Qs per (model, C4) cell
+# Target rows per model. E0 v3 methodology: 80 Qs per (model, C3) cell
 # on the shuffled validation subsample.
 TARGET_PER_MODEL=80
 
@@ -96,7 +104,15 @@ TARGET_PER_MODEL=80
 #                              done_questions.
 LAUNCH_TS="$(date +%H%M%S)"
 for model in mistral qwen; do
-  dra_jsonl="workdir/gaia_c4_${model}_${DRA_RUN_ID}/dra.jsonl"
+  w="workdir/gaia_c3_${model}_${DRA_RUN_ID}"
+  leg="workdir/gaia_c4_${model}_${DRA_RUN_ID}"
+  if [[ -f "${w}/dra.jsonl" ]]; then
+    :
+  elif [[ -f "${leg}/dra.jsonl" ]]; then
+    echo "[resume_e0] migrating ${leg} -> ${w}" >&2
+    mv "$leg" "$w"
+  fi
+  dra_jsonl="workdir/gaia_c3_${model}_${DRA_RUN_ID}/dra.jsonl"
   done_rows=0
   [ -f "$dra_jsonl" ] && done_rows=$(wc -l <"$dra_jsonl" | tr -d ' ')
   remaining=$(( TARGET_PER_MODEL - done_rows ))
@@ -112,7 +128,7 @@ for model in mistral qwen; do
   PYTHON="$DRA_PY" \
   DRA_RESUME_PRESERVE_ALL=1 \
   FULL_CFG_OPTIONS="max_samples=${remaining} dataset.shuffle=True dataset.seed=42" \
-    nohup bash scripts/run_eval_matrix.sh full "$model" c4 >"$model_log" 2>&1 &
+    nohup bash scripts/run_eval_matrix.sh full "$model" c3 >"$model_log" 2>&1 &
   disown
   echo "[resume_e0] $model: launched, log=$model_log"
 done

@@ -160,7 +160,7 @@ echo "========================================"
 echo "Starting full GAIA evaluation (timeout: ${EVAL_TIMEOUT_SECS}s)..."
 echo "========================================"
 timeout $EVAL_TIMEOUT_SECS python examples/run_gaia.py \
-    --config configs/config_gaia_adaptive_qwen.py \
+    --config configs/config_gaia_c1_qwen_local.py \
     --cfg-options tag=$RUN_TAG
 
 EVAL_EXIT_CODE=$?

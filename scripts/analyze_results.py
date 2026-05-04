@@ -13,7 +13,7 @@ Usage:
     python scripts/analyze_results.py workdir/.../dra.jsonl --html
 
     # With explicit config for richer metadata
-    python scripts/analyze_results.py workdir/.../dra.jsonl --html --config configs/config_gaia_adaptive_qwen.py
+    python scripts/analyze_results.py workdir/.../dra.jsonl --html --config configs/config_gaia_c1_qwen_local.py
 
     # Per-question terminal detail
     python scripts/analyze_results.py workdir/.../dra.jsonl --detail

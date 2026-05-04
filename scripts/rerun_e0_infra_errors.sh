@@ -4,7 +4,7 @@
 # Pre-registered in docs/handoffs/HANDOFF_E0_V3_PHASE2_RERUN.md (commit 8f7cd17).
 # Applies the frozen eligibility regex to the target model's dra.jsonl,
 # backs up dra.jsonl + skills/, drops eligible rows, and re-launches
-# exactly those rows via run_eval_matrix.sh full <model> c4 with
+# exactly those rows via run_eval_matrix.sh full <model> c3 with
 # max_samples=N_infra (seed=42 shuffle invariant guarantees the
 # first-N-of-remaining slice = the dropped task_ids).
 #
@@ -13,7 +13,8 @@
 #     where model ∈ {mistral, qwen}
 #
 # Preconditions:
-#   - workdir/gaia_c4_<model>_<DRA_RUN_ID>/dra.jsonl has exactly 80 rows
+#   - workdir/gaia_c3_<model>_<DRA_RUN_ID>/dra.jsonl, or legacy gaia_c4_*
+#     (auto-renamed to gaia_c3_* on first resume after the condition rename)
 #   - No other run_eval_matrix / run_gaia proc is active on the same <model>
 #     (a run on a DIFFERENT model is fine — separate workdirs, separate streams)
 #
@@ -50,7 +51,17 @@ if ! "$DRA_PY" -c "import fastmcp, pandas, mmengine" >/dev/null 2>&1; then
 fi
 
 : "${DRA_RUN_ID:=20260420_E0v3}"
-WORKDIR="workdir/gaia_c4_${MODEL}_${DRA_RUN_ID}"
+WORKDIR="workdir/gaia_c3_${MODEL}_${DRA_RUN_ID}"
+LEGACY="workdir/gaia_c4_${MODEL}_${DRA_RUN_ID}"
+if [[ -f "${WORKDIR}/dra.jsonl" ]]; then
+  :
+elif [[ -f "${LEGACY}/dra.jsonl" ]]; then
+  echo "[rerun_e0] migrating legacy ${LEGACY} -> ${WORKDIR} (c3 matrix tag)" >&2
+  mv "$LEGACY" "$WORKDIR"
+else
+  echo "FATAL: neither ${WORKDIR}/dra.jsonl nor ${LEGACY}/dra.jsonl found" >&2
+  exit 2
+fi
 DRA_JSONL="${WORKDIR}/dra.jsonl"
 SKILLS_DIR="${WORKDIR}/skills"
 TARGET_ROWS=80
@@ -62,9 +73,9 @@ fi
 
 # Refuse double-launch on the same model. A run on a different model is OK.
 if pgrep -f "run_eval_matrix.sh full ${MODEL}\b" >/dev/null \
-   || pgrep -f "run_gaia.py.*config_gaia_c4_${MODEL}\.py" >/dev/null; then
+   || pgrep -f "run_gaia.py.*config_gaia_c3_${MODEL}\.py" >/dev/null; then
   echo "FATAL: existing ${MODEL} eval proc alive — refusing to double-launch" >&2
-  pgrep -fl "run_eval_matrix.sh full ${MODEL}\b|run_gaia.py.*config_gaia_c4_${MODEL}\.py" >&2 || true
+  pgrep -fl "run_eval_matrix.sh full ${MODEL}\b|run_gaia.py.*config_gaia_c3_${MODEL}\.py" >&2 || true
   exit 2
 fi
 
@@ -159,10 +170,8 @@ if [ "$AFTER" -ne "$EXPECTED" ]; then
 fi
 echo "[rerun_e0] rewrite OK: ${AFTER} rows remain (expected ${EXPECTED})"
 
-# Step 5: re-launch run_eval_matrix.sh full <model> c4 with max_samples=N_INFRA.
-# Identical FULL_CFG_OPTIONS shape as Phase 1 (shuffle=True, seed=42).
-# DRA_RESUME_PRESERVE_ALL=1 so the new rows append and the 64 kept rows are
-# not touched. DATASET_SPLIT=validation because C4 is a learning condition.
+# Step 5: re-launch run_eval_matrix.sh full <model> c3 with max_samples=N_INFRA.
+# ... DRA_RESUME_PRESERVE_ALL=1 ... DATASET_SPLIT=validation because C3 is the skill-library training condition.
 LAUNCH_TS="$(date +%H%M%S)"
 
 # Keep-awake: start caffeinate if none asserting.
@@ -181,7 +190,7 @@ DATASET_SPLIT=validation \
 PYTHON="$DRA_PY" \
 DRA_RESUME_PRESERVE_ALL=1 \
 FULL_CFG_OPTIONS="max_samples=${N_INFRA} dataset.shuffle=True dataset.seed=42" \
-  nohup bash scripts/run_eval_matrix.sh full "$MODEL" c4 >"$LOG" 2>&1 &
+  nohup bash scripts/run_eval_matrix.sh full "$MODEL" c3 >"$LOG" 2>&1 &
 disown
 LAUNCH_PID=$!
 

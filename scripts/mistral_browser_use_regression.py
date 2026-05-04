@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 """Mistral `auto_browser_use_tool` regression smoke.
 
+NOTE: The pass/fail steps labeled C1–C4 in this script are **regression gate
+steps**, not GAIA experimental conditions (paper/code use C0–C3 for those).
+
 Companion to `scripts/p5_live_validation.py`: exercises the SAME
 `browser_use.Agent` wiring but with a Mistral model instead of Qwen,
 to prove the two-layer Qwen fix (raw mode + tolerant JSON extractor)

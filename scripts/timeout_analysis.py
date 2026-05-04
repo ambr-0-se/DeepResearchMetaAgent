@@ -19,8 +19,10 @@ Outputs per-batch table, global signature totals, and a few deep-dive case
 studies.
 
 Usage:
-    python scripts/timeout_analysis.py workdir/gaia_c4_mistral_20260420_E0v3
-    python scripts/timeout_analysis.py workdir/gaia_c4_mistral_20260420_E0v3 --deep 5
+    python scripts/timeout_analysis.py workdir/gaia_c3_mistral_<RUN_ID>
+    python scripts/timeout_analysis.py workdir/gaia_c3_mistral_<RUN_ID> --deep 5
+
+    # E0 v3 (2026-04) artifacts may still live under workdir/gaia_c4_* (legacy prefix).
 """
 
 from __future__ import annotations

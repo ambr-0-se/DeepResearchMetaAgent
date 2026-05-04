@@ -1,8 +1,8 @@
-"""Generator for the 12 GAIA-eval config files (3 models × 4 conditions).
+"""Generator for the 16 GAIA-eval config files (4 models × 4 conditions).
 
-Run this script once to (re)write all 12 config files under `configs/`. The
+Run this script once to (re)write all 16 config files under `configs/`. The
 generated files inherit from the matching C-condition base (`config_gaia_c0.py`,
-`config_gaia_adaptive.py`, `config_gaia_c3.py`, `config_gaia_c4.py`) and only
+`config_gaia_c1.py`, `config_gaia_c2.py`, `config_gaia_c3.py`) and only
 override:
   - `tag` (drives `workdir/gaia_<tag>/` output dir)
   - `model_id` on every agent + tool config
@@ -16,7 +16,7 @@ mmengine config inheritance replaces dicts wholesale rather than deep-merging.
 A single template here is the maintainable shape.
 
 Usage:
-    python scripts/gen_eval_configs.py            # write all 12
+    python scripts/gen_eval_configs.py            # write all 16 (4 models × 4 conditions)
     python scripts/gen_eval_configs.py --dry-run  # print to stdout instead
 """
 
@@ -52,7 +52,7 @@ MODELS = [
         "Kimi K2.5 via OpenRouter (operator preference — OPENROUTER_API_KEY). "
         "Native MOONSHOT_API_KEY path is intentionally left as a placeholder. "
         "OpenRouter does not enforce Moonshot's thinking-on default, so this "
-        "also satisfies the C3/C4 JSON-output requirement without an extra_body "
+        "also satisfies the C2/C3 JSON-output requirement without an extra_body "
         "override.",
         4,
     ),
@@ -97,12 +97,12 @@ MODELS = [
 # (condition_label, base_config_relative, tag_suffix, max_steps_for_this_condition)
 CONDITIONS = [
     ("c0", "./config_gaia_c0.py", "c0", None),
-    ("c2", "./config_gaia_adaptive.py", "c2", None),
+    ("c1", "./config_gaia_c1.py", "c1", None),
+    ("c2", "./config_gaia_c2.py", "c2", None),
     ("c3", "./config_gaia_c3.py", "c3", None),
-    ("c4", "./config_gaia_c4.py", "c4", None),
 ]
 
-# C0 uses planning_agent (non-adaptive); C2/C3/C4 use adaptive_planning_agent.
+# C0 uses planning_agent (non-adaptive); C1/C2/C3 use adaptive_planning_agent.
 # We re-declare the planning_agent_config in each file to swap model_id without
 # losing the condition's enable_review / enable_skills / max_steps settings.
 PLANNING_TEMPLATES: dict[str, str] = {
@@ -121,7 +121,7 @@ PLANNING_TEMPLATES: dict[str, str] = {
         )
         '''
     ),
-    "c2": dedent(
+    "c1": dedent(
         '''\
         planning_agent_config = dict(
             type="adaptive_planning_agent",
@@ -136,7 +136,7 @@ PLANNING_TEMPLATES: dict[str, str] = {
         )
         '''
     ),
-    "c3": dedent(
+    "c2": dedent(
         '''\
         planning_agent_config = dict(
             type="adaptive_planning_agent",
@@ -144,10 +144,10 @@ PLANNING_TEMPLATES: dict[str, str] = {
             model_id={model_id!r},
             description=(
                 "An adaptive planning agent with reactive diagnose/modify tools "
-                "plus a structural REVIEW step (condition C3)."
+                "plus a structural REVIEW step (condition C2)."
             ),
             max_steps=25,
-            template_path="src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c3.yaml",
+            template_path="src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c2.yaml",
             provide_run_summary=True,
             tools=["planning_tool"],
             managed_agents=["deep_analyzer_agent", "browser_use_agent", "deep_researcher_agent"],
@@ -155,7 +155,7 @@ PLANNING_TEMPLATES: dict[str, str] = {
         )
         '''
     ),
-    "c4": dedent(
+    "c3": dedent(
         '''\
         planning_agent_config = dict(
             type="adaptive_planning_agent",
@@ -163,10 +163,10 @@ PLANNING_TEMPLATES: dict[str, str] = {
             model_id={model_id!r},
             description=(
                 "An adaptive planning agent with reactive diagnose/modify tools, a "
-                "structural REVIEW step, and a cross-task skill library (C4)."
+                "structural REVIEW step, and a cross-task skill library (C3)."
             ),
             max_steps=25,
-            template_path="src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c4.yaml",
+            template_path="src/agent/adaptive_planning_agent/prompts/adaptive_planning_agent_c3.yaml",
             provide_run_summary=True,
             tools=["planning_tool"],
             managed_agents=["deep_analyzer_agent", "browser_use_agent", "deep_researcher_agent"],
@@ -206,7 +206,7 @@ tag = {tag_expr}
 # ---- model overrides --------------------------------------------------------
 
 # All four agents use the SAME model_id under the single-model evaluation
-# constraint. C3/C4 reviewer + skill extractor inherit this id via the planner.
+# constraint. C2/C3 reviewer + skill extractor inherit this id via the planner.
 
 deep_researcher_agent_config = dict(
     type="deep_researcher_agent",
@@ -270,7 +270,7 @@ deep_analyzer_tool_config = dict(
 # dominated by stuck-loop waste (CAPTCHA retries, cookie-modal fights,
 # infinite scrolls). A single stuck 50-step invocation burns ~$0.10-1.00
 # and 8-12 min wall. Applied uniformly across all 16 cells so
-# C0/C2/C3/C4 deltas aren't contaminated by per-condition browser budget
+# C0/C1/C2/C3 deltas aren't contaminated by per-condition browser budget
 # differences. For local smoke tests, override via --cfg-options
 # (auto_browser_use_tool_config.max_steps=8). See
 # docs/handoffs/HANDOFF_TEST_EVAL.md "Browser step cap policy".
@@ -291,7 +291,7 @@ concurrency = {concurrency}
 # Per-question wall clock timeout (secs). Pinned 2026-04-20 after the
 # E0 v3 resume surfaced an asymmetry: training had been running at 1800s
 # but test-time configs silently fell back to the run_gaia.py default of
-# 1200s, biasing the C0-C3 vs C4 ablation at test time. Now uniformly
+# 1200s, biasing the C0-C2 vs C3 ablation at test time. Now uniformly
 # 1800s across training (E0) and test (E3) for every (model, condition).
 per_question_timeout_secs = 1800
 '''
@@ -300,7 +300,7 @@ per_question_timeout_secs = 1800
 #: Prelude block emitted for ALL matrix configs. Reads DRA_RUN_ID from the
 #: environment with a fresh-timestamp fallback, so every invocation lands
 #: in its own isolated output directory unless the matrix runner (or the
-#: operator) explicitly reuses a run id. For C4, the same run id also
+#: operator) explicitly reuses a run id. For C3, the same run id also
 #: drives the per-run `skills_dir` so extracted skills stay co-located
 #: with the dra.jsonl they produced.
 _RUN_ID_PRELUDE = (
@@ -325,7 +325,7 @@ def render_config(model_label: str, model_id: str, langchain_alias: str,
     planning_block = PLANNING_TEMPLATES[condition].format(model_id=model_id)
 
     # Every condition now carries a DRA_RUN_ID so repeat runs of the same
-    # (model, condition) never collide — each run's dra.jsonl (and, for C4,
+    # (model, condition) never collide — each run's dra.jsonl (and, for C3,
     # skills/) is inspectable forever after.
     run_id_prelude = _RUN_ID_PRELUDE
     tag_expr = f'f"gaia_{tag_prefix}_{{_RUN_ID}}"'

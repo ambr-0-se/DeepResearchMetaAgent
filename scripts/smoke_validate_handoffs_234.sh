@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke checks for HANDOFF rows #2 (provider matrix), #3 (modify_subagent prompts), #4 (C3/C4).
+# Smoke checks for HANDOFF rows #2 (provider matrix), #3 (modify_subagent prompts), #4 (C2/C3 review + skills).
 # Intended to finish quickly; does not replace full GAIA/matrix validation.
 set -euo pipefail
 # Re-exec inside conda env `dra` when mmengine is not on the default PATH.
@@ -15,12 +15,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export REPO_ROOT="$ROOT"
 
-echo "== Tier 0: mmengine load for 16 matrix configs (4 models × C0/C2/C3/C4) =="
-for cfg in configs/config_gaia_c{0,2,3,4}_{mistral,kimi,qwen,gemma}.py; do
+echo "== Tier 0: mmengine load for 16 matrix configs (4 models × C0/C1/C2/C3) =="
+for cfg in configs/config_gaia_c{0,1,2,3}_{mistral,kimi,qwen,gemma}.py; do
   python -c "from mmengine.config import Config; Config.fromfile('${cfg}'); print('OK', '${cfg}')"
 done
 
-echo "== HANDOFF #3: rendered planner prompts (C2/C3/C4; uses Mistral matrix configs so create_agent does not require qwen3.6-plus-failover) =="
+echo "== HANDOFF #3: rendered planner prompts (C1/C2/C3; uses Mistral matrix configs so create_agent does not require qwen3.6-plus-failover) =="
 python - <<'PY'
 import asyncio
 import os
@@ -40,9 +40,9 @@ model_manager.init_models(use_local_proxy=False)
 
 async def main():
     for cfg_path in [
+        "configs/config_gaia_c1_mistral.py",
         "configs/config_gaia_c2_mistral.py",
         "configs/config_gaia_c3_mistral.py",
-        "configs/config_gaia_c4_mistral.py",
     ]:
         cfg = Config.fromfile(cfg_path)
         agent = await create_agent(cfg)
@@ -57,7 +57,7 @@ async def main():
             "remove_agent",
         ]:
             assert a in ti, f"{cfg_path}: missing action example {a}"
-        if "_c3" in cfg_path or "_c4" in cfg_path:
+        if "_c2" in cfg_path or "_c3" in cfg_path:
             assert "Override REVIEW" in ti, f"{cfg_path}: REVIEW anti-pattern missing"
         else:
             assert "before at least one delegation has been attempted" in ti

@@ -45,10 +45,10 @@ count_in() {
 }
 
 CELLS_C0="gaia_c0_mistral_${RUN} gaia_c0_kimi_${RUN} gaia_c0_qwen_${RUN} gaia_c0_gemma_${RUN}"
+CELLS_C1="gaia_c1_mistral_${RUN} gaia_c1_kimi_${RUN} gaia_c1_qwen_${RUN} gaia_c1_gemma_${RUN}"
 CELLS_C2="gaia_c2_mistral_${RUN} gaia_c2_kimi_${RUN} gaia_c2_qwen_${RUN} gaia_c2_gemma_${RUN}"
 CELLS_C3="gaia_c3_mistral_${RUN} gaia_c3_kimi_${RUN} gaia_c3_qwen_${RUN} gaia_c3_gemma_${RUN}"
-CELLS_C4="gaia_c4_mistral_${RUN} gaia_c4_kimi_${RUN} gaia_c4_qwen_${RUN} gaia_c4_gemma_${RUN}"
-CELLS_ALL="$CELLS_C0 $CELLS_C2 $CELLS_C3 $CELLS_C4"
+CELLS_ALL="$CELLS_C0 $CELLS_C1 $CELLS_C2 $CELLS_C3"
 
 echo "## Handoff #1 — Silent-failure fixes (browser + analyzer)"
 echo "   browser 'no extracted content' count (expect 0 or low):"
@@ -77,20 +77,20 @@ echo "      $(count_in "AllocationQuota.FreeTierOnly|The free tier of the model 
 echo
 
 echo "## Handoff #3 — modify_subagent guidance"
-echo "   Adaptive-planner tool exposure (C2+, should be >0):"
-echo "      $(count_in "modify_subagent|diagnose_subagent" $CELLS_C2 $CELLS_C3 $CELLS_C4)"
+echo "   Adaptive-planner tool exposure (C1+, should be >0):"
+echo "      $(count_in "modify_subagent|diagnose_subagent" $CELLS_C1 $CELLS_C2 $CELLS_C3)"
 echo
 
-echo "## Handoff #4 — C3 REVIEW + C4 skills"
-echo "   C3: enable_review=True wiring fired (expect 4 — one per model):"
-echo "      $(count_in "\[AdaptivePlanningAgent\] enable_review=True; building ReviewStep" $CELLS_C3)"
-echo "   C4: enable_skills=True + SkillRegistry built (expect 4):"
-echo "      $(count_in "\[AdaptivePlanningAgent\] enable_skills=True; building SkillRegistry" $CELLS_C4)"
-echo "   C4: seed_skills_dir seeded at least one skill per cell (expect >=4 total across C4 cells):"
-echo "      $(count_in "\[seed_skills_dir\] seeded" $CELLS_C4)"
-echo "   [REVIEW] markers in C3/C4 (non-zero if agent delegated at all):"
+echo "## Handoff #4 — C2 REVIEW + C3 skills"
+echo "   C2: enable_review=True wiring fired (expect 4 — one per model):"
+echo "      $(count_in "\[AdaptivePlanningAgent\] enable_review=True; building ReviewStep" $CELLS_C2)"
+echo "   C3: enable_skills=True + SkillRegistry built (expect 4):"
+echo "      $(count_in "\[AdaptivePlanningAgent\] enable_skills=True; building SkillRegistry" $CELLS_C3)"
+echo "   C3: seed_skills_dir seeded at least one skill per cell (expect >=4 total across C3 cells):"
+echo "      $(count_in "\[seed_skills_dir\] seeded" $CELLS_C3)"
+echo "   [REVIEW] markers in C2/C3 (non-zero if agent delegated at all):"
+echo "      C2: $(count_in "\[REVIEW\]" $CELLS_C2)"
 echo "      C3: $(count_in "\[REVIEW\]" $CELLS_C3)"
-echo "      C4: $(count_in "\[REVIEW\]" $CELLS_C4)"
 echo
 
 echo "## Handoff #5 — RC1/RC2 guards"

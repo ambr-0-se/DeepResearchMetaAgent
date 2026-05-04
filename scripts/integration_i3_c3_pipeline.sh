@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Integration step I3 — C4 end-to-end smoke (ONE model, default mistral):
+# Integration step I3 — condition C3 (skills) end-to-end smoke (ONE model, default mistral):
 #   I3a subset train on validation (extraction ON) → I3b snapshot → I3c short
 #   validation eval with frozen library (extraction OFF via agent_config.*).
 #
 # Does NOT replace I2 (16-cell matrix smoke). Does NOT write E-track dirs under
-# workdir/c4_trained_libraries/ — artifacts stay under workdir/c4_i3_<I3_RUN_ID>/.
+# workdir/c4_trained_libraries/ — artifacts stay under workdir/c3_i3_<I3_RUN_ID>/.
 #
 # Env:
 #   I3_MODEL          — mistral | kimi | qwen | gemma (default: mistral). No multi-model loop.
@@ -15,7 +15,7 @@
 #                       Set to empty string to omit caps.
 #   PYTHON            — interpreter (default: python)
 #
-# Pass criteria (manual grep on I3c log under workdir/gaia_c4_<model>_<FREEZE_DRA_ID>/):
+# Pass criteria (manual grep on I3c log under workdir/gaia_c3_<model>_<FREEZE_DRA_ID>/):
 #   - grep -c "SkillExtractor active" log.txt  → expect 0
 #   - SkillRegistry banner should reference the staging skills_dir path
 #
@@ -57,18 +57,18 @@ case "$I3_MODEL" in
     ;;
 esac
 
-CFG="configs/config_gaia_c4_${I3_MODEL}.py"
+CFG="configs/config_gaia_c3_${I3_MODEL}.py"
 if [[ ! -f "$CFG" ]]; then
   echo "Missing $CFG" >&2
   exit 1
 fi
 
-mkdir -p "workdir/c4_i3_${I3_RUN_ID}"
-LOG="workdir/c4_i3_${I3_RUN_ID}/i3_pipeline.log"
+mkdir -p "workdir/c3_i3_${I3_RUN_ID}"
+LOG="workdir/c3_i3_${I3_RUN_ID}/i3_pipeline.log"
 exec > >(tee -a "$LOG") 2>&1
 
 echo "========================================"
-echo "I3 C4 pipeline integration — model=$I3_MODEL  I3_RUN_ID=$I3_RUN_ID"
+echo "I3 C3 pipeline integration — model=$I3_MODEL  I3_RUN_ID=$I3_RUN_ID"
 echo "ROOT=$ROOT"
 echo "========================================"
 
@@ -89,7 +89,7 @@ fi
 
 "$PYTHON" examples/run_gaia.py --config "$CFG" --cfg-options "${TRAIN_OPTS[@]}"
 
-TRAIN_SKILLS="workdir/gaia_c4_${I3_MODEL}_${TRAIN_DRA_ID}/skills"
+TRAIN_SKILLS="workdir/gaia_c3_${I3_MODEL}_${TRAIN_DRA_ID}/skills"
 if [[ ! -d "$TRAIN_SKILLS" ]]; then
   echo "I3a failed: missing skills dir $TRAIN_SKILLS" >&2
   exit 1
@@ -116,7 +116,7 @@ if [[ "$SKILL_LEARNED" -eq 0 ]]; then
 fi
 
 # --- I3b: snapshot into isolated staging (never touches c4_trained_libraries/) ---
-STAGING="workdir/c4_i3_${I3_RUN_ID}/${I3_MODEL}_skills"
+STAGING="workdir/c3_i3_${I3_RUN_ID}/${I3_MODEL}_skills"
 echo ""
 echo "=== I3b — snapshot  $TRAIN_SKILLS  →  $STAGING ==="
 rm -rf "$STAGING"
@@ -145,10 +145,10 @@ fi
 
 "$PYTHON" examples/run_gaia.py --config "$CFG" --cfg-options "${FREEZE_OPTS[@]}"
 
-FREEZE_LOG="workdir/gaia_c4_${I3_MODEL}_${FREEZE_DRA_ID}/log.txt"
+FREEZE_LOG="workdir/gaia_c3_${I3_MODEL}_${FREEZE_DRA_ID}/log.txt"
 echo ""
 echo "=== I3 complete ==="
-echo "Artifact root:    workdir/c4_i3_${I3_RUN_ID}/"
+echo "Artifact root:    workdir/c3_i3_${I3_RUN_ID}/"
 echo "I3a train skills: $TRAIN_SKILLS"
 echo "I3b staging copy: $STAGING"
 echo "I3c run log:      $FREEZE_LOG"

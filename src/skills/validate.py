@@ -1,5 +1,5 @@
 """
-Standalone validator for SKILL.md files (condition C4).
+Standalone validator for SKILL.md files (condition C3 skill library).
 
 Usage:
     python -m src.skills.validate src/skills

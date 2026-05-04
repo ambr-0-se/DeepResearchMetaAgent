@@ -1,7 +1,7 @@
 """
-Seed helper for per-run skill libraries (condition C4).
+Seed helper for per-run skill libraries (condition C3 skill library; legacy docs may say C4).
 
-Each C4 evaluation run owns its own `skills_dir` under
+Each C3 evaluation run owns its own `skills_dir` under
 `workdir/gaia_<tag>/skills/` so that:
 
 - Parallel runs (e.g. three models sharing the matrix runner) cannot race on

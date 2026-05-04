@@ -159,7 +159,7 @@ class GeneralAgent(AsyncMultiStepAgent):
         Variables passed to the Jinja template:
             task                  — the user-provided task text
             skill_registry_block  — optional skill-registry injection
-                                    (C4). Defaults to empty string so
+                                    (C3). Defaults to empty string so
                                     templates can safely conditionalise
                                     with `{% if skill_registry_block %}`
                                     even when skills are not in use.
@@ -177,7 +177,7 @@ class GeneralAgent(AsyncMultiStepAgent):
             "task": self.task,
             # Always provided so Jinja's StrictUndefined mode does not raise
             # when a template uses `{% if skill_registry_block %}` even in
-            # C0/C2/C3 where no skill registry is active. Empty string is
+            # C0–C2 where no skill registry is active. Empty string is
             # falsy, so the block is effectively omitted.
             "skill_registry_block": "",
         }

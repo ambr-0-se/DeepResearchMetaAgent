@@ -1,5 +1,5 @@
 """
-Data model for skills (condition C4).
+Data model for skills (condition C3 skill library).
 
 A "skill" is a directory containing a `SKILL.md` file whose structure follows
 the agentskills.io specification (https://agentskills.io/specification):
@@ -24,7 +24,7 @@ Skills are consumed at three points in DRMA:
    is the "metadata always loaded" level of progressive disclosure.
 2. `activate_skill` tool returns the full SKILL.md body on demand — this is
    the "full body loaded when activated" level.
-3. `SkillExtractor` creates new SKILL.md files at task end (C4 learning loop).
+3. `SkillExtractor` creates new SKILL.md files at task end (C3 learning loop).
 
 All writes go through `SkillRegistry.add` / `persist_metadata`; nothing in
 this module mutates disk directly.

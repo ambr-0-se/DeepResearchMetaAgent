@@ -1,5 +1,5 @@
 """
-SkillRegistry — filesystem-backed skill catalogue (condition C4).
+SkillRegistry — filesystem-backed skill catalogue (condition C3 skill library).
 
 Scans a skills directory at startup, filters by consumer for each prompt
 injection point, and persists metadata updates (verified_uses counter) back

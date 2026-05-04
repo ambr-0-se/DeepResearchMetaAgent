@@ -811,7 +811,7 @@ class ModelManager(metaclass=Singleton):
 
         models = [
             {"model_name": "kimi-k2.5", "model_id": "kimi-k2.5", "extra_body": None},
-            # Thinking-disabled variant — REQUIRED for C3 ReviewAgent and C4
+            # Thinking-disabled variant — REQUIRED for C2 ReviewAgent and C3
             # SkillExtractor because Moonshot disallows response_format=json_object
             # while thinking is on (which is the default). Use this alias for any
             # config where the model must emit structured JSON.

@@ -1,5 +1,5 @@
 """
-Skill library for condition C4 (cross-task learning).
+Skill library for condition C3 (cross-task learning).
 
 Skills follow the agentskills.io specification:
 https://agentskills.io/specification

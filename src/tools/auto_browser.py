@@ -84,7 +84,7 @@ def _unwrap_for_browser_use(model):
     `BaseChatModel` subclass — regardless of attribute delegation.
     Before this unwrap, Mistral's T3v2 smoke logged 35 ×
     ``'ChatOpenAI' object has no attribute 'get'`` silently killing
-    every browser_use step (cf. `workdir/gaia_c4_mistral_20260422_T3v2smoke/log.txt`).
+    every browser_use step (cf. `workdir/gaia_c3_mistral_20260422_T3v2smoke/log.txt` — legacy path name; same condition is C3 post-rename).
 
     Trade-off: browser_use loses key rotation — it's locked to
     instance[0] for the session. Acceptable because browser_use LLM

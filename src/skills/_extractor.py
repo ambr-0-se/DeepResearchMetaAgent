@@ -1,6 +1,6 @@
 """
 SkillExtractor — task-end pipeline that proposes new SKILL.md files from
-successful/failed trajectories (condition C4 training loop).
+successful/failed trajectories (condition C3 training loop).
 
 Pipeline (all steps are conditional — any one may veto):
 

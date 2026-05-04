@@ -1,7 +1,7 @@
 """
 ActivateSkillTool — loads a skill's full workflow into an agent's context.
 
-This is the tool the planner (and sub-agents under C4) calls to perform the
+This is the tool the planner (and sub-agents under C3) calls to perform the
 "activation" step of progressive disclosure:
 
     Metadata always loaded  -->  skill registry block in system prompt
